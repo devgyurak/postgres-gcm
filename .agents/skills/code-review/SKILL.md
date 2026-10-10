@@ -18,7 +18,8 @@ stability → architecture → tests → compatibility → documentation → sty
    ```
    python3 scripts/check-architecture.py
    rg -n --type c -e 'EVP_aes_' -e '\bHMAC\(' -e '\brandom\(' -e 'pg_prng_' -e '(elog|ereport|errdetail|errhint)\([^;]*(key|plain|nonce)' -e 'StringInfo[^;]*key' src
-   rg -n -i 'immutable' sql
+   rg -n --type c -e 'pg_any_to_server' -e 'pg_server_to_any' -e 'pg_verify_mbstr\([^;]*false' -e 'on_proc_exit' src
+   rg -n -i -e 'immutable' -e 'default null' sql
    rg -n -e 'log_statement' -e 'auto_explain' scripts tests docker
    ```
    Check each match in context before raising it.

@@ -33,7 +33,8 @@ Order (if a step fails, skip the rest and say so):
 3. `scripts/dev-up.sh <major>` → `scripts/verify.sh <major>` (the dev-container and regress-tests skills)
 4. On request: `docker compose -f tests/e2e/compose.yml up --exit-code-from runner`, and
    `python tests/load/run.py --rows 100000 --gate tests/load/baseline.json`
-5. For Phase S, quote each labelled row of `scripts/verify.sql` verbatim, and the leak check's numbers.
+5. For Phase S, quote each labelled row of `scripts/verify.sql` verbatim, the unit suite's
+   counting-allocator numbers, and what `ldd` shows for `libcrypto` in the server and in `pg_gcm.so`.
 
 Reporting:
 - Per step, `✅ / ❌ / ⏭ skipped(reason)` and the duration

@@ -16,7 +16,8 @@ Rules: `testing.md`, `stack-python.md`.
   2. the replica decrypts rows it never encrypted;
   3. MySQL seals with `gcm_encrypt` and `gcm_encrypt_det`, PostgreSQL opens them, and the reverse;
   4. deterministic values sealed on both sides are equal for equal key, plaintext and AAD;
-  5. strict on/off agree across the two on a forged tag.
+  5. strict on/off agree across the two on a forged tag;
+  6. a NULL in each argument position gives NULL on both.
 - `docker compose -f tests/e2e/compose.yml up --exit-code-from runner`.
 
 ## Load (`tests/load`)

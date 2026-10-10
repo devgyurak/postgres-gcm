@@ -24,7 +24,12 @@ absence of server headers. Anything else is a design amendment in both projects.
 
 ## Open
 1. Parse the envelope (`envelope.c`): minimum length 29, known version, suite from the version byte,
-   key length must match the suite (else `GCM_BAD_KEY_LEN`).
+   key length must match the suite (else `GCM_BAD_KEY_LEN`). Version `0x01` (legacy CBC: minimum 33,
+   `0x01 || iv(16) || ciphertext`, no tag, no AAD) is **undecided** — design §8 O6. Until it is
+   settled the port carries no CBC path and `0x01` is `GCM_BAD_ENVELOPE`, which the spec allows for an
+   allocated-but-unimplemented version; do not port mysql-gcm's v1 code ahead of that decision. The
+   decision is about security policy as well as compatibility: v1 is unauthenticated, strict cannot
+   see tampering, and its plaintext must already be UTF-8 (design §2.2).
 2. Init with the nonce; AAD; data into the caller's buffer;
    `EVP_CTRL_AEAD_SET_TAG` **before** `EVP_DecryptFinal_ex`.
 3. Final returns 0 → `OPENSSL_cleanse(out, len)` and `GCM_BAD_TAG`.
@@ -32,6 +37,10 @@ absence of server headers. Anything else is a design amendment in both projects.
 ## Deterministic nonce
 `nonce_key = HMAC-SHA256(key, "mysql-gcm/v1/det-nonce")`; `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]`
 through `EVP_MAC` with `OSSL_MAC_PARAM_DIGEST = "SHA256"`. Cleanse `nonce_key` and the full MAC output.
+
+## OpenSSL floor
+OpenSSL 3.0 or later, the one the server links (design §0). `EVP_CIPHER_fetch`, `EVP_EncryptInit_ex2`
+and `EVP_MAC` do not exist in 1.1.1; there is no legacy-API fallback.
 
 ## After any change
 - `ctest --test-dir build/unit` (every vector, every suite) and `python scripts/check-vectors.py`.

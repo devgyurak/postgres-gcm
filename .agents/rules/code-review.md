@@ -26,14 +26,16 @@ a backend. Style comes last.
 - [ ] Envelope offsets and lengths match `spec/envelope.md`
 - [ ] The tag-failure path discards the output and honours `pg_gcm.strict`
 - [ ] The key-length check runs on every call, and `pg_gcm.min_key_bytes` on every encryption
-- [ ] NULL, empty string and maximum-length arguments are handled
-- [ ] Encryption seals UTF-8; decryption verifies UTF-8 and converts to the database encoding, erroring on an unrepresentable character
-- [ ] Volatility in the SQL script: `VOLATILE` / `STABLE`, never `IMMUTABLE`; `PARALLEL SAFE`
+- [ ] NULL in any argument gives NULL (`STRICT`); the empty string and maximum-length arguments are handled
+- [ ] Encryption seals UTF-8; decryption verifies UTF-8 and converts to the database encoding, erroring on an unrepresentable character — through the `noError` forms only, so no message carries a byte of the data
+- [ ] The SQL script: `VOLATILE` / `STABLE`, never `IMMUTABLE`; `STRICT`; `PARALLEL SAFE`; an explicit `COST`; AAD as two overloads, never `DEFAULT NULL`
 
-**Safety (P1)** — the blocked patterns in `crypto-safety.md`; every copy of key and plaintext cleansed before `pfree`
+**Safety (P1)** — the blocked patterns in `crypto-safety.md`; every copy of key and plaintext the
+extension made cleansed before `pfree`, on the `PG_FINALLY` paths too; no argument written to in place
 
-**Backend stability (P1)** — no `ereport(ERROR)` while an OpenSSL resource is live; no leak across an
-error (valgrind or the counting allocator in CI); no `palloc` inside the core
+**Backend stability (P1)** — no `ereport(ERROR)` while an OpenSSL resource is live; no leak across a
+core error path (the unit suite's counting allocator — nothing can count inside a backend); no
+`palloc` inside the core; `_PG_init` fetches before it registers GUCs and never raises
 
 **Architecture (P1/P2)** — `architecture.md`; `python3 scripts/check-architecture.py` passes
 

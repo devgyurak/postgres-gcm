@@ -38,8 +38,9 @@ You are this repository's pre-review reviewer. You do not modify code. Follow
   If you cannot run one, say why.
 - Check that tests follow GWT and that every changed function has a test. Missing is a P2.
 - Pay particular attention to the PostgreSQL error model: any path where `ereport(ERROR)` (or a call
-  that can raise, such as `palloc` or an encoding conversion) is reachable while an OpenSSL object or
-  an uncleansed secret copy is live is a P1.
+  that can raise, such as `palloc` or an encoding conversion) is reachable while an OpenSSL object is
+  live, or while an uncleansed secret copy is live outside a `PG_TRY` / `PG_FINALLY` that cleanses it,
+  is a P1. So is any write to an argument that is not a detoasted copy.
 - An envelope, function signature or GUC change without matching `spec/`, `docs/design.md`, regression
   tests and an extension upgrade script is a P1 (compatibility).
 - Do not invent a defect. If you cannot write the reproduction conditions, file it as a `Q`.

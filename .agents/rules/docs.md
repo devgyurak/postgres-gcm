@@ -22,8 +22,11 @@ paths:
   spike command that showed it. "PostgreSQL does X" without a version is not a fact.
 - README first-screen order: one-line summary → operational constraints (all of design §6) → support
   matrix → install → function table.
-- `spec/envelope.md` stays byte-identical in its shared sections to mysql-gcm's at the pinned commit;
-  the PostgreSQL-specific section (SQLSTATEs, encoding, NULL) is clearly separated.
+- `spec/envelope.md` stays byte-identical in its shared sections to mysql-gcm's at the pinned commit.
+  The shared sections are its §2 (layout), §3 (derivation), §5 (worked examples) and the vector schema
+  in §6; mysql-gcm's §1 and §4 are written in MySQL's terms and are not compared. The PostgreSQL
+  binding (SQLSTATEs, the encoding rule and its exceptions, what SQL expects for a non-UTF-8 vector) is
+  a clearly separated part (design §2.2).
 - `spec/test-vectors.json` uses mysql-gcm's schema unchanged.
 - The license is **the PostgreSQL License** (design §7): full text in `LICENSE`,
   `SPDX-License-Identifier: PostgreSQL` at the head of every source and script file, and a link to
