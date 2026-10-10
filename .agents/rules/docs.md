@@ -25,4 +25,8 @@ paths:
 - `spec/envelope.md` stays byte-identical in its shared sections to mysql-gcm's at the pinned commit;
   the PostgreSQL-specific section (SQLSTATEs, encoding, NULL) is clearly separated.
 - `spec/test-vectors.json` uses mysql-gcm's schema unchanged.
-- The license is open (design §7). Do not add a `LICENSE` file or SPDX headers until it is decided.
+- The license is **the PostgreSQL License** (design §7): full text in `LICENSE`,
+  `SPDX-License-Identifier: PostgreSQL` at the head of every source and script file, and a link to
+  `LICENSE` from both READMEs. Changing it means amending design §7 first.
+- Never port code from mysql-gcm that someone other than its author contributed, without that
+  contributor's written permission (design §7).

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: PostgreSQL
 """Generate tool adapters from canonical sources, or verify they are up to date (--check).
 
 Canonical:  .agents/rules/*.md      -> .claude/rules/*.md, .cursor/rules/*.mdc

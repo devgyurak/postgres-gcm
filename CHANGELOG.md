@@ -9,3 +9,5 @@ happen in lockstep with mysql-gcm.
 - Phase 0: the agent workflow (`AGENTS.md`, rules, skills, subagents, guard hook, adapter sync) and
   `docs/design.md` with the function surface, GUCs, lifetimes, error model, operational constraints and
   the open questions for Phase S.
+- License: the PostgreSQL License (`LICENSE`, design §7), with SPDX headers.
+- `docs/design-KO.md`, the Korean translation of the design.

@@ -1,5 +1,7 @@
 # PostgreSQL GCM encryption functions (extension) — design and procedure
 
+English | [한국어](design-KO.md)
+
 Status: **Phase 0, planning** (2026-10-10). Nothing here is implemented. Every claim about PostgreSQL
 behaviour that the design leans on is either cited in §9 or listed in §8 "Open" for Phase S to settle.
 
@@ -76,7 +78,7 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea DEFAULT NULL)    RETURNS text
 ### 2.2 The envelope
 
 Adopted from mysql-gcm `spec/envelope.md` unchanged — version byte, 12-byte nonce, ciphertext, 16-byte
-tag, versions `0x02`–`0x07` (§0 of `AGENTS.md`). Phase 1 copies the spec and vectors and adds a CI check
+tag, versions `0x02`–`0x07` (`AGENTS.md` §2). Phase 1 copies the spec and vectors and adds a CI check
 that the copies match the pinned mysql-gcm commit. A change to the envelope happens in mysql-gcm first,
 or in both projects in lockstep, never here alone.
 
@@ -236,17 +238,30 @@ can reject a typo such as `pg_gcm.strcit` instead of silently creating a placeho
 9. **Usage budgets, rotation and recovery are the operator's responsibility** — as mysql-gcm
    constraints 11–13, unchanged.
 
-## 7. License (open)
+## 7. License — the PostgreSQL License (settled 2026-10-10)
 
-mysql-gcm is GPLv2 because it links the GPLv2 MySQL headers. PostgreSQL's headers are under the
-PostgreSQL License, which places no such requirement, and the ecosystem's extensions are mostly
-PostgreSQL-licensed or Apache-2.0. The crypto core will be ported from mysql-gcm, whose author is the
-same, so relicensing it is the author's decision. **To decide before the first public commit of code.**
+The full text is in `LICENSE`; every source file carries `SPDX-License-Identifier: PostgreSQL`.
+
+- **Why not GPLv2, as mysql-gcm.** mysql-gcm is GPLv2 because a component links the GPLv2 MySQL
+  headers. PostgreSQL's headers are under the PostgreSQL License, which imposes nothing comparable, so
+  that reason does not carry over.
+- **Why the PostgreSQL License.** It is the license of PostgreSQL itself and of most of its contrib
+  modules, so the extension can be packaged by distributions, listed on PGXN and read by the community
+  without a license question. It is a short permissive license, compatible with OpenSSL 3's
+  Apache-2.0.
+- **Why not Apache-2.0.** Its patent grant is the real advantage, but this project implements a
+  published, unencumbered construction (AES-GCM, HMAC-SHA256) and holds no patents, and matching the
+  host project mattered more.
+- **Porting from mysql-gcm.** The core is ported from mysql-gcm, whose `src/` and `spec/` were written
+  by one author, the same as this project's (checked with `git log` on 2026-10-10). That author can
+  license the port here under the PostgreSQL License while mysql-gcm stays GPLv2. Code contributed to
+  mysql-gcm by anyone else is **not** ported without that contributor's written permission.
 
 ## 8. Established facts / open questions
 
 ### Confirmed (with source)
 
+- License: the PostgreSQL License (§7; `LICENSE`).
 - `pgcrypto` raw encryption supports `bf` and `aes` with `cbc`, `cfb`, `ecb`; no GCM or AEAD mode.
   PGP functions append a SHA-1 MDC. (PostgreSQL 18 documentation, §9.)
 - MySQL and MariaDB have no GCM in `block_encryption_mode`. (mysql-gcm design §1.1, measured.)

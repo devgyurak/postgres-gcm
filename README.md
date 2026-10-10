@@ -22,3 +22,5 @@ SELECT id FROM patients WHERE gcm_decrypt(name_enc, $1) LIKE '%길%';
 PostgreSQL's `pgcrypto` has AES only in CBC, CFB and ECB, and OpenPGP; it has no AES-GCM. This
 extension adds AES-128/192/256-GCM selected by key length, keeps partial-match search inside the server,
 and produces envelopes that mysql-gcm can open and vice versa.
+
+Licensed under the [PostgreSQL License](LICENSE).

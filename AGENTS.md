@@ -61,6 +61,8 @@ AGENTS.md / CLAUDE.md          Agent instructions (this file is the source)
 .agents/rules/                 Rule sources, shared across tools
 .agents/skills/                Skill sources, shared across tools
 docs/design.md                 The design document — rationale, decisions, open questions, phases
+docs/design-KO.md              Its Korean translation. The English file above is canonical
+LICENSE                        The PostgreSQL License (design §7)
 docs/ops-constraints.md        Operational constraints — also duplicated on the README's first screen (Phase 4)
 spec/envelope.md               The envelope and failure semantics (Phase 1, adopted from mysql-gcm)
 spec/test-vectors.json         NIST CAVP GCM KAT plus the shared project vectors (Phase 1)
