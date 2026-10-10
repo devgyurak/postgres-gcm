@@ -14,7 +14,8 @@ PostgreSQL's `pgcrypto` offers AES only in CBC, CFB and ECB (`encrypt()`), and O
 MDC (`pgp_sym_encrypt()`); it has no GCM or other AEAD mode (PostgreSQL 18 documentation). This
 extension **registers new SQL functions**, **takes the key as a SQL argument** as `pgcrypto` does, and
 **returns the decrypted value as `text` in the database encoding**, so partial-match search keeps
-working through PostgreSQL's own `LIKE`, `ILIKE` and collations.
+working through PostgreSQL's own `LIKE`, `ILIKE` and collations. It supports PostgreSQL 15–18 on a
+server that links **OpenSSL 3.0 or later** (design §0).
 
 ## 2. Public surface (planned — a change updates `docs/design.md`, `spec/` and the regression tests in the same PR)
 
@@ -27,11 +28,20 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
 - All three are `PARALLEL SAFE` and **never `IMMUTABLE`**: an immutable function may appear in an index
   or a generated column, which would put a key literal into the catalog and plaintext into an index
   (design §5.3).
+- All three are **`STRICT`**: NULL in any argument gives NULL with no cryptographic work, as in
+  mysql-gcm (its spec §4, rule 3). `[, aad bytea]` is **two overloads per function, never
+  `DEFAULT NULL`**, so that omitting `aad` encrypts and an explicit NULL propagates. A NULL default
+  cannot do both: under `STRICT` it makes the two-argument call return NULL, and without `STRICT` an
+  explicit NULL would seal silently without AAD — under one deterministic key, the nonce-reuse
+  condition. (`DEFAULT ''` would also work; overloading is the choice — design §2.1.)
 - `key`: 32 bytes (AES-256), 24 (AES-192) or 16 (AES-128). Any other length is an error. **The key
   length selects the suite and nothing else does.** Keys are never folded, padded or hashed to fit.
 - Plaintext is sealed as **UTF-8** whatever the database encoding, so envelopes are portable to
   mysql-gcm (whose `utf8mb4` is UTF-8). Decryption verifies UTF-8 and converts to the database
   encoding; a character the database encoding cannot hold is an error, never a silent substitution.
+  Verification and conversion use the forms that report by return value (`pg_verify_mbstr(...,
+  true)`, `pg_do_encoding_conversion_buf(..., true)`): `pg_any_to_server` and `pg_server_to_any` put
+  the offending bytes — decrypted plaintext — into the error message (design §5.7).
 - Deterministic nonce: `nonce_key = HMAC-SHA256(key, "mysql-gcm/v1/det-nonce")`,
   `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]`. The label keeps its `mysql-gcm` spelling on
   purpose: changing it would make deterministic ciphertext differ between the two projects.
@@ -107,14 +117,21 @@ different build method on your own.
 - Fetch by name with `EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL)`. Never call the `EVP_aes_256_gcm()`
   symbol directly.
 - Use the libcrypto the server links. No static linking and no bundling of another version.
-- Never put a key, plaintext or nonce in `elog`/`ereport`, an error detail or hint, or an assertion.
-  `OPENSSL_cleanse` every copy of the key and plaintext before `pfree` — `pfree` does not zero.
+- Never put a key, plaintext or nonce in `elog`/`ereport`, an error detail or hint, or an assertion —
+  and never call a server function that would (`pg_any_to_server`, `pg_server_to_any`,
+  `pg_verify_mbstr` with `noError` false).
+- `OPENSSL_cleanse` every copy of the key and plaintext **that the extension made** before `pfree` —
+  `pfree` does not zero. **Never write to an argument in place**: one that was not detoasted is a
+  cached plan's constant, a bind value or a shared buffer page (design §5.2).
 - A tag verification failure is an error when `pg_gcm.strict` is on. Never return unauthenticated
   plaintext.
 - The key length is 32, 24 or 16 bytes and selects the suite; the two encryption functions also refuse
   anything below `pg_gcm.min_key_bytes`.
 - Do not put a key in a repository file, `postgresql.conf`, a GUC, an environment variable, a test
   fixture (the spec vectors excepted) or any DDL.
+- No document may promise more than the trust boundary allows: keys and plaintext cross the client
+  connection and exist in the server, so the connection must be protected (a local socket, or TLS with
+  the server verified) and the server's administrators trusted (design §5.4, §6 item 12).
 
 **Architecture (`architecture.md`)**
 - The direction is SQL glue → core (`gcm` → `envelope`/`nonce`). The core does not include a
@@ -124,6 +141,7 @@ different build method on your own.
 **Extension (`extension-src.md`)**
 - Version-1 calling convention (`PG_FUNCTION_INFO_V1`) and PGXS only. No server patch, no hook into the
   executor, no background worker.
+- `_PG_init` fetches the OpenSSL handles before it registers the GUCs and never raises (design §5.8).
 
 **Tests (`testing.md`)**
 - Every test is **GWT (Given-When-Then)**, with given/when/then visible in the name too.
@@ -150,7 +168,7 @@ Phase S.
 
 | Phase | Deliverable | Done when |
 |---|---|---|
-| S spike | A minimal extension passing `scripts/verify.sql` on 15–18 | `CREATE EXTENSION` · key-length check · `SET pg_gcm.strict` · Korean `LIKE` on a decrypted value · `EVP_CIPHER_fetch` inside a backend · an `ereport` path that leaks nothing (valgrind or a counter) · the answers to design §8 "Open" recorded |
+| S spike | A minimal extension passing `scripts/verify.sql` on 15–18 | `CREATE EXTENSION` · key-length check · `SET pg_gcm.strict` · Korean `LIKE` on a decrypted value · handles fetched before fork working in two backends · no raising call inside an OpenSSL window · the answers to design §8 "Open" recorded |
 | 1 spec | `spec/envelope.md`, `spec/test-vectors.json` adopted from mysql-gcm | Byte format identical; PostgreSQL failure semantics (SQLSTATEs, NULL handling, encoding) settled |
 | 2 implementation | `src/`, `tests/unit`, `test/sql` | CI green, including the nonce collision boundary test |
 | 3 SQL E2E | `tests/e2e` | Round trip, Korean `LIKE`, streaming replication, and a mysql-gcm ↔ postgres-gcm envelope exchange pass |
