@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    ".agents/rules/architecture.md",
+    ".agents/rules/crypto-safety.md",
+    ".agents/rules/code-review.md",
+    ".agents/rules/extension-src.md",
+    ".agents/rules/testing.md",
+    ".agents/rules/docs.md",
+    ".agents/rules/stack-c.md",
+    ".agents/rules/stack-python.md",
+    ".agents/rules/stack-ci-docker.md"
+  ],
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "git push --force*": "deny",
+      "git push -f*": "deny",
+      "rm -rf /*": "deny"
+    }
+  }
+}

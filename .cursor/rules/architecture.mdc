@@ -1,0 +1,9 @@
+---
+description: "Architecture — responsibilities, dependency direction, resource lifetimes"
+globs: "src/**, tests/**, test/**, spec/**, docs/design.md, Makefile, **/CMakeLists.txt"
+alwaysApply: false
+---
+Generated from `.agents/rules/architecture.md` by scripts/agents-sync.py — edit the source, not this file.
+The full rule text is in the referenced file and applies together with this rule.
+
+@.agents/rules/architecture.md

@@ -1,0 +1,9 @@
+---
+description: "Documentation and spec rules"
+globs: "docs/**, spec/**, README.md, README-KO.md"
+alwaysApply: false
+---
+Generated from `.agents/rules/docs.md` by scripts/agents-sync.py — edit the source, not this file.
+The full rule text is in the referenced file and applies together with this rule.
+
+@.agents/rules/docs.md

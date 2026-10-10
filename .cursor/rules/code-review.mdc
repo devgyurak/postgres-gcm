@@ -1,0 +1,9 @@
+---
+description: "Code review rules (always applied)"
+globs: ""
+alwaysApply: true
+---
+Generated from `.agents/rules/code-review.md` by scripts/agents-sync.py — edit the source, not this file.
+The full rule text is in the referenced file and applies together with this rule.
+
+@.agents/rules/code-review.md

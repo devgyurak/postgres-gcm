@@ -1,0 +1,9 @@
+---
+description: "Testing rules — GWT and the pyramid"
+globs: "tests/**, test/**, spec/test-vectors.json"
+alwaysApply: false
+---
+Generated from `.agents/rules/testing.md` by scripts/agents-sync.py — edit the source, not this file.
+The full rule text is in the referenced file and applies together with this rule.
+
+@.agents/rules/testing.md

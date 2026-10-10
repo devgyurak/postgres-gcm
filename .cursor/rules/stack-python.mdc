@@ -1,0 +1,9 @@
+---
+description: "Python conventions"
+globs: "scripts/**/*.py, tests/e2e/**/*.py, tests/load/**/*.py, **/*.py"
+alwaysApply: false
+---
+Generated from `.agents/rules/stack-python.md` by scripts/agents-sync.py — edit the source, not this file.
+The full rule text is in the referenced file and applies together with this rule.
+
+@.agents/rules/stack-python.md

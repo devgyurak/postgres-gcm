@@ -1,0 +1,25 @@
+# Build output
+build/
+*.o
+*.bc
+*.so
+*.dylib
+results/
+regression.diffs
+regression.out
+tmp_check/
+log/
+
+# Python
+__pycache__/
+.venv/
+.mypy_cache/
+.ruff_cache/
+
+# Local secrets — never committed (crypto-safety.md)
+.env*
+*.pem
+*.key
+
+# Agent worktrees
+.claude/worktrees/
