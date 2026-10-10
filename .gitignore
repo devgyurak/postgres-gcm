@@ -21,5 +21,7 @@ __pycache__/
 *.pem
 *.key
 
+# Agent configuration is part of the repository, even where a global gitignore excludes .claude/.
+!.claude/
 # Agent worktrees
 .claude/worktrees/
