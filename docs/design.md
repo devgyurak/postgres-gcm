@@ -383,9 +383,9 @@ The glue therefore uses the forms that report by return value, present on every 
 - `pg_do_encoding_conversion_buf(proc, src, dest, in, inlen, out, outlen, true)` into a buffer the
   glue allocated (`inlen * MAX_CONVERSION_GROWTH + 1`, overflow-checked against `MaxAllocSize`). A
   count shorter than `inlen` after a successful verification means a character the target cannot hold.
-- The conversion procedure comes from `FindDefaultConversionProc`, a catalog lookup that can raise
-  (with no data in its message). It runs before any secret copy exists. It resolves through
-  `search_path`, as the server's own client-encoding conversion does (§8 O14).
+- The conversion procedure comes from `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)`, a catalog
+  lookup; when there is none the glue raises `42883`, naming the two encodings. It runs before any
+  secret copy exists. It looks in `pg_catalog` alone and does not follow `search_path` (§8 O14).
 
 | Database encoding | `gcm_encrypt*` | `gcm_decrypt` |
 |---|---|---|
@@ -645,7 +645,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
 - **PostgreSQL, from the sources of 15–18.** `pg_do_encoding_conversion_buf` returns the number of
   source bytes it consumed, NUL-terminates its output, and with a destination of `srclen *
   MAX_CONVERSION_GROWTH + 1` is offered the whole input; 0 is ambiguous for empty input, which the
-  glue therefore does not convert. `FindDefaultConversionProc` walks `search_path` ("Open", O14).
+  glue therefore does not convert. `FindDefaultConversionProc` walks `search_path` (O14, settled in Phase 2).
   `-Wextra` fails on the server's own headers (unused parameters in static inlines), so the
   `-Werror` build takes them with `-isystem`.
 - **`pg_regress` and `\c`, run on 17.** After `\c` to an `EUC_KR` database with `PGCLIENTENCODING`
@@ -744,17 +744,34 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   `derived_from`; and `nonce_derived: false` marks the one deterministic vector a sealer cannot
   reproduce.
 
+### Established in Phase 2 (2026-10-12)
+
+- **O14 — the conversion is looked up in `pg_catalog` alone**, with
+  `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)`. Observed on 17.11: a role that is not a
+  superuser but has `CREATE` on a schema can create a default conversion there, and along
+  `search_path` it would be found before the built-in one. It can only bind an existing function,
+  though: `CREATE CONVERSION` refused a built-in function for a pair of encodings it was not
+  written for, and the role could create no C or internal function. So the exposure was to a
+  conversion function a superuser had installed, chosen by the caller's `search_path`. Looking in
+  `pg_catalog` makes the result independent of `search_path`; the price is that a site's own
+  default conversion for the database encoding is not used by these functions.
+- **O15 — the per-call form stays, and the floor stays at 3.0.0.** On 17.11 with OpenSSL 3.5.7
+  (one arm64 laptop, two runs, good to a factor of two at best) `gcm_encrypt_det` costs about
+  1.1 µs a call, `gcm_encrypt` 0.6 µs and `gcm_decrypt` with `LIKE` 0.3 µs. The 0.5 µs between the
+  first two holds two HMAC-SHA256 computations as well as the resolution of the digest by name, so
+  it bounds from above what a prepared context could save; the saving itself was not isolated.
+  Against it stands a context that fails on 3.0.0. The deterministic variant is for join keys and
+  exact-match lookups, not bulk text, so the floor is not raised for it. The load gate of Phase 4
+  is where this would be reopened.
+
 ### Open
 
-Numbers are never reused. O2–O13 and O16 are answered above; O7, O13 and O16 in Phase 1. O14 and O15
-came out of the Phase S review and belong to Phase 2.
+Numbers are never reused. O2–O16 are answered above: O7, O13 and O16 in Phase 1, O14 and O15 in
+Phase 2.
 
 | # | Question | How to settle it |
 |---|---|---|
 | O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the spike already builds and passes on `19beta4` | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
-| O14 | `FindDefaultConversionProc` resolves through `search_path`. In a database that is not UTF-8, the plaintext is handed to whichever default conversion comes first, as the server's own client-encoding conversion is. Accept that, or look the conversion up in `pg_catalog` alone? | Phase 2, with the encoding code: establish who can create a default conversion, then decide |
-
-| O15 | A deterministic call resolves SHA-256 by name inside `EVP_MAC_init`, because `EVP_MAC` takes no fetched digest. A keyless `EVP_MAC_CTX` prepared once and duplicated per call avoids that, and it passed here on 3.0.22, 3.5.7 and 3.6.4 — but upstream's `hmac_prov.c` shows `EVP_MAC_CTX_dup` of a keyless HMAC context failing on 3.0.0 and dropping a digest reference each time (fixed in 3.0.1 and 3.0.4; read, not run), so the spike keeps the per-call form. Raise the floor to 3.0.1 with a run-time version check, or keep it? | Phase 2, against the measured cost of the deterministic variant |
 
 ## 9. References
 

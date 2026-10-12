@@ -24,7 +24,8 @@ paths:
   every call**. An argument is never modified, and is cleansed only when it is a detoasted copy.
 - Encoding (design §5.7): verify with `pg_verify_mbstr(PG_UTF8, ..., true)` and convert with
   `pg_do_encoding_conversion_buf(proc, ..., true)` into a buffer the glue allocated, `proc` coming from
-  `FindDefaultConversionProc` before any secret copy exists. **Not** `pg_any_to_server`,
+  `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` before any secret copy exists — never
+  `FindDefaultConversionProc`, which follows `search_path` (design §8 O14). **Not** `pg_any_to_server`,
   `pg_server_to_any` or `pg_verify_mbstr(..., false)`: they put the offending bytes in the error
   message and allocate the copy where the caller cannot cleanse it. A UTF8 database converts nothing; a
   SQL_ASCII database verifies the plaintext as UTF-8 on encryption. All of it runs **outside** the core
