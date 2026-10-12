@@ -11,6 +11,9 @@
 
 #include "envelope.h"
 
+/* Not part of the library's dynamic interface: see envelope.h. */
+#pragma GCC visibility push(hidden)
+
 /*
  * Fetch the algorithm handles by name, once per process. Never raises; a failure is returned,
  * remembered, and reported again by every later call (design §5.8). Safe to call repeatedly.
@@ -67,5 +70,7 @@ enum gcm_error gcm_aead_seal_raw(const uint8_t *key, size_t key_len,
 								 const uint8_t *associated, size_t associated_len,
 								 const uint8_t *plaintext, size_t plaintext_len,
 								 uint8_t *ciphertext, uint8_t tag[GCM_TAG_LEN]);
+
+#pragma GCC visibility pop
 
 #endif							/* PG_GCM_GCM_H */

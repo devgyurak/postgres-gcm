@@ -8,6 +8,9 @@
 
 #include "envelope.h"
 
+/* Not part of the library's dynamic interface: see envelope.h. */
+#pragma GCC visibility push(hidden)
+
 /* The GUCs — read at call time; PostgreSQL keeps them current for the backend. */
 extern bool pg_gcm_strict;
 extern int	pg_gcm_min_key_bytes;
@@ -36,5 +39,7 @@ extern void pg_gcm_release_copy(struct varlena *value, Datum arg, bool secret);
  * objects. Returns only for GCM_OK. Messages carry lengths and nothing else.
  */
 extern void pg_gcm_raise(enum gcm_error rc, Size key_len, Size envelope_len);
+
+#pragma GCC visibility pop
 
 #endif							/* PG_GCM_PG_GCM_H */

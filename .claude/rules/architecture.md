@@ -84,6 +84,11 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
 
 ## 6. Test boundaries
 
-- An internal entry point for vector tests (`gcm_encrypt_with_nonce`) is never declared in the
-  extension's SQL script. `check-architecture.py` lists every such seam.
+- An internal entry point for vector tests (`gcm_seal_with_nonce`, `gcm_aead_seal_raw`) is never
+  declared in the extension's SQL script or called by the glue. `check-architecture.py` lists every
+  such seam.
+- Nothing but the SQL-callable functions and the loader's entry points is a dynamic symbol of
+  `pg_gcm.so`: the project's headers declare everything else with hidden visibility, because PGXS
+  hides symbols by itself only from PostgreSQL 16 and an exported core function can be interposed.
+  `scripts/build-in-docker.sh` fails unless the dynamic symbols are exactly those.
 - No experimental code that skips encryption or returns plaintext under a GUC or a debug build.
