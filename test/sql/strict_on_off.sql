@@ -1,0 +1,14 @@
+-- Given: an envelope whose tag has one bit flipped
+-- When: it is decrypted with pg_gcm.strict on, and then off
+-- Then: on raises an error; off returns NULL; an intact envelope opens either way
+\set VERBOSITY terse
+\set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
+SELECT gcm_encrypt('홍길동', :k) AS sealed \gset
+SELECT set_byte(:'sealed'::bytea, 37, get_byte(:'sealed'::bytea, 37) # 1) AS forged \gset
+
+SET pg_gcm.strict = on;
+SELECT gcm_decrypt(:'forged'::bytea, :k);
+
+SET pg_gcm.strict = off;
+SELECT gcm_decrypt(:'forged'::bytea, :k) IS NULL AS forged_is_null,
+       gcm_decrypt(:'sealed'::bytea, :k) AS intact;

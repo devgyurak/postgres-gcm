@@ -1,0 +1,31 @@
+-- Given: a database whose encoding is EUC_KR
+-- When: a Korean name and the empty string are sealed and opened there, with both variants
+-- Then: LIKE '%길%' matches; nine bytes of UTF-8 were sealed, not six of EUC_KR; the
+--       deterministic nonce is the one a UTF8 database derives; the empty string stays empty
+\set VERBOSITY terse
+\set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
+SELECT current_database() AS home \gset
+-- A run that stopped half-way may have left the database behind.
+SET client_min_messages = warning;
+DROP DATABASE IF EXISTS regress_pg_gcm_euckr;
+RESET client_min_messages;
+CREATE DATABASE regress_pg_gcm_euckr ENCODING 'EUC_KR' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;
+\c regress_pg_gcm_euckr
+-- pg_regress unsets PGCLIENTENCODING, so the new session would read this file as EUC_KR.
+SET client_encoding = 'UTF8';
+-- --load-extension covers only the database pg_regress made.
+CREATE EXTENSION pg_gcm;
+SELECT current_setting('server_encoding') AS server_encoding,
+       gcm_decrypt(gcm_encrypt('홍길동', :k), :k) LIKE '%길%' AS hit,
+       octet_length('홍길동'::text) AS text_bytes,
+       octet_length(gcm_encrypt('홍길동', :k)) - 29 AS sealed_bytes,
+       encode(substring(gcm_encrypt_det('홍길동', :k) FROM 2 FOR 12), 'hex') AS det_nonce,
+       gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) AS det_round_trip,
+       gcm_decrypt(gcm_encrypt('', :k), :k) = '' AS empty_round_trip;
+ server_encoding | hit | text_bytes | sealed_bytes |        det_nonce         | det_round_trip | empty_round_trip 
+-----------------+-----+------------+--------------+--------------------------+----------------+------------------
+ EUC_KR          | t   |          6 |            9 | f55369153b2a94fcbc9b633f | 홍길동         | t
+(1 row)
+
+\c :home
+DROP DATABASE regress_pg_gcm_euckr;

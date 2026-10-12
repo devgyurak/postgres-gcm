@@ -1,0 +1,41 @@
+-- Given: a table of forged envelopes, pg_gcm.strict = off set in the session, and settings
+--        under which only parallel workers scan it (the leader takes no part)
+-- When: the rows whose decryption is NULL are selected, and that one execution is examined
+-- Then: the Gather launched workers and returned all 2000 rows, so every decryption ran in
+--       a worker and gave NULL instead of raising — a worker restores the leader's
+--       pg_gcm.strict (design §8, O9). If no worker is launched, workers_ran is f and the
+--       test fails: a plan that only says "Workers Planned" proves nothing about them.
+\set VERBOSITY terse
+\set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
+CREATE TABLE regress_pg_gcm_forged AS
+SELECT i AS id, set_byte(e, 37, get_byte(e, 37) # 1) AS forged
+FROM generate_series(1, 2000) AS i, gcm_encrypt('홍길동', :k) AS e;
+ANALYZE regress_pg_gcm_forged;
+-- Spelt the same on every major; debug_parallel_query is force_parallel_mode on 15.
+SET parallel_setup_cost = 0;
+SET parallel_tuple_cost = 0;
+SET min_parallel_table_scan_size = 0;
+SET max_parallel_workers_per_gather = 2;
+-- With this off the leader scans only when no worker could be launched.
+SET parallel_leader_participation = off;
+SET pg_gcm.strict = off;
+-- What one execution of a query did, read from its own EXPLAIN ANALYZE.
+CREATE FUNCTION pg_temp.gather_of(q text, OUT top_node text, OUT workers_launched int, OUT rows_returned int)
+LANGUAGE plpgsql AS $$
+DECLARE
+  plan jsonb;
+BEGIN
+  EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, FORMAT JSON) ' || q INTO plan;
+  top_node := plan -> 0 -> 'Plan' ->> 'Node Type';
+  workers_launched := (plan -> 0 -> 'Plan' ->> 'Workers Launched')::int;
+  rows_returned := (plan -> 0 -> 'Plan' ->> 'Actual Rows')::numeric::int;
+END $$;
+SELECT top_node, workers_launched > 0 AS workers_ran, rows_returned
+FROM pg_temp.gather_of(format(
+  'SELECT id FROM regress_pg_gcm_forged WHERE gcm_decrypt(forged, %s) IS NULL', :'k'));
+ top_node | workers_ran | rows_returned 
+----------+-------------+---------------
+ Gather   | t           |          2000
+(1 row)
+
+DROP TABLE regress_pg_gcm_forged;
