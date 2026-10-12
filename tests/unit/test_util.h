@@ -3,6 +3,8 @@
 #define PG_GCM_TESTS_TEST_UTIL_H
 
 #include <cstdint>
+#include <cstdlib>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -12,8 +14,13 @@ extern "C" {
 
 using Bytes = std::vector<uint8_t>;
 
-// Hex text to bytes. Fixture code, not a test body.
+// Hex text to bytes. Fixture code, not a test body. Text that is not whole bytes of
+// hexadecimal ends the run: a fixture that quietly read something else would prove nothing.
 inline Bytes Hex(const std::string &hex) {
+  if (hex.size() % 2 != 0 || hex.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+    std::cerr << "not hexadecimal bytes: " << hex << "\n";
+    std::exit(2);
+  }
   Bytes out;
   out.reserve(hex.size() / 2);
   for (size_t i = 0; i + 1 < hex.size(); i += 2) {

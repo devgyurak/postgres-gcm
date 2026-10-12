@@ -21,7 +21,7 @@ paths:
   OpenSSL 3.0, the oldest in scope — `17-bookworm`). OpenSSL is whatever each image's server links, and the build job fails unless
   `ldd` shows the server and `pg_gcm.so` resolving the same `libcrypto.so.3` (design §0: 3.0 or later).
 - Build image: `docker/build.Dockerfile` is `postgres:<major>` (base pinned by digest) plus
-  `postgresql-server-dev-<major>=$PG_VERSION`, `build-essential`, and `cmake` with googletest for the
+  `postgresql-server-dev-<major>=$PG_VERSION`, `build-essential`, and `cmake` with googletest and nlohmann-json for the
   unit suite (`scripts/unit-in-docker.sh`). **Pin the package to the image's
   `PG_VERSION`**: a digest-pinned base with an unpinned `apt-get install` takes headers from a newer
   minor than the server, and PGDG keeps only the last few versions, so refresh digest and pin together.
