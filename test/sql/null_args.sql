@@ -1,6 +1,7 @@
--- Given: the three functions, all declared STRICT
--- When: NULL is passed in each argument position
--- Then: every call returns NULL — no error, and no cryptographic work
+-- Given: the three functions, each declared STRICT in both its forms
+-- When: NULL is passed in each argument position of each form
+-- Then: every call returns NULL — no error, and no cryptographic work. A NULL aad is not an
+--       empty aad: it does not seal without one
 \set VERBOSITY terse
 \set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
 SELECT gcm_encrypt(NULL, :k) IS NULL AS encrypt_null_plaintext,
@@ -9,3 +10,12 @@ SELECT gcm_encrypt(NULL, :k) IS NULL AS encrypt_null_plaintext,
        gcm_encrypt_det('x', NULL) IS NULL AS det_null_key,
        gcm_decrypt(NULL, :k) IS NULL AS decrypt_null_ciphertext,
        gcm_decrypt('\x00'::bytea, NULL) IS NULL AS decrypt_null_key;
+SELECT gcm_encrypt(NULL, :k, 'a') IS NULL AS encrypt_null_plaintext,
+       gcm_encrypt('x', NULL, 'a') IS NULL AS encrypt_null_key,
+       gcm_encrypt('x', :k, NULL) IS NULL AS encrypt_null_aad,
+       gcm_encrypt_det(NULL, :k, 'a') IS NULL AS det_null_plaintext,
+       gcm_encrypt_det('x', NULL, 'a') IS NULL AS det_null_key,
+       gcm_encrypt_det('x', :k, NULL) IS NULL AS det_null_aad,
+       gcm_decrypt(NULL, :k, 'a') IS NULL AS decrypt_null_ciphertext,
+       gcm_decrypt('\x00'::bytea, NULL, 'a') IS NULL AS decrypt_null_key,
+       gcm_decrypt('\x00'::bytea, :k, NULL) IS NULL AS decrypt_null_aad;
