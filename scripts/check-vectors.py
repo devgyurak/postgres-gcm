@@ -11,6 +11,10 @@ This file is a second implementation of spec/envelope.md, kept as small as the s
   the same bytes; for the deterministic variant the nonce key and the nonce are re-derived.
 - The file must hold every vector the specification and the rules name, each of them the
   case its name says, and cover every suite, outcome and plaintext class.
+- The worked examples of spec/envelope.md are checked against the vector each one names:
+  every run of 12 or more hex digits must be a whole member of it, each row of a field
+  table the whole field at its offset, and the suite and outcomes tables must have their
+  rows. Shorter or spaced examples, and anything said in prose, are not seen by this check.
 
 Exit 0 when everything holds, 1 with one `id: message` line per problem.
 It only checks. Nothing here encrypts for anyone: there is no public API (stack-python.md).
@@ -81,7 +85,15 @@ REQUIRED = (
     "random-256-contains-nul",
 )
 HEX = re.compile(r"(?:[0-9a-f]{2})*")
-
+HEX_RUN = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{12,}(?![0-9A-Fa-f])")
+NAMED = re.compile(r"\(vector `([^`]+)`\)")
+SUITE_ROW = re.compile(r"^\| `0x([0-9a-f]{2})` \| AES-(\d+)-GCM \| (\d+) bytes \| (\w+) nonce \|$")
+OFFSET_ROW = re.compile(r"^\| (version|nonce|ciphertext|tag) \| (\d+) \| `([0-9a-f]+)` \|$")
+# How many rows of each table the spec has. A row the patterns above do not match is not
+# checked, so a table that lost or garbled a row must fail by count.
+SPEC_ROWS = {"suite": 6, "offset": 4, "outcome": 9}
+OUTCOME_ROW = re.compile(r"^\|.*\| `([a-z0-9-]+)` \| `(\w+)` \|$")
+ASSIGNMENT = re.compile(r"^(nonce_key|nonce|A)\s+= ([0-9a-f]+)$")
 
 Vector = dict[str, Any]
 
@@ -312,13 +324,84 @@ def check_shapes(by_id: dict[str, Vector]) -> list[str]:
     ]
 
 
+def check_spec(text: str, vectors: list[Vector]) -> list[str]:
+    """The worked examples of the spec against the vector each one names."""
+    by_id = {v["id"]: v for v in vectors}
+    everything = {str(x) for v in vectors for k, x in v.items() if k.endswith("_hex")}
+    problems: list[str] = []
+    current: Vector | None = None
+    rows = dict.fromkeys(SPEC_ROWS, 0)
+
+    def members(vector: Vector | None) -> set[str]:
+        """The whole values a hex run may be: a member of the named vector, or the label."""
+        if vector is None:
+            return everything | {LABEL.hex()}
+        return {str(x) for k, x in vector.items() if k.endswith("_hex")} | {LABEL.hex()}
+
+    for number, line in enumerate(text.splitlines(), start=1):
+        where = f"spec line {number}"
+        for name in NAMED.findall(line):
+            current = by_id.get(name)
+            if current is None:
+                problems.append(f"{where}: no vector is called {name}")
+        assignment = ASSIGNMENT.match(line)
+        offset = OFFSET_ROW.match(line)
+        # `A = ...` and the rows of a field table are parts of members; they are checked below.
+        is_part = offset is not None or (assignment is not None and assignment.group(1) == "A")
+        for run in [] if is_part else HEX_RUN.findall(line):
+            if run not in members(current):
+                problems.append(f"{where}: {run[:24]} is not a whole value of the vector named")
+        if (suite := SUITE_ROW.match(line)) is not None:
+            rows["suite"] += 1
+            version, bits, length, variant = suite.groups()
+            stated = (int(length), variant == "deterministic")
+            if SUITES.get(int(version, 16)) != stated or int(bits) != 8 * int(length):
+                problems.append(f"{where}: the suite table disagrees with version byte 0x{version}")
+        if offset is not None and current is not None:
+            rows["offset"] += 1
+            envelope = current["envelope_hex"]
+            end = len(envelope) // 2
+            extent = {
+                "version": (0, 1),
+                "nonce": (1, 1 + NONCE_LEN),
+                "ciphertext": (1 + NONCE_LEN, end - TAG_LEN),
+                "tag": (end - TAG_LEN, end),
+            }[offset.group(1)]
+            stated_at, data = int(offset.group(2)), offset.group(3)
+            if stated_at != extent[0] or data != envelope[2 * extent[0] : 2 * extent[1]]:
+                problems.append(f"{where}: not the {offset.group(1)} of {current['id']}")
+        if (row := OUTCOME_ROW.match(line)) is not None and row.group(2) in OUTCOMES:
+            rows["outcome"] += 1
+            named = by_id.get(row.group(1))
+            if named is None or named["expect"] != row.group(2):
+                problems.append(f"{where}: {row.group(1)} does not expect {row.group(2)}")
+        if assignment is not None and current is not None:
+            what, data = assignment.groups()
+            stated_a = current["envelope_hex"][:2] + current["aad_hex"]
+            if data != (stated_a if what == "A" else current.get(f"{what}_hex")):
+                problems.append(f"{where}: {what} of {current['id']} is not {data}")
+
+    if LABEL.decode("ascii") not in text or LABEL.hex() not in text:
+        problems.append("spec: the nonce label, as text and as hex, is not quoted")
+    for table, expected in SPEC_ROWS.items():
+        if rows[table] != expected:
+            problems.append(f"spec: {rows[table]} well-formed {table} rows, not {expected}")
+    return problems
+
+
+def problems_of(document: Any, spec: str) -> list[str]:
+    problems = check_file(document)
+    return problems or check_spec(spec, document["vectors"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--vectors", type=Path, default=ROOT / "spec" / "test-vectors.json")
+    parser.add_argument("--spec", type=Path, default=ROOT / "spec" / "envelope.md")
     args = parser.parse_args()
 
     document = json.loads(args.vectors.read_text(encoding="utf-8"))
-    problems = check_file(document)
+    problems = problems_of(document, args.spec.read_text(encoding="utf-8"))
 
     for problem in problems:
         print(problem)
