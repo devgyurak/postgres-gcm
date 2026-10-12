@@ -58,6 +58,7 @@ add_executable(pg_gcm_unit
   gcm_test.cc
   nonce_test.cc
   vectors_test.cc
+  collision_test.cc
   leak_test.cc)
 target_compile_options(pg_gcm_unit PRIVATE -Wall -Wextra -Werror ${SANITIZE})
 target_link_options(pg_gcm_unit PRIVATE ${SANITIZE})
