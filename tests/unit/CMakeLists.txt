@@ -45,6 +45,7 @@ add_executable(pg_gcm_unit
   main.cc
   alloc_counter.cc
   envelope_test.cc
+  gcm_test.cc
   nonce_test.cc)
 target_compile_options(pg_gcm_unit PRIVATE -Wall -Wextra -Werror ${SANITIZE})
 target_link_options(pg_gcm_unit PRIVATE ${SANITIZE})
