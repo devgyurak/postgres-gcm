@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: PostgreSQL
-# Lint tools, pinned (.github/workflows/lint.yml). Refresh the three together.
+# What the lint workflow installs, pinned by version (.github/workflows/lint.yml). Refresh together.
+# cryptography is not a lint tool: scripts/check-vectors.py re-derives the spec's vectors with it.
+cryptography==50.0.2
 ruff==0.17.0
 mypy==2.4.0
 actionlint-py==1.7.12.25
