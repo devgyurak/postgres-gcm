@@ -13,6 +13,8 @@
 - envelope depends on the C standard library only: no OpenSSL either.
 - The direction is glue -> gcm -> envelope/nonce. The glue reaches OpenSSL through gcm.h alone.
 - A test seam is never declared in the extension's SQL script and never called by the glue.
+- The glue looks its encoding conversion up in pg_catalog (FindDefaultConversion), never along
+  search_path (FindDefaultConversionProc) (design §8, O14).
 - The SQL script declares nothing IMMUTABLE and no DEFAULT NULL.
 
 Exit 0 when clean, 1 with one `file:line: message` per violation.
@@ -36,7 +38,7 @@ CORE: dict[str, set[str]] = {
 GLUE_HEADERS = {"gcm.h", "envelope.h", "pg_gcm.h"}
 
 # Entry points that exist for tests only (architecture.md §6). Every seam is listed here.
-TEST_SEAMS = ("gcm_seal_with_nonce",)
+TEST_SEAMS = ("gcm_seal_with_nonce", "gcm_aead_seal_raw")
 
 C_STANDARD = {
     "assert.h", "errno.h", "limits.h", "stdbool.h", "stddef.h", "stdint.h", "stdlib.h", "string.h",
@@ -44,6 +46,7 @@ C_STANDARD = {
 SERVER_CALLS = re.compile(
     r"\b(palloc0?|repalloc|pfree|ereport|elog|PG_TRY|PG_GETARG_\w+|CHECK_FOR_INTERRUPTS)\s*\("
 )
+SEARCH_PATH_LOOKUP = re.compile(r"\bFindDefaultConversionProc\b")
 ACQUIRE = re.compile(r"\b(EVP_\w+_CTX_(?:new|dup)\w*)\b")
 EXIT_LABEL = re.compile(r"^done:")
 RELEASE = re.compile(r"\bEVP_\w+_CTX_free\s*\(")
@@ -141,6 +144,11 @@ def check_glue(path: Path, problems: list[str]) -> None:
         for seam in TEST_SEAMS:
             if re.search(rf"\b{seam}\b", line):
                 problems.append(f"{rel}:{number}: the glue may not call the test seam {seam}")
+        if SEARCH_PATH_LOOKUP.search(line):
+            problems.append(
+                f"{rel}:{number}: FindDefaultConversionProc follows search_path; "
+                "use FindDefaultConversion(PG_CATALOG_NAMESPACE, ...) (design §8, O14)"
+            )
 
 
 def check_sql(path: Path, problems: list[str]) -> None:

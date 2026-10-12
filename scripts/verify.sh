@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: PostgreSQL
-# Install the build into the development server, run the regression suite, then the Phase S
-# checks (scripts/verify.sql) with the library loaded lazily and preloaded.
+# Install the build into the development server, run the regression suite, then the checks of
+# scripts/verify.sql with the library loaded lazily and preloaded.
 # Usage: scripts/verify.sh <major>
 #   Needs scripts/build-in-docker.sh <major> and scripts/dev-up.sh <major> to have run.
 #   PG_GCM_RECORD=1 copies the regression results over test/expected/ and stops there: read the
@@ -47,7 +47,8 @@ PGPASSWORD="$(docker exec "$name" printenv POSTGRES_PASSWORD)" \
   "$(build_image_tag "$major")" \
   bash -euo pipefail -c '
     work="$(mktemp -d)"
-    cp -r /src/Makefile /src/pg_gcm.control /src/src /src/sql /src/test "$work/"
+    # spec/ too: the tests read spec/test-vectors.json from the directory make runs in.
+    cp -r /src/Makefile /src/pg_gcm.control /src/src /src/sql /src/test /src/spec "$work/"
     cd "$work"
     if [ "$PG_GCM_RECORD" = "1" ]; then
       # pg_regress stops at the first test that has no expected file; give new tests an empty one.
@@ -84,11 +85,19 @@ if [ "$regress_status" -ne 0 ]; then
 fi
 
 # --- 2. scripts/verify.sql ----------------------------------------------------------------------
+# The known answers come from spec/test-vectors.json: the nonce the pattern key derives for
+# 홍길동, and an envelope whose authenticated plaintext is not text, with its (public) key.
+det_nonce="$(vector_field det-256-korean nonce_hex)"
+not_text_envelope="$(vector_field random-256-contains-nul envelope_hex)"
+not_text_key="$(vector_field random-256-contains-nul key_hex)"
+
 # run_sql <container> <mode> <probe> [database]
 run_sql() {
   docker exec --interactive --env PGCLIENTENCODING=UTF8 "$1" \
     psql --no-psqlrc --quiet --username postgres --dbname "${4:-postgres}" \
-    --set mode="$2" --set probe="$3" <"$ROOT/scripts/verify.sql"
+    --set mode="$2" --set probe="$3" --set det_nonce="$det_nonce" \
+    --set not_text_envelope="$not_text_envelope" --set not_text_key="$not_text_key" \
+    <"$ROOT/scripts/verify.sql"
 }
 
 failed=0
@@ -151,5 +160,5 @@ verify_mode "$name" lazy
 "$ROOT/scripts/dev-up.sh" "$major" --preload >/dev/null
 verify_mode "$preload_name" preload
 
-[ "$failed" -eq 0 ] || die "Phase S checks failed on PostgreSQL $major"
-echo "== PostgreSQL $major: regression and Phase S checks passed"
+[ "$failed" -eq 0 ] || die "the checks of scripts/verify.sql failed on PostgreSQL $major"
+echo "== PostgreSQL $major: regression and scripts/verify.sql passed"

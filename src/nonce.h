@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: PostgreSQL */
 /*
- * nonce.h — the deterministic variant's synthetic nonce.
+ * nonce.h — the deterministic variant's synthetic nonce (spec 1.8).
  *
  *   nonce_key = HMAC-SHA256(key, GCM_DET_NONCE_LABEL)
- *   nonce     = HMAC-SHA256(nonce_key, plaintext)[:12]
+ *   nonce     = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[0:12]
  *
- * The plaintext is the UTF-8 bytes that are sealed. AAD is not an input (design §6, item 5).
+ * A is the associated data GCM is given, version || aad, and the plaintext is the UTF-8 bytes
+ * that are sealed. The nonce is a function of exactly what GCM then processes, so one key may
+ * be used with any number of AAD values (design §8, O16).
  * No PostgreSQL header (.agents/rules/architecture.md §1).
  */
 #ifndef PG_GCM_NONCE_H
@@ -21,11 +23,13 @@
 #error "pg_gcm needs OpenSSL 3.0 or later"
 #endif
 
-/* Domain separation: the encryption key is never used directly as the nonce's HMAC key. */
+/* Domain separation: the encryption key is never the key of the HMAC over the plaintext. */
 #define GCM_DET_NONCE_LABEL "pg_gcm/v1/det-nonce"
 
 enum gcm_error gcm_nonce_derive(EVP_MAC *hmac,
 								const uint8_t *key, size_t key_len,
+								uint8_t version,
+								const uint8_t *aad, size_t aad_len,
 								const uint8_t *plaintext, size_t plaintext_len,
 								uint8_t nonce[GCM_NONCE_LEN]);
 
