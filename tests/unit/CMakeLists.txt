@@ -46,12 +46,20 @@ add_executable(pg_gcm_unit
   alloc_counter.cc
   envelope_test.cc
   gcm_test.cc
-  nonce_test.cc)
+  nonce_test.cc
+  leak_test.cc)
 target_compile_options(pg_gcm_unit PRIVATE -Wall -Wextra -Werror ${SANITIZE})
 target_link_options(pg_gcm_unit PRIVATE ${SANITIZE})
 target_link_libraries(pg_gcm_unit PRIVATE pg_gcm_core GTest::gtest GTest::gmock)
+
+# A process in which gcm_init never ran: what every call does when the fetch failed (design §5.8).
+add_executable(pg_gcm_unit_noinit no_init_test.cc)
+target_compile_options(pg_gcm_unit_noinit PRIVATE -Wall -Wextra -Werror ${SANITIZE})
+target_link_options(pg_gcm_unit_noinit PRIVATE ${SANITIZE})
+target_link_libraries(pg_gcm_unit_noinit PRIVATE pg_gcm_core GTest::gtest GTest::gtest_main)
 
 # Without enable_testing(), ctest reports "No tests were found" and exits 0.
 enable_testing()
 include(GoogleTest)
 gtest_discover_tests(pg_gcm_unit)
+gtest_discover_tests(pg_gcm_unit_noinit)
