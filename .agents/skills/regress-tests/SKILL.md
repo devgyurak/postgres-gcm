@@ -42,5 +42,4 @@ Rules: `testing.md`. One `.sql` per behaviour under `test/sql/`, its output unde
 ## Must always exist
 `korean_like` (`LIKE '%길%'` on a decrypted value), `strict_on_off`, `min_key_bytes`, `null_args`,
 `aad_forms`, `encoding_euc_kr`, `invalid_text` (non-UTF-8 and U+0000 plaintexts, no bytes in the
-message), `parallel_strict`, `volatility` (from `pg_proc`), `vectors`, and — from Phase 3 — the
-mysql-gcm envelope fixture opened by `gcm_decrypt`.
+message), `parallel_strict`, `volatility` (from `pg_proc`) and `vectors`.

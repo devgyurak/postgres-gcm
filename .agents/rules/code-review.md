@@ -40,9 +40,9 @@ core error path (the unit suite's counting allocator — nothing can count insid
 **Architecture (P1/P2)** — `architecture.md`; `python3 scripts/check-architecture.py` passes
 
 **Tests (P2)** — GWT; no branching in a test body; unit and regression together; vectors updated; the
-Korean `LIKE` case and the cross-database envelope case still present; every `expected/` change explained
+Korean `LIKE` case still present; every `expected/` change explained
 
-**Compatibility (P1/P2)** — an envelope change happens in mysql-gcm too (or first); a function or GUC
+**Compatibility (P1/P2)** — an envelope change updates `spec/envelope.md` and the vectors in the same PR; a function or GUC
 change updates `spec/`, `docs/design.md` and the extension upgrade script (`pg_gcm--a--b.sql`)
 
 **Documentation (P2)** — no conflict with `docs/design.md`; operational constraints reflected in the README

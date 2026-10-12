@@ -29,7 +29,7 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
   tests without a server.
 - `envelope` does not depend on OpenSSL either. Do not duplicate envelope byte interpretation into the
   glue.
-- `scripts/check-architecture.py` (Phase S) enforces the include boundary per line, as in mysql-gcm.
+- `scripts/check-architecture.py` (Phase S) enforces the include boundary per line.
 
 ## 2. Errors cross the boundary as values
 

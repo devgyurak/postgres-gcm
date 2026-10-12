@@ -10,8 +10,8 @@ Rules: `testing.md` (GWT, no branching, parameterise). Layout:
 tests/unit/CMakeLists.txt   C11 core + C++17 tests, links libcrypto only, enable_testing()
 tests/unit/*_test.cc        extern "C" { #include "gcm.h" }
 ```
-- `enable_testing()` and `gtest_discover_tests` — mysql-gcm once shipped a unit gate that ran nothing
-  because `enable_testing()` was missing. Assert in CI that the test count is non-zero.
+- `enable_testing()` and `gtest_discover_tests` — without `enable_testing()`, `ctest` reports
+  "No tests were found" and exits 0, so the gate passes while running nothing. Assert in CI that the test count is non-zero.
 - Load `spec/test-vectors.json` once per suite and parameterise over every case (`TEST_P` with
   `INSTANTIATE_TEST_SUITE_P`); a vector that no test consumes is a failure.
 - Counting allocator: `CRYPTO_set_mem_functions` before any OpenSSL call in `main`, so a test can
@@ -23,4 +23,4 @@ tests/unit/*_test.cc        extern "C" { #include "gcm.h" }
 - On macOS, also run the suite in the Linux build image (`scripts/unit-in-docker.sh`, Phase 2) — the
   CI compiler is GCC.
 - Vectors: `python scripts/check-vectors.py` re-derives every vector with `cryptography` and fails on
-  a mismatch with the pinned mysql-gcm copy.
+  a mismatch with `spec/test-vectors.json`.

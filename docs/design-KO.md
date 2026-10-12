@@ -7,14 +7,12 @@
 상태: **Phase 0, 기획** (2026-10-10). 여기 적힌 것은 아직 하나도 구현되지 않았다. 설계가 기대는
 PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 "확인됨" 에 기록되어 있거나,
 Phase S 에서 확인할 §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식
-이미지, mysql-gcm 과 대조했고, 거기서 확인된 것을 §8 에 적었다.
+이미지와 대조했고, 거기서 확인된 것을 §8 에 적었다.
 
 ## 0. 목표와 범위
 
-[mysql-gcm](https://github.com/devgyurak/mysql-gcm) 이 MySQL 에 주는 것을 PostgreSQL 에도 준다.
-서버 안의 SQL 함수로 인증 암호화 AES-GCM 을 제공하고, 복호화한 값을 서버 자신의 `LIKE` 로 쓸 수
-있게 하며, **봉투 바이트를 똑같이** 맞춰 한 애플리케이션이 두 데이터베이스 사이에서 암호화 컬럼을
-옮기거나 함께 쓸 수 있게 한다.
+PostgreSQL 에 서버 안의 SQL 함수로 인증 암호화 AES-GCM 을 제공하고, 복호화한 값을 서버 자신의 `LIKE`
+로 쓸 수 있게 하며, 문서화되고 version 이 붙은 봉투에 담는다.
 
 범위 안: **서버가 OpenSSL 3.0 이상을 링크하는** 자체 운영 PostgreSQL 15~18 (19 는 출시되면, §8 O1)
 을 위한 C extension (`pg_gcm`) 과 그 SQL API, GUC, 테스트, 릴리스 파이프라인, 문서.
@@ -35,8 +33,7 @@ Phase S 에서 확인할 §8 "미확인" 목록에 있다. 이 계획은 2026-10
   인증이 되지만 GCM 은 아니고, "AES-GCM 을 쓰라"는 요구가 뜻하는 것도 아니다.
 
 출처: PostgreSQL 18 `pgcrypto` 문서의 "Raw Encryption Functions" (§9), 그리고 15~18 과 19beta4 의
-`contrib/pgcrypto/openssl.c` 암호 표 (§8). MySQL 과 MariaDB 에도 GCM 이 없다 (mysql-gcm 설계 §1.1,
-실측). SQL Server 의 Always Encrypted 는 AEAD_AES_256_CBC_HMAC_SHA_256 을 쓰고 클라이언트 드라이버에서
+`contrib/pgcrypto/openssl.c` 암호 표 (§8). SQL Server 의 Always Encrypted 는 AEAD_AES_256_CBC_HMAC_SHA_256 을 쓰고 클라이언트 드라이버에서
 복호화하며, secure enclave (SQL Server 2019 이상) 를 쓰면 enclave 안에서 패턴 매칭을 한다. Oracle 은
 23ai 에서 `DBMS_CRYPTO` 에 `CHAIN_GCM` 을 추가했고, 19c 에는 없다.
 
@@ -46,25 +43,19 @@ Phase S 에서 확인할 §8 "미확인" 목록에 있다. 이 계획은 2026-10
 ### 1.2 애플리케이션에서 암호화하면 서버 쪽 검색을 잃는다
 
 복호화 경로를 애플리케이션만 갖고 있으면, 암호화 컬럼에 대한 `WHERE name LIKE '%길%'` 은 SQL 로
-불가능하다. 후보 행을 전부 애플리케이션으로 가져와 복호화하고 걸러야 한다. mysql-gcm 은 그 검색을
-서버 안에 두려고 만들었고, 이 프로젝트도 마찬가지다. 복호화 결과가 DB 인코딩의 `text` 로 돌아오면
+불가능하다. 후보 행을 전부 애플리케이션으로 가져와 복호화하고 걸러야 한다. 이 프로젝트는 그 검색을
+서버 안에 두려고 만든다. 복호화 결과가 DB 인코딩의 `text` 로 돌아오면
 PostgreSQL 의 평범한 `LIKE`, `ILIKE`, 정규식, collation 이 새로 배울 것 없이 그대로 동작한다.
 
-### 1.3 상호 운용이 두 번째 이유다
-
-MySQL 과 PostgreSQL 을 함께 운영하는 조직은 암호화 컬럼 형식이 하나이기를 원한다. mysql-gcm 의 봉투를
-공유하면 바이트 복사만으로 컬럼을 두 DB 사이에서 옮길 수 있고, 키와 AAD 가 같으면 결정적 값이 두 DB
-사이에서 조인되며, 테스트 벡터 한 벌이 두 프로젝트를 함께 지킨다.
-
-### 1.4 기존 extension 은 이 빈자리를 채우지 못한다
+### 1.3 기존 extension 은 이 빈자리를 채우지 못한다
 
 2026-10-10 에 확인했다 (저장소 메타데이터와 PGXN; 검색으로 "다른 것은 없다"를 증명할 수는 없다).
 
 | 프로젝트 | 주는 것 | 답이 아닌 이유 |
 |---|---|---|
-| [pgsodium](https://github.com/michelp/pgsodium) | SQL 에서 쓰는 libsodium AEAD: ChaCha20-Poly1305-IETF, 결정적 XChaCha20-SIV, `crypto_secretbox`. PostgreSQL License, v3.1.11 (2026-06-10) | AES-GCM 이 없어 "AES-GCM 을 쓰라"는 요구를 채우지 못하고, 형식도 mysql-gcm 의 봉투가 아니다. Supabase 문서는 폐기 예정이라며 사용을 권하지 않는다 |
-| [pgcrypsi](https://github.com/telkomdev/pgcrypsi) | 키를 인자로 받는 `pgcrypsi_aes_{128,192,256}_gcm_{encrypt,decrypt}`. MIT | mysql-gcm 설계 §1.3 이 물리친 UDF 의 PostgreSQL 판이고 이유도 같다: 마지막 push 가 2023-09-11, OpenSSL 1.1.1 과 `postgresql-server-dev-10` 기준이며, mysql-gcm 의 봉투가 아니다 |
-| pg_tde (Percona), pg_vault_tde | 저장 계층(table access method)의 암호화 | 저장 데이터의 투명 암호화다. SQL 함수가 없고, 다른 DB 가 열 수 있는 봉투도 없다 |
+| [pgsodium](https://github.com/michelp/pgsodium) | SQL 에서 쓰는 libsodium AEAD: ChaCha20-Poly1305-IETF, 결정적 XChaCha20-SIV, `crypto_secretbox`. PostgreSQL License, v3.1.11 (2026-06-10) | AES-GCM 이 없어 "AES-GCM 을 쓰라"는 요구를 채우지 못한다. Supabase 문서는 폐기 예정이라며 사용을 권하지 않는다 |
+| [pgcrypsi](https://github.com/telkomdev/pgcrypsi) | 키를 인자로 받는 `pgcrypsi_aes_{128,192,256}_gcm_{encrypt,decrypt}`. MIT | 유지보수되지 않는다: 마지막 push 가 2023-09-11 이고, OpenSSL 1.1.1 과 `postgresql-server-dev-10` 기준이다 |
+| pg_tde (Percona), pg_vault_tde | 저장 계층(table access method)의 암호화 | 저장 데이터의 투명 암호화다. SQL 함수가 없다 |
 
 ## 2. 무엇을 만드는가
 
@@ -79,11 +70,11 @@ gcm_decrypt(ciphertext bytea, key bytea)               RETURNS text   STABLE   S
 gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   STRICT PARALLEL SAFE
 ```
 
-- 함수 이름은 mysql-gcm 과 같아서 SQL 을 그대로 옮길 수 있다. extension 이름은 생태계의 `pg_` 관례를
+- extension 이름은 생태계의 `pg_` 관례를
   따라 `pg_gcm` 이고, GUC 는 라이브러리가 예약하는 `pg_gcm.` 접두사를 쓴다 (§5.6).
 - **키 길이가 suite 를 고른다**: 32 → AES-256-GCM, 24 → AES-192-GCM, 16 → AES-128-GCM. 그 밖의
   길이는 오류이며, `key` 가 상수일 필요가 없으므로 호출마다 검사한다.
-- **NULL 처리는 mysql-gcm 과 같다** (`spec/envelope.md` §4 규칙 3): 어느 인자든 SQL NULL 이면 암호
+- **NULL 처리**: 어느 인자든 SQL NULL 이면 암호
   연산 없이 SQL NULL 이다. 그래서 모든 함수를 `STRICT` 로 선언하고, 서버가 함수를 부르지 않고 NULL 을
   돌려준다.
 - **AAD 는 `DEFAULT NULL` 이 아니라 오버로드로 생략한다.** `aad` 를 생략한 호출은 암호화하고, 명시한
@@ -91,13 +82,13 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
   2 인자 호출이 아무것도 암호화하지 않고 NULL 을 돌려주게 만든다 (15~18 에서 재현, §8). 그렇다고 NULL
   을 "AAD 없음"으로 읽으려고 `STRICT` 를 빼면, 명시한 NULL — NULL 을 허용하는 컬럼, 바인딩하지 않은
   파라미터 — 이 조용히 AAD *없이* 봉인된다. 결정적 키 하나에서 같은 평문을 "AAD 있음"과 "AAD 없음"으로
-  섞어 쓰는 것이고 `spec/envelope.md` §3 이 금지하는 nonce 재사용 조건이며, mysql-gcm 의 NULL 규칙도
-  아니게 된다. 오버로드 둘이면 2 인자 형태가 "AAD 없음"이고, 3 인자 형태의 NULL `aad` 는 MySQL
-  에서처럼 NULL 을 주며, 빈 `aad` (`''`) 는 2 인자 형태와 똑같이 봉인한다.
+  섞어 쓰는 것이고 spec 이 금지하는 nonce 재사용 조건이다. 오버로드 둘이면 2 인자 형태가 "AAD
+  없음"이고, 3 인자 형태의 NULL `aad` 는 NULL 을 주며, 빈 `aad` (`''`) 는 2 인자 형태와 똑같이
+  봉인한다.
   NULL 이 아닌 기본값으로도 둘을 함께 얻을 수 있다. `STRICT` 와 함께 쓴 `aad bytea DEFAULT ''` 는
   인자를 생략하면 빈 AAD 로 실행되고, 명시한 NULL 에는 여전히 NULL 을 돌려준다 (§8). 오버로드는 고른
-  방식이지 유일하게 옳은 방식이 아니다. 표면을 mysql-gcm 의 선택 인자가 읽히는 방식대로 인자 개수 둘로
-  두고, 설명해야 할 기본값 표현식을 남기지 않는다.
+  방식이지 유일하게 옳은 방식이 아니다. 표면을 인자 개수 둘로 두고, 설명해야 할 기본값 표현식을
+  남기지 않는다.
 - `STRICT` 의 귀결 하나를 함수를 문서화하는 모든 곳에 적는다. **키가 빠지면 오류가 아니라 NULL 이다.**
   평문이 NULL 일 수 없는 암호화 컬럼에는 `NOT NULL` 을 선언해, 바인딩하지 않은 키 파라미터가 NULL 을
   저장하는 대신 문장을 실패시키게 한다 (§6, 11 번).
@@ -110,53 +101,44 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 
 ### 2.2 봉투
 
-mysql-gcm 의 `spec/envelope.md` 를 그대로 채택한다 — version 바이트, 12 바이트 nonce, 암호문,
-16 바이트 tag, version `0x02`~`0x07` (`AGENTS.md` §2). Phase 1 에서 spec 과 벡터를 복사하고, 그
-사본이 고정한 mysql-gcm 커밋과 같은지 CI 에서 검사한다. 봉투 변경은 mysql-gcm 에서 먼저, 또는 두
-프로젝트에서 동시에 일어나며, 여기서만 바뀌는 일은 없다.
-
-mysql-gcm 의 spec 은 아직 공유 부분과 서버 바인딩으로 나뉘어 있지 않다. §1 과 §4 는 `utf8mb4`,
-GLOBAL 변수, `UDF_INIT` 을 말한다. 이 프로젝트가 공유하는 바이트 계약은 그 §2 (레이아웃), §3 (유도),
-§5 (예시), 그리고 §6 의 벡터 스키마이고, CI 검사는 그것들을 비교한다. PostgreSQL 바인딩 — SQLSTATE,
-인코딩 규칙, 아래의 예외 — 은 명확히 표시한 별도 부분이다. 상위 파일을 같은 식으로 나누는 것은
-mysql-gcm 의 후속 과제이지 선행 조건이 아니다.
+봉투는 `version || nonce(12) || 암호문 || tag(16)` 이고, version 바이트 `0x02`~`0x07` 이 suite 와
+변형을 나타낸다 (`AGENTS.md` §2). Phase 1 에서 쓰는 `spec/envelope.md` 가 규범 정의다. 바이트 오프셋
+표, nonce 유도, hex 예시, 벡터 스키마를 담고, 어떤 구현이든 이 형식을 읽고 쓸 수 있도록 PostgreSQL
+용어 없이 쓴다. PostgreSQL 바인딩 — SQLSTATE, 인코딩 규칙, 아래의 예외 — 은 같은 파일 안에 명확히
+표시한 별도 부분이다.
 
 봉투 안의 평문은 **UTF-8** 이다. `gcm_encrypt` 는 봉인 전에 인자를 DB 인코딩에서 UTF-8 로 변환하고,
 `gcm_decrypt` 는 열린 바이트가 올바른 UTF-8 인지 확인한 뒤 DB 인코딩으로 변환한다 (어떻게 하는지,
 그리고 왜 뻔한 서버 함수를 쓰지 않는지는 §5.7). UTF-8 DB(흔한 경우)에서는 변환이 일어나지 않는다.
-이것이 mysql-gcm 이 결과에 `utf8mb4` 를 태깅하는 것의 PostgreSQL 대응이고, 봉투가 이식 가능한 이유다.
+평문 인코딩을 고정해 두면 봉투가 그것을 봉인한 데이터베이스에 묶이지 않는다.
 
-**이식 가능에는 예외가 셋 있다.** 셋 다 인증은 통과한 뒤에 실패하며, `pg_gcm.strict` 가 가리지 않는
-오류다.
+**세 종류의 평문은 인증을 통과한 뒤에 실패하며**, `pg_gcm.strict` 가 가리지 않는 오류다. 앞의 둘은
+이 extension 이 봉인하지 않은 봉투에서만 나올 수 있다.
 
-1. U+0000 이 들어 있는 평문. MySQL 의 `utf8mb4` 는 담지만 PostgreSQL `text` 는 담지 못하고, UTF-8
-   검증은 지원하는 모든 메이저에서 0 바이트를 거부한다 (§8).
-2. MySQL 이 UTF-8 이 아닌 `binary` 인자로 봉인한 봉투 (mysql-gcm spec §2.3 은
-   `gcm_encrypt(UNHEX('ff'), key)` 가 `FF` 를 봉인한다고 적는다). MySQL 은 ill-formed 문자열을
-   돌려주고, PostgreSQL 은 오류를 올린다.
+1. U+0000 이 들어 있는 평문. PostgreSQL `text` 는 그것을 담지 못하고, UTF-8 검증은 지원하는 모든
+   메이저에서 0 바이트를 거부한다 (§8).
+2. UTF-8 이 아닌 평문.
 3. UTF-8 이 아닌 DB 에서, DB 인코딩이 담을 수 없는 문자.
 
-mysql-gcm 의 레거시 AES-256-CBC dual-read 봉투인 `0x01` (`0x01 || iv(16) || CBC 암호문`, mysql-gcm
-개정 A3) 은 §8 O6 으로 남는다. 결과는 둘 중 하나이고, Phase S 가 호환성과 보안 정책이라는 두 근거로
+`0x01` 은 인증이 없는 레거시 AES-256-CBC dual-read 봉투 (`0x01 || iv(16) || CBC 암호문`) 용으로
+예약되어 있고 §8 O6 으로 남는다. 결과는 둘 중 하나이고, Phase S 가 호환성과 보안 정책이라는 두 근거로
 고른다. `pgcrypto` 에서 32 바이트 키로 만든 `'\x01' || iv || encrypt_iv(data, key, iv, 'aes-cbc')` 가
-제대로 열리면 mysql-gcm 처럼 구현하고, 그러면 기존 pgcrypto 컬럼에 재암호화 없는 이관 경로가 생긴다.
-아니면 구현하지 않는데, spec 의 실패 표가 이미 허용하는 길이다 ("할당됐지만 구현하지 않은 version
-바이트" → `bad_envelope`). 후자를 고르면 `legacy` 벡터 둘의 기대값이 여기서만 달라지고, MySQL 에서
-복사한 `0x01` 행이 열리지 않는다.
+제대로 열리면 구현하고, 그러면 기존 pgcrypto 컬럼에 재암호화 없는 이관 경로가 생긴다. 아니면
+구현하지 않으며, 그 경우 할당됐지만 구현하지 않은 version 바이트로서 `bad_envelope` 로 실패한다.
 
 구현한다면 두 조건이 따라오고, `0x01` 을 드러내는 모든 곳에 적는다.
 
-- **앞에 붙이기만 하는 이관은 기존 평문이 이미 UTF-8 일 때만 성립한다** (mysql-gcm spec §2.3).
+- **앞에 붙이기만 하는 이관은 기존 평문이 이미 UTF-8 일 때만 성립한다.**
   `encrypt_iv` 는 `bytea` 를 받고 아무것도 변환하지 않으므로, LATIN1 바이트로 암호화한 컬럼 —
-  `Müller` 가 `4D FC 6C 6C 65 72` — 은 열린 뒤 UTF-8 검증에서 실패한다. MySQL 이 ill-formed 문자열을
-  돌려주는 자리에서 PostgreSQL 은 시끄럽게 실패하지만, 행마다 실패한다. 순수 ASCII 값은 통과하고
+  `Müller` 가 `4D FC 6C 6C 65 72` — 은 열린 뒤 UTF-8 검증에서 실패한다. 시끄럽게 실패하지만,
+  행마다 실패한다. 순수 ASCII 값은 통과하고
   나머지는 통과하지 못한다. 다른 인코딩의 데이터는 기존 방식으로 복호화하고, 변환한 뒤,
   `gcm_encrypt` 로 다시 봉인한다.
 - **`0x01` 은 인증 보장의 예외다.** CBC 에는 tag 가 없다. IV 나 암호문 블록이 바뀌면 바뀐 평문이
   그대로 열리고, `pg_gcm.strict = on` 은 그것을 탐지하지 못하며, 틀린 키가 오류 대신 쓰레기를 돌려줄
   수 있다. 그래서 `0x01` 을 채택한다는 것은 이관이 끝난 뒤 그것을 어떻게 거부할지도 정한다는 뜻이다.
-  mysql-gcm 은 그것을 애플리케이션에 맡긴다 (제약 8). extension 안에 스위치를 두려면 새 GUC 와 두
-  프로젝트의 개정이 필요하다.
+  기본은 그것을 애플리케이션에 맡기는 것이다. extension 안에 스위치를 두려면 새 GUC 와 개정이
+  필요하다.
 
 ### 2.3 설정
 
@@ -167,8 +149,8 @@ pg_gcm.strict = on
 pg_gcm.min_key_bytes = 32
 ```
 
-`pg_gcm.strict` 는 `PGC_USERSET` 이다. 어느 세션이든 자기 세션에 한해 완화할 수 있으며, mysql-gcm 이
-9.0+ 에서 허용하는 것과 같다. `pg_gcm.min_key_bytes` 는 `PGC_SUSET` 이다. 낮추는 것은 관리자의
+`pg_gcm.strict` 는 `PGC_USERSET` 이다. 어느 세션이든 자기 세션에 한해 완화할 수 있다.
+`pg_gcm.min_key_bytes` 는 `PGC_SUSET` 이다. 낮추는 것은 관리자의
 결정이고, PostgreSQL 15+ 에서는 `GRANT SET ON PARAMETER` 로 위임할 수 있다. 둘 다 호출마다 C 변수로
 읽으며, PostgreSQL 이 backend 에 대해 그 값을 최신으로 유지한다. backend 는 단일 스레드 프로세스이므로
 스레드 간 동기화 문제는 생기지 않는다.
@@ -190,25 +172,21 @@ preload 하지 않으면 라이브러리는 backend 에서 함수를 처음 부�
 
 서버가 시작할 때 설정을 검증받고 싶은 배포는 라이브러리를 preload 한다.
 
-## 3. mysql-gcm 과의 관계
+## 3. 한눈에 보는 extension
 
-| 관심사 | mysql-gcm | postgres-gcm |
-|---|---|---|
-| 패키징 | Component, `udf_registration` 서비스 | Extension, version-1 fmgr 함수, PGXS |
-| 평문 문자셋 | 인자를 `utf8mb4` 로 변환, 결과에 `utf8mb4` 태깅 | 봉인 시 UTF-8 로 변환, 열 때 UTF-8 검증 후 되돌려 변환 |
-| NULL 인자 | 어느 인자든 NULL 이면 NULL | 같다 (`STRICT` 로) |
-| ill-formed 평문 | ill-formed 문자열로 반환 | 오류 (§2.2) |
-| strict 범위 | 8.x 는 GLOBAL, 9.0+ 는 SESSION | 지원하는 모든 메이저에서 `PGC_USERSET` |
-| 키 길이 하한 | `gcm.min_key_bytes`, GLOBAL | `pg_gcm.min_key_bytes`, `PGC_SUSET` |
-| 수명 | component / `UDF_INIT` / operation | 라이브러리 로드(backend) / `FmgrInfo` (`fn_extra`) / operation |
-| 오류 | `mysql_runtime_error` | 실패 종류별 SQLSTATE 를 붙인 `ereport(ERROR, errcode(...))` |
-| 동시성 | 한 프로세스 안의 스레드 | backend 마다 프로세스 하나; 병렬 워커도 별도 프로세스 |
-| 서버 테스트 | MTR + SQL 시나리오 | `pg_regress` (`make installcheck`) |
-| 부하 기준선 | `AES_DECRYPT` (CBC) | `pgcrypto` `decrypt()` (CBC) 와 `pgp_sym_decrypt()` |
-
-그대로 공유하는 것: 봉투, 벡터, 결정적 nonce 구성과 그 라벨, strict 의미, NULL 규칙, 그리고 mysql-gcm
-개정 A8 "키와 nonce 에 대한 운영 책임" 과 개정 A12 의 운영 책임(사용 예산, 교체, 결정적 키마다 고정
-AAD, 복구).
+| 관심사 | 방식 |
+|---|---|
+| 패키징 | Extension, version-1 fmgr 함수, PGXS |
+| 평문 인코딩 | 봉인 시 UTF-8 로 변환, 열 때 UTF-8 검증 후 되돌려 변환 |
+| NULL 인자 | 어느 인자든 NULL 이면 NULL (`STRICT` 로) |
+| ill-formed 평문 | 오류 (§2.2) |
+| strict 범위 | 지원하는 모든 메이저에서 `PGC_USERSET` |
+| 키 길이 하한 | `pg_gcm.min_key_bytes`, `PGC_SUSET` |
+| 수명 | 라이브러리 로드(backend) / `FmgrInfo` (`fn_extra`) / operation |
+| 오류 | 실패 종류별 SQLSTATE 를 붙인 `ereport(ERROR, errcode(...))` |
+| 동시성 | backend 마다 프로세스 하나; 병렬 워커도 별도 프로세스 |
+| 서버 테스트 | `pg_regress` (`make installcheck`) |
+| 부하 기준선 | `pgcrypto` `decrypt()` (CBC) 와 `pgp_sym_decrypt()` |
 
 ## 4. 절차
 
@@ -237,28 +215,27 @@ AAD, 복구).
 
 ### Phase 1 — spec
 
-고정한 커밋의 mysql-gcm 에서 `spec/envelope.md` 와 `spec/test-vectors.json` 을 복사한다. PostgreSQL
-바인딩을 별도 부분으로 더한다 (§2.2): 실패 종류별 SQLSTATE, 인코딩 규칙과 그 예외 셋, Phase S 에서
-정한 `0x01` 결정, 그리고 평문이 UTF-8 이 아닌 벡터에 대해 SQL 계층이 기대하는 것. mysql-gcm
-`2fe2da9` 에서 그런 벡터는 2,304 개 중 1,345 개다 (NIST 1,344 개와 결정적 1 개). 코어는 그것들을 열고
-단위 테스트가 바이트를 비교한다. SQL 로는 `gcm_decrypt` 가 `text` 를 돌려주므로 기대 결과가 "인증은
-통과하고, 그다음 잘못된 UTF-8 오류" 다.
+`spec/envelope.md` 를 쓰고 `spec/test-vectors.json` 을 만든다. NIST CAVP GCM known-answer 테스트에 이
+프로젝트의 자체 벡터를 더한 것이고, `scripts/check-vectors.py` 로 재현할 수 있다. PostgreSQL 바인딩을
+별도 부분으로 더한다 (§2.2): 실패 종류별 SQLSTATE, 인코딩 규칙과 그것이 거부하는 평문, Phase S 에서
+정한 `0x01` 결정, 그리고 평문이 UTF-8 이 아닌 벡터에 대해 SQL 계층이 기대하는 것. NIST 평문은 임의의
+바이트다. 코어는 그것들을 열고 단위 테스트가 바이트를 비교한다. SQL 로는 `gcm_decrypt` 가 `text` 를
+돌려주므로 기대 결과가 "인증은 통과하고, 그다음 잘못된 UTF-8 오류" 다.
 
 ### Phase 2 — 구현과 테스트
 
-코어(`gcm.c`, `envelope.c`, `nonce.c`)는 mysql-gcm 의 C++ 코어를 같은 경계로 C11 에 옮긴다. glue
+코어(`gcm.c`, `envelope.c`, `nonce.c`)는 C11 이고 PostgreSQL 헤더를 포함하지 않는다. glue
 (`fn_*.c`)는 인자, 인코딩, GUC, 오류를 다룬다. 단위 테스트는 서버 없이 모든 벡터로 코어를 돌리고,
-`pg_regress` 가 SQL 동작을 덮는다. 호출 지점 단위의 키 스케줄 캐시(mysql-gcm 개정 A11)는 기준선을 잰
+`pg_regress` 가 SQL 동작을 덮는다. 호출 지점 단위의 키 스케줄 캐시는 기준선을 잰
 뒤에 이 문서의 개정을 거쳐 넣으며, `flinfo->fn_extra` 와 키 사본을 지우는 메모리 컨텍스트 리셋
-콜백을 쓴다. 그 개정은 A11 의 수명 한계를 빌려 올 수 없다. `UDF_INIT` 은 한 문장의 한 번 실행이지만
-`FmgrInfo` 는 더 오래 살 수 있다 — PL/pgSQL 은 단순 표현식의 상태를 트랜잭션이 끝날 때까지 유지한다
+콜백을 쓴다. 그 개정은 수명 한계를 스스로 정해야 한다. `FmgrInfo` 는 한 문장보다
+오래 살 수 있다 — PL/pgSQL 은 단순 표현식의 상태를 트랜잭션이 끝날 때까지 유지한다
 (`pl_exec.c`, `shared_simple_eval_estate`).
 
 ### Phase 3 — SQL E2E
 
-primary, 스트리밍 replica, mysql-gcm 서버, Python 러너로 된 compose 파일: 왕복, 한국어 `LIKE`, 복제
-(replica 가 자신이 암호화하지 않은 암호문을 읽는다), MySQL 이 봉인한 봉투를 PostgreSQL 이 열고 그
-반대도 하는 시나리오, 그리고 NULL 인자가 양쪽에서 NULL 을 주는 것.
+primary, 스트리밍 replica, Python 러너로 된 compose 파일: 왕복, 한국어 `LIKE`, 복제 (replica 가 자신이
+암호화하지 않은 암호문을 읽는다), 그리고 NULL 인자가 NULL 을 주는 것.
 
 ### Phase 4 — 배포
 
@@ -282,8 +259,8 @@ PGXN, 수요가 있으면 배포판 패키징.
 `ereport(ERROR)` 는 `longjmp` 로 빠져나가며 돌아오지 않는다. OpenSSL 이 할당한 `EVP_CIPHER_CTX` 는
 PostgreSQL 메모리 컨텍스트가 추적하지 않으므로, 그것이 살아 있는 동안 오류가 나면 새고, 그 안의 키
 사본은 지워지지 않는다. 그래서 코어는 오류 코드를 돌려주고, glue 가 모든 OpenSSL 자원을 해제하고 모든
-비밀을 지운 뒤에 오류를 올린다. mysql-gcm 이 코어와 어댑터 사이에 긋는 경계와 같고, 오류 모델 때문에
-필수가 된다. (`pgcrypto` 는 같은 문제를 ResourceOwner 콜백으로 푸는데, 그 API 가 15~16 과 17+ 에서
+비밀을 지운 뒤에 오류를 올린다. 오류 모델 때문에 이 경계는 필수다.
+(`pgcrypto` 는 같은 문제를 ResourceOwner 콜백으로 푸는데, 그 API 가 15~16 과 17+ 에서
 다르다. 오류를 올리는 호출을 그 구간 밖에 두는 쪽은 버전별 코드가 필요 없다.)
 
 **지우기 규칙은 extension 이 만든 사본을, 그리고 그것만을 덮는다**: detoast 된 인자, 변환 버퍼, 작업
@@ -321,7 +298,7 @@ immutable 함수는 인덱스 표현식, 인덱스 조건절, 생성 컬럼, 파
 
 ### 5.4 키는 SQL 인자이고, 설정이 아니다
 
-mysql-gcm 개정 A1 과 같다. `postgresql.conf`, GUC, 테이블, 환경 변수에 키를 두지 않는다. 그 대가 —
+`postgresql.conf`, GUC, 테이블, 환경 변수에 키를 두지 않는다. 그 대가 —
 문장이 있는 곳 어디서나 키가 보인다 — 는 운영 제약(§6)이며, 완화책은 extension 의 코드가 아니라 바인드
 파라미터다.
 
@@ -332,7 +309,7 @@ replica 다. 보호되지 않은 연결, DB superuser, 서버의 OS 관리자로
 
 ### 5.5 tag 불일치는 기본값에서 NULL 로 내려가지 않는다
 
-mysql-gcm 과 같다. strict 가 on 이면 오류, off 면 NULL 이다. 잘못된 봉투, 틀린 키 길이, 열기에 성공한
+strict 가 on 이면 오류, off 면 NULL 이다. 잘못된 봉투, 틀린 키 길이, 열기에 성공한
 뒤의 잘못된 UTF-8 은 strict 와 상관없이 오류다.
 
 ### 5.6 GUC 접두사는 `pg_gcm.`
@@ -341,7 +318,7 @@ mysql-gcm 과 같다. strict 가 on 이면 오류, off 면 NULL 이다. 잘못�
 적용된다. 그것으로 얻는 것은 들리는 것보다 좁다 (§2.3, §8). 라이브러리가 backend 에 로드된 뒤에는
 `SET pg_gcm.strcit` 이 오류다. 그 전에는, 그리고 `postgresql.conf` 에서는, 오타가 placeholder 로
 받아들여졌다가 로드 때 WARNING 과 함께 제거된다. 예약 접두사는 라이브러리 자신의 것이어야 하므로
-mysql-gcm 의 `gcm.` 접두사를 다시 쓰지 않는다.
+더 짧은 `gcm.` 접두사는 쓰지 않는다.
 
 ### 5.7 서버가 메시지를 쓰게 두지 않는 인코딩 처리
 
@@ -400,13 +377,25 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
    볼륨을 암호화한다.
 4. **함수는 플래너에게 불투명하다.** `WHERE gcm_decrypt(col, $1) LIKE ...` 는 후보 집합을 스캔한다.
    선택도는 다른 조건에서 나와야 한다. 복호화한 값에 대한 인덱스는 설계상 없다 (§5.3).
-5. **`gcm_encrypt_det` 는 같음을 드러내고 무작위 변형보다 비싸다** — mysql-gcm 제약 6 과 같으며,
-   결정적 키마다 AAD 규칙 하나(제약 7)도 포함한다.
+5. **`gcm_encrypt_det` 는 같음, 빈도, 길이를 드러내고 무작위 변형보다 비싸다** (nonce 에 HMAC-SHA256
+   을 두 번 돈다). 조인 키, UNIQUE 제약, 정확히 일치하는 조회에만 쓰고 자유 텍스트에는 쓰지 않는다.
+   **결정적 키마다 AAD 규칙은 하나다.** nonce 가 평문에서만 나오므로, 한 키로 같은 평문을 서로 다른
+   두 AAD 로 봉인하면 (키, nonce) 쌍을 재사용한다. 한 키의 모든 결정적 호출은 같은 AAD 바이트를
+   쓰거나 항상 AAD 를 쓰지 않는다. AAD 영역이 다르면 키도 달라야 한다.
 6. **자체 운영 PostgreSQL 만.** 관리형 서비스는 이 extension 을 올리지 않는다.
 7. **복호화하는 모든 노드에 설치한다.** 스트리밍 replica 는 extension 의 카탈로그 항목을 WAL 로 받지만
    공유 라이브러리는 디스크에 따로 설치해야 한다. 논리 복제 구독자는 둘 다 필요하다.
-8. **`pg_gcm.min_key_bytes` 가 잘린 키를 막는다** — mysql-gcm 제약 16 과 같다.
-9. **사용 예산, 교체, 복구는 운영자의 책임이다** — mysql-gcm 제약 11~13 과 같고, 바뀌지 않는다.
+8. **`pg_gcm.min_key_bytes` 가 잘린 키를 막는다.** 키 길이가 suite 를 고르므로, 24 나 16 바이트로
+   잘린 32 바이트 키는 더 약한 suite 의 올바른 키이고 아무 말 없이 봉인된다. 기본값 32 가 그것을
+   거부한다. 더 작은 suite 를 의도적으로 쓸 때만 낮춘다. 복호화는 이 값을 보지 않으므로, 다시 올려도
+   낮았던 동안 쓴 데이터가 잠기지 않는다.
+9. **사용 예산, 교체, 복구는 운영자의 책임이다.** 배포 전에, 한 키의 모든 사용을 서버·컬럼·
+   애플리케이션에 걸쳐 합산하는 사용 예산과 교체 기준을 정한다. extension 은 아무것도 세지 않고,
+   교체하지 않고, 반복된 nonce 를 탐지하지 않으며, 이 프로젝트는 보편적으로 안전한 한도를 제시하지
+   않는다. suite 와 보안 영역마다 독립적인 전체 길이 무작위 키를 쓴다. 교체하면 결정적 암호문이
+   바뀌므로 조인·UNIQUE 컬럼의 이관을 계획하고, 옛 데이터와 백업을 위해 옛 키를 보관한다. 백업을
+   복원해도 사용량은 되돌아가지 않는다. 사용 이력이나 어느 writer 의 난수 상태가 불확실하면 그 키로
+   쓰기를 멈추고 새 키로 재개한다 (NIST SP 800-38D §8).
 10. **서버가 OpenSSL 3.0 이상을 링크해야 한다.** 공식 `postgres` 이미지는 그렇다. RHEL/Rocky 8 용 PGDG
     패키지는 1.1.1 을 링크하며 지원하지 않는다. OpenSSL 3.0 자체도 2026-09-07 에 상위 지원이 끝났으니
     3.5 를 쓰는 플랫폼을 권한다.
@@ -422,19 +411,12 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 
 전문은 `LICENSE` 에 있고, 모든 소스 파일에 `SPDX-License-Identifier: PostgreSQL` 을 단다.
 
-- **mysql-gcm 처럼 GPLv2 가 아닌 이유.** mysql-gcm 이 GPLv2 인 것은 component 가 GPLv2 인 MySQL 헤더를
-  링크하기 때문이다. PostgreSQL 헤더는 PostgreSQL License 이고 그런 요구가 없으므로, 그 이유가 여기에
-  이어지지 않는다.
 - **PostgreSQL License 를 고른 이유.** PostgreSQL 자체와 대부분의 contrib 모듈의 라이선스라서, 배포판이
   패키징하고 PGXN 에 올리고 커뮤니티가 읽는 데 라이선스 문제가 생기지 않는다. 짧은 허용 라이선스이고,
   OpenSSL 3 의 Apache-2.0 과 호환된다.
 - **Apache-2.0 이 아닌 이유.** 특허 허여가 실질적인 장점이지만, 이 프로젝트는 공개되고 특허 부담이 없는
   구성(AES-GCM, HMAC-SHA256)을 구현하고 특허를 갖고 있지 않으며, 호스트 프로젝트에 맞추는 쪽이 더
   중요했다.
-- **mysql-gcm 에서 옮겨 오기.** 코어는 mysql-gcm 에서 옮겨 오며, 그 `src/` 와 `spec/` 은 이 프로젝트와
-  같은 한 명의 저자가 썼다 (2026-10-10 `git log` 로 확인). 그 저자는 mysql-gcm 을 GPLv2 로 둔 채
-  여기로 옮긴 코드를 PostgreSQL License 로 낼 수 있다. 다른 사람이 mysql-gcm 에 기여한 코드는 그
-  기여자의 서면 허락 없이 옮겨 오지 **않는다**.
 
 ## 8. 확인된 사실 / 미확인 질문
 
@@ -448,9 +430,6 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 - `pgcrypto` 원시 암호화는 `bf` 와 `aes` 를 `cbc`, `ecb` 로, 18 부터는 `cfb` 로도 지원한다 (커밋
   9ad1b3d01). 15~18, 19beta4, master 어디에도 GCM 이나 AEAD 모드는 없다. PGP 함수는 SHA-1 MDC 를
   붙인다. (소스: `contrib/pgcrypto/openssl.c` 의 암호 표, `pgcrypto.sgml`, 18 릴리스 노트.)
-- MySQL 과 MariaDB 의 `block_encryption_mode` 에는 GCM 이 없다. (mysql-gcm 설계 §1.1, 실측.)
-- **mysql-gcm 은 어느 인자든 NULL 이면 NULL 을 돌려준다.** (`spec/envelope.md` §4 규칙 3,
-  `src/udf_glue.cc` 의 `any_arg_is_null`, `2fe2da9` 기준.)
 - **O2 — 링크된 OpenSSL.** `postgres:15`~`18` (Debian trixie) 은 OpenSSL 3.5.7, `-alpine` 변형은
   3.5.8, `postgres:17-bookworm` 은 3.0.22 를 링크한다. Rocky 8 의 PGDG 서버는 15 와 18 모두
   `libcrypto.so.1.1` 을 링크한다. (실행: `ldd $(which postgres)` 와 `openssl version`, arm64 만 —
@@ -545,8 +524,6 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 - PostgreSQL 18 문서, extension 빌드 인프라 (PGXS): https://www.postgresql.org/docs/18/extend-pgxs.html
 - PostgreSQL 18 문서, 사용자 정의 옵션: https://www.postgresql.org/docs/18/runtime-config-custom.html
 - PostgreSQL 버전 정책: https://www.postgresql.org/support/versioning/
-- mysql-gcm `docs/design.md` (개정 A1, A2, A3, A5, A8 "키와 nonce 에 대한 운영 책임", A10, A11, A12)
-  와 `spec/envelope.md`
 - OpenSSL 매뉴얼, `OPENSSL_malloc(3)` (`CRYPTO_set_mem_functions`) 과 `EVP_EncryptInit(3)`
 - NIST SP 800-38D: https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf
 - Oracle `DBMS_CRYPTO` (19c 와 23ai/26ai), SQL Server Always Encrypted 암호화 — §1.1 에서만 사용

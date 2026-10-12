@@ -21,8 +21,8 @@ paths:
   minor than the server, and PGDG keeps only the last few versions, so refresh digest and pin together.
   The server-dev package already depends on the matching `clang` and `llvm-dev` (PGXS emits bitcode
   because the packaged `Makefile.global` has `with_llvm = yes`) and, through `libpq-dev`, on
-  `libssl-dev`. No source-tree build is needed — PGXS builds against the installed headers — so there
-  is no image cache layer like mysql-gcm's.
+  `libssl-dev`. No source-tree build is needed — PGXS builds against the installed headers — so no
+  image cache layer is needed.
 - A pre-release major (19 before its release) comes from PGDG's per-major apt component, not `main`.
 - Tests install the built `.so`, `.control` and SQL into the **official** `postgres:<major>` image. The
   one exception is the release server image (`docker/server.Dockerfile`), which no test path depends on.

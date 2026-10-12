@@ -2,9 +2,7 @@
 
 An open-source project that adds AES-GCM encryption and decryption functions to PostgreSQL as a C
 **extension** (`pg_gcm`) — AES-256 by default, with AES-192 and AES-128 selected by key length behind
-`pg_gcm.min_key_bytes`. It is the PostgreSQL sibling of
-[mysql-gcm](https://github.com/devgyurak/mysql-gcm) and **shares its envelope format byte for byte**,
-so a value sealed by one server opens on the other. Codex, Cursor and OpenCode read this file
+`pg_gcm.min_key_bytes`. Codex, Cursor and OpenCode read this file
 directly; Claude Code reads it through the import in `CLAUDE.md`. The full rationale is
 `docs/design.md`. **To change the design, amend that document first and then change the code.**
 
@@ -28,24 +26,23 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
 - All three are `PARALLEL SAFE` and **never `IMMUTABLE`**: an immutable function may appear in an index
   or a generated column, which would put a key literal into the catalog and plaintext into an index
   (design §5.3).
-- All three are **`STRICT`**: NULL in any argument gives NULL with no cryptographic work, as in
-  mysql-gcm (its spec §4, rule 3). `[, aad bytea]` is **two overloads per function, never
+- All three are **`STRICT`**: NULL in any argument gives NULL with no cryptographic work.
+  `[, aad bytea]` is **two overloads per function, never
   `DEFAULT NULL`**, so that omitting `aad` encrypts and an explicit NULL propagates. A NULL default
   cannot do both: under `STRICT` it makes the two-argument call return NULL, and without `STRICT` an
   explicit NULL would seal silently without AAD — under one deterministic key, the nonce-reuse
   condition. (`DEFAULT ''` would also work; overloading is the choice — design §2.1.)
 - `key`: 32 bytes (AES-256), 24 (AES-192) or 16 (AES-128). Any other length is an error. **The key
   length selects the suite and nothing else does.** Keys are never folded, padded or hashed to fit.
-- Plaintext is sealed as **UTF-8** whatever the database encoding, so envelopes are portable to
-  mysql-gcm (whose `utf8mb4` is UTF-8). Decryption verifies UTF-8 and converts to the database
+- Plaintext is sealed as **UTF-8** whatever the database encoding, so an envelope does not
+  depend on the database that sealed it. Decryption verifies UTF-8 and converts to the database
   encoding; a character the database encoding cannot hold is an error, never a silent substitution.
   Verification and conversion use the forms that report by return value (`pg_verify_mbstr(...,
   true)`, `pg_do_encoding_conversion_buf(..., true)`): `pg_any_to_server` and `pg_server_to_any` put
   the offending bytes — decrypted plaintext — into the error message (design §5.7).
-- Deterministic nonce: `nonce_key = HMAC-SHA256(key, "mysql-gcm/v1/det-nonce")`,
-  `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]`. The label keeps its `mysql-gcm` spelling on
-  purpose: changing it would make deterministic ciphertext differ between the two projects.
-- Envelope (normative definition: `spec/envelope.md`, adopted from mysql-gcm in Phase 1):
+- Deterministic nonce: `nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`,
+  `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]`.
+- Envelope (normative definition: `spec/envelope.md`, written in Phase 1):
 
 ```
 0x01  legacy AES-256-CBC (dual-read only; never produced) — semantics to confirm in Phase S
@@ -74,8 +71,8 @@ docs/design.md                 The design document — rationale, decisions, ope
 docs/design-KO.md              Its Korean translation. The English file above is canonical
 LICENSE                        The PostgreSQL License (design §7)
 docs/ops-constraints.md        Operational constraints — also duplicated on the README's first screen (Phase 4)
-spec/envelope.md               The envelope and failure semantics (Phase 1, adopted from mysql-gcm)
-spec/test-vectors.json         NIST CAVP GCM KAT plus the shared project vectors (Phase 1)
+spec/envelope.md               The envelope and failure semantics (Phase 1)
+spec/test-vectors.json         NIST CAVP GCM KAT plus the project's own vectors (Phase 1)
 src/                           The extension (C11)
   pg_gcm.c                     _PG_init, GUC registration, the fetched-handle cache
   fn_encrypt.c fn_decrypt.c    The SQL-callable glue — argument checks, encoding, error translation only
@@ -87,7 +84,7 @@ sql/pg_gcm--0.1.0.sql          The extension's install script (function declarat
 Makefile                       PGXS build (`make USE_PGXS=1`)
 test/sql/, test/expected/      pg_regress suites — the real-server SQL scenarios (`make installcheck`)
 tests/unit/                    GoogleTest — gcm/envelope/nonce, linking libcrypto alone with no server
-tests/e2e/                     compose: primary + streaming replica + a mysql-gcm server + a Python SQL runner
+tests/e2e/                     compose: primary + streaming replica + a Python SQL runner
 tests/load/                    Load: decrypt + LIKE over 10k/100k/300k rows, gated against pgcrypto
 tests/bench/                   Core micro-benchmarks (Google Benchmark) — ratios against bare EVP
 scripts/                       dev-up.sh, build-in-docker.sh, verify.sh, agents-sync.sh, check-architecture.py
@@ -149,9 +146,9 @@ different build method on your own.
 - A behaviour-change PR brings unit *and* regression tests. An envelope or nonce change updates
   `spec/test-vectors.json`.
 - The Korean partial-match regression test `LIKE '%길%'` must never be deleted (it is the reason the
-  project exists), nor the cross-database test that opens a mysql-gcm envelope.
+  project exists).
 
-**Product scope and Python (same as mysql-gcm)**
+**Product scope and Python**
 - What ships is the PostgreSQL extension and its SQL API. No encryption client or SDK in any language.
 - Python is used only for vector checks and for the SQL E2E and load runners, which encrypt and decrypt
   through the server's SQL functions.
@@ -169,9 +166,9 @@ Phase S.
 | Phase | Deliverable | Done when |
 |---|---|---|
 | S spike | A minimal extension passing `scripts/verify.sql` on 15–18 | `CREATE EXTENSION` · key-length check · `SET pg_gcm.strict` · Korean `LIKE` on a decrypted value · handles fetched before fork working in two backends · no raising call inside an OpenSSL window · the answers to design §8 "Open" recorded |
-| 1 spec | `spec/envelope.md`, `spec/test-vectors.json` adopted from mysql-gcm | Byte format identical; PostgreSQL failure semantics (SQLSTATEs, NULL handling, encoding) settled |
+| 1 spec | `spec/envelope.md`, `spec/test-vectors.json` | Byte format, vectors and PostgreSQL failure semantics (SQLSTATEs, NULL handling, encoding) settled |
 | 2 implementation | `src/`, `tests/unit`, `test/sql` | CI green, including the nonce collision boundary test |
-| 3 SQL E2E | `tests/e2e` | Round trip, Korean `LIKE`, streaming replication, and a mysql-gcm ↔ postgres-gcm envelope exchange pass |
+| 3 SQL E2E | `tests/e2e` | Round trip, Korean `LIKE` and streaming replication pass |
 | 4 distribution | Build matrix, README, `docs/ops-constraints.md`, load baseline | Release artifacts plus checksums and an SBOM; a server image with the extension preinstalled |
 | 5 ecosystem | PGXN, distribution packages | Optional |
 
@@ -206,15 +203,12 @@ PR whose adapters are stale. Never edit a generated file.
 
 - Read the relevant section of `docs/design.md` before starting. If you need a judgement that differs
   from the design, propose a document amendment instead of writing the code.
-- Where mysql-gcm already settled a question (the envelope, the nonce construction, strict semantics,
-  the operational responsibilities in its amendment A8 and A12), follow it and cite it. Diverge only
-  through an amendment that says why PostgreSQL differs.
 - Confirm an unfamiliar PostgreSQL or OpenSSL API **against the headers and the official
   documentation** for every supported major. Do not guess a signature.
 - Commits: Conventional Commits (`feat(ext): ...`, `fix(crypto): ...`, `test(regress): ...`, `ci: ...`,
   `docs: ...`). One commit, one concern.
 - PRs: fill in every item of `.github/PULL_REQUEST_TEMPLATE.md`. Split a diff over 400 net lines.
-  Branches: feature → `develop` → `main` → tag `v*`, as in mysql-gcm.
+  Branches: feature → `develop` → `main` → tag `v*`.
 - **English first.** Everything committed is written in English. `README.md` and `docs/design.md` may
   carry a `-KO.md` translation; the English file is canonical and both change in the same PR. Korean
   strings in tests are **data** (`'홍길동'`, `LIKE '%길%'`) and are never translated. **Conversation

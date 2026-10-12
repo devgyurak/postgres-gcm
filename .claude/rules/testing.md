@@ -8,7 +8,7 @@ paths:
 # Testing rules — GWT and the pyramid
 
 ```
-        e2e / load        Slow. Nightly and release gate. Real servers: replication, mysql-gcm exchange, LIKE at scale
+        e2e / load        Slow. Nightly and release gate. Real servers: replication, LIKE at scale
        bench (gbench)     Core micro-benchmarks. Merges to develop/main + nightly. No server
      regress (pg_regress) Real-server SQL scenarios, every supported major. PR gate
    unit (gtest)           The server-independent core plus vectors. Seconds. PR gate, and run before committing
@@ -34,11 +34,11 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
 ```
 
 ## Common
-- Every vector lives in `spec/test-vectors.json`, shared with mysql-gcm. Unit and regression tests read
+- Every vector lives in `spec/test-vectors.json`. Unit and regression tests read
   every case from it; never copy a value out of it.
 - The two layers do not assert the same thing. The **unit** suite consumes every vector as the spec's
-  table says, bytes compared. The **SQL** suite cannot: `gcm_decrypt` returns `text`, and 1,345 of the
-  2,304 vectors (the NIST plaintexts and one deterministic case, at mysql-gcm `2fe2da9`) are not UTF-8.
+  table says, bytes compared. The **SQL** suite cannot: `gcm_decrypt` returns `text`, and the NIST
+  plaintexts are arbitrary bytes, not UTF-8.
   For those the SQL expectation is "authenticates, then the invalid-UTF-8 error", fixed in the
   PostgreSQL part of the spec; for the rest it is the plaintext. No SQL test feeds a NIST vector to an
   encryption function — there is no nonce argument, by design.
@@ -50,7 +50,7 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
 ## Unit (`tests/unit`)
 - Subject: `gcm.c`, `envelope.c`, `nonce.c`, built without PostgreSQL headers, under
   `-fsanitize=address,undefined`.
-- Required cases, as mysql-gcm: NIST CAVP KAT, empty plaintext, with and without AAD, one-bit tag and
+- Required cases: NIST CAVP KAT, empty plaintext, with and without AAD, one-bit tag and
   nonce flips, truncated envelopes (0, 1, 12, 28 bytes), unknown version, key lengths 0, 15, 16, 24,
   31, 32, 33, deterministic same-in-same-out, the nonce_key derivation vector, every suite.
 - Deterministic nonce collision bound: zero duplicates over random plaintexts (100k in PR CI, 1M
@@ -73,9 +73,8 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
 - An `expected/` change is explained in the PR.
 
 ## E2E (`tests/e2e`) and load (`tests/load`)
-- E2E: primary + streaming replica + a mysql-gcm server + a Python runner that encrypts and decrypts
-  only through SQL. Required: the replica opens what the primary sealed; an envelope sealed on MySQL
-  opens on PostgreSQL and the reverse; deterministic values join across the two when key and AAD match;
-  a NULL in any argument gives NULL on both.
+- E2E: primary + streaming replica + a Python runner that encrypts and decrypts only through SQL.
+  Required: the replica opens what the primary sealed; deterministic values sealed on the primary join
+  on the replica; a NULL in any argument gives NULL.
 - Load: decrypt + `LIKE` at 10k/100k/300k rows, p95 compared with `pgcrypto` `decrypt()` on the same
-  rows; the gate lives in `tests/load/baseline.json` and is derived from measurements, as in mysql-gcm.
+  rows; the gate lives in `tests/load/baseline.json` and is derived from measurements.

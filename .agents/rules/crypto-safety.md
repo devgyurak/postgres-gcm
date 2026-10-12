@@ -1,8 +1,6 @@
 # Crypto safety rules (always apply)
 
-This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing below is negotiable. It
-mirrors mysql-gcm's rule of the same name; where PostgreSQL changes the mechanics, the PostgreSQL form
-is given.
+This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing below is negotiable.
 
 ## OpenSSL
 - Fetch algorithms by name: `EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL)` (and `AES-192-GCM`,
@@ -18,8 +16,7 @@ is given.
   that platform is out of scope (design §0).
 - Nonce length is fixed at 12 and tag length at 16. No argument accepts another length.
 - Random nonces come from `RAND_bytes`; any return other than 1 is an error. Never `random()`,
-  `pg_prng`, or anything time-based. (`pg_strong_random` is not used either: one source, the same as
-  mysql-gcm.)
+  `pg_prng`, or anything time-based. (`pg_strong_random` is not used either: one source.)
 - On decryption, call `EVP_CTRL_AEAD_SET_TAG` **before** `EVP_DecryptFinal_ex`; Final's return value
   *is* the tag check. When it returns 0, `OPENSSL_cleanse` the output buffer — never return
   unauthenticated plaintext.
@@ -39,9 +36,9 @@ is given.
 - The rule's reach is the extension's own buffers. The result `text`, the caller's datums and the
   planner's copies are not ours to cleanse, and no document may claim that no key copy remains in
   backend memory (design §5.2).
-- Derive the deterministic nonce key as `HMAC-SHA256(key, "mysql-gcm/v1/det-nonce")`. The label is a
-  single constant in `nonce.h` and keeps mysql-gcm's spelling so deterministic ciphertext matches across
-  the two projects.
+- Derive the deterministic nonce key as `HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`. Never use the
+  encryption key directly as an HMAC key (domain separation). The label is a single constant in
+  `nonce.h`.
 - No key bytes in a repository file, `postgresql.conf`, a GUC, an environment variable, a test fixture
   or any DDL. The only exception is the public vector keys in `spec/test-vectors.json`.
 - That a key in a SQL statement can reach the server log is a **known operational constraint**
@@ -53,8 +50,7 @@ is given.
   it off, NULL. There is no third state.
 - A malformed envelope, a wrong key length, invalid UTF-8 after a successful open and a character the
   database encoding cannot hold are **always** errors, regardless of strict.
-- NULL in any argument gives NULL: the functions are `STRICT`, as mysql-gcm's are in effect (its spec
-  §4, rule 3). That is argument propagation, not a failure mode, and it is not to be "fixed" into an
+- NULL in any argument gives NULL: the functions are `STRICT`. That is argument propagation, not a failure mode, and it is not to be "fixed" into an
   error without amending the design.
 - Verify and convert text only with the forms that report by return value —
   `pg_verify_mbstr(PG_UTF8, ..., true)` and `pg_do_encoding_conversion_buf(..., true)`.
@@ -66,16 +62,17 @@ is given.
 
 ## The deterministic variant
 - `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]` over the **UTF-8** plaintext bytes. AAD is not an
-  input. Changing that means amending the design (and mysql-gcm's) first.
+  input. Changing that means amending the design first.
 - For joins, UNIQUE constraints and exact-match lookups only. Keep the warning against free text in the
   documentation and the function comments.
 - Every deterministic call under one key uses the same AAD bytes, or always none. Different AAD domains
   need different keys. The extension does not enforce this and must not be described as enforcing it.
 
 ## Operational responsibility
-- mysql-gcm amendments A8 and A12 apply unchanged: a usage budget summing every use of a key, rotation
-  criteria, independent full-length keys per suite and domain, and recovery that never resets usage
-  accounting. The extension counts nothing and rotates nothing.
+- Design §6 item 9 is the rule: a usage budget summing every use of a key, rotation criteria,
+  independent full-length keys per suite and security domain, and recovery that never resets usage
+  accounting. The extension counts nothing, rotates nothing and detects no repeated nonce, and no
+  document may state a universal safe limit or describe the extension as enforcing any of this.
 
 ## Patterns blocked automatically (P1) in code review
 Scope is C under `src/`.

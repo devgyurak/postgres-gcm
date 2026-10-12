@@ -22,14 +22,13 @@ paths:
   spike command that showed it. "PostgreSQL does X" without a version is not a fact.
 - README first-screen order: one-line summary → operational constraints (all of design §6) → support
   matrix → install → function table.
-- `spec/envelope.md` stays byte-identical in its shared sections to mysql-gcm's at the pinned commit.
-  The shared sections are its §2 (layout), §3 (derivation), §5 (worked examples) and the vector schema
-  in §6; mysql-gcm's §1 and §4 are written in MySQL's terms and are not compared. The PostgreSQL
-  binding (SQLSTATEs, the encoding rule and its exceptions, what SQL expects for a non-UTF-8 vector) is
-  a clearly separated part (design §2.2).
-- `spec/test-vectors.json` uses mysql-gcm's schema unchanged.
+- `spec/envelope.md` is implementation-neutral in its format part: a byte-offset table, the nonce
+  derivation, worked hex examples and the vector schema, from which another implementation could be
+  built. The PostgreSQL binding (SQLSTATEs, the encoding rule and the plaintexts it rejects, what SQL
+  expects for a non-UTF-8 vector) is a clearly separated part (design §2.2).
+- `spec/test-vectors.json` schema:
+  `{ "version": 1, "vectors": [ { "id", "kind": "random|det|nist", "key_hex", "nonce_key_hex"?, "nonce_hex"?, "aad_hex", "plaintext_hex", "envelope_hex", "expect": "ok|bad_tag|bad_envelope" } ] }`.
+  Adding a field is a minor change; changing the meaning of one is major.
 - The license is **the PostgreSQL License** (design §7): full text in `LICENSE`,
   `SPDX-License-Identifier: PostgreSQL` at the head of every source and script file, and a link to
   `LICENSE` from both READMEs. Changing it means amending design §7 first.
-- Never port code from mysql-gcm that someone other than its author contributed, without that
-  contributor's written permission (design §7).

@@ -31,8 +31,8 @@ MarkGUCPrefixReserved("pg_gcm");
 
 ## Reading
 - Read the C variable at call time. PostgreSQL updates it for the backend on `SET`, `RESET`,
-  transaction-scoped `SET LOCAL` and config reload, so there is no snapshot to manage — unlike
-  mysql-gcm, there is no per-`UDF_INIT` copy.
+  transaction-scoped `SET LOCAL` and config reload, so there is no snapshot to manage and no per-call-site
+  copy.
 - A parallel worker sees the leader's value: it loads the leader's libraries, then restores every
   non-default GUC, `SET LOCAL` ones included (design §8 O9, confirmed on 15–18). Keep the regression
   test that forces a parallel scan (the `regress-tests` skill says how, without a version branch).

@@ -1,7 +1,6 @@
 # Changelog
 
-Notable changes per release. Envelope changes get their own entry with a compatibility note, and
-happen in lockstep with mysql-gcm.
+Notable changes per release. Envelope changes get their own entry with a compatibility note.
 
 ## Unreleased
 
@@ -11,8 +10,10 @@ happen in lockstep with mysql-gcm.
   the open questions for Phase S.
 - License: the PostgreSQL License (`LICENSE`, design §7), with SPDX headers.
 - `docs/design-KO.md`, the Korean translation of the design.
-- Design revised after checking the plan against the PostgreSQL 15–18 sources, the official images and
-  mysql-gcm (2026-10-10): every function `STRICT` with AAD as two overloads instead of `DEFAULT NULL`;
+- Design revised after checking the plan against the PostgreSQL 15–18 sources and the official images
+  (2026-10-10): every function `STRICT` with AAD as two overloads instead of `DEFAULT NULL`;
   text verified and converted through the `noError` server APIs so no error message carries plaintext
   bytes; the cleansing rule scoped to the extension's own copies; OpenSSL 3.0 or later required;
   `_PG_init` fetching before it registers GUCs; six of the ten open questions answered in design §8.
+- The project stands alone: its own envelope specification and vectors, and its own deterministic-nonce
+  label (`pg_gcm/v1/det-nonce`).

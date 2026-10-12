@@ -5,14 +5,12 @@ English | [한국어](design-KO.md)
 Status: **Phase 0, planning** (2026-10-10). Nothing here is implemented. Every claim about PostgreSQL
 behaviour that the design leans on is either cited in §9, recorded with its evidence in §8 "Confirmed",
 or listed in §8 "Open" for Phase S to settle. The plan was checked against the PostgreSQL 15–18
-sources, the official images and mysql-gcm on 2026-10-10; §8 records what that established.
+sources and the official images on 2026-10-10; §8 records what that established.
 
 ## 0. Goal and scope
 
-Give PostgreSQL the same thing [mysql-gcm](https://github.com/devgyurak/mysql-gcm) gives MySQL:
-authenticated AES-GCM as SQL functions inside the server, with the decrypted value usable by the
-server's own `LIKE`, and **the same envelope bytes**, so one application can move or share encrypted
-columns between the two databases.
+Give PostgreSQL authenticated AES-GCM as SQL functions inside the server, with the decrypted value
+usable by the server's own `LIKE`, in a documented, versioned envelope.
 
 In scope: a C extension (`pg_gcm`) for self-managed PostgreSQL 15–18 (19 once it is released, §8 O1)
 **whose server links OpenSSL 3.0 or later**, its SQL API, its GUCs, tests, a release pipeline and
@@ -36,8 +34,7 @@ encryption that rewrites queries; index support for searching ciphertext.
   asks for.
 
 Source: the PostgreSQL 18 `pgcrypto` documentation, "Raw Encryption Functions" (§9), and the cipher
-table in `contrib/pgcrypto/openssl.c` for 15–18 and 19beta4 (§8). MySQL and MariaDB lack GCM too
-(mysql-gcm design §1.1, measured). SQL Server's Always Encrypted uses AEAD_AES_256_CBC_HMAC_SHA_256 and
+table in `contrib/pgcrypto/openssl.c` for 15–18 and 19beta4 (§8). SQL Server's Always Encrypted uses AEAD_AES_256_CBC_HMAC_SHA_256 and
 decrypts in the client driver; its secure enclaves (SQL Server 2019 and later) add pattern matching
 inside an enclave. Oracle added `CHAIN_GCM` to `DBMS_CRYPTO` in 23ai; 19c has none.
 
@@ -49,25 +46,19 @@ encrypt and decrypt themselves.
 
 When the application holds the only decryption path, `WHERE name LIKE '%길%'` on an encrypted column
 is impossible in SQL: every candidate row must travel to the application to be decrypted and filtered.
-mysql-gcm exists to keep that search inside the server, and so does this project. A decrypted value
+This project exists to keep that search inside the server. A decrypted value
 that comes back as `text` in the database encoding is matched by PostgreSQL's ordinary `LIKE`,
 `ILIKE`, regular expressions and collations, with nothing new to learn.
 
-### 1.3 Interoperability is the second reason
-
-An organisation running both MySQL and PostgreSQL wants one encrypted-column format. Sharing
-mysql-gcm's envelope means a column can be migrated between the two by copying bytes, a deterministic
-value joins across them when key and AAD agree, and one set of test vectors guards both.
-
-### 1.4 The existing extensions do not fill the gap
+### 1.3 The existing extensions do not fill the gap
 
 Checked on 2026-10-10 (repository metadata and PGXN; a search cannot prove nothing else exists).
 
 | Project | What it offers | Why it is not the answer |
 |---|---|---|
-| [pgsodium](https://github.com/michelp/pgsodium) | libsodium AEAD in SQL: ChaCha20-Poly1305-IETF, deterministic XChaCha20-SIV, `crypto_secretbox`. PostgreSQL License, v3.1.11 (2026-06-10) | No AES-GCM, so it does not meet a "use AES-GCM" requirement, and its formats are not mysql-gcm's envelope. Supabase's documentation advises against it because it is to be deprecated |
-| [pgcrypsi](https://github.com/telkomdev/pgcrypsi) | `pgcrypsi_aes_{128,192,256}_gcm_{encrypt,decrypt}` with the key as an argument. MIT | The PostgreSQL sibling of the UDF mysql-gcm design §1.3 turned down, for the same reasons: last pushed 2023-09-11, built for OpenSSL 1.1.1 and `postgresql-server-dev-10`, and not mysql-gcm's envelope |
-| pg_tde (Percona), pg_vault_tde | Encryption at the storage layer (a table access method) | Transparent encryption of data at rest; no SQL function, no envelope a second database can open |
+| [pgsodium](https://github.com/michelp/pgsodium) | libsodium AEAD in SQL: ChaCha20-Poly1305-IETF, deterministic XChaCha20-SIV, `crypto_secretbox`. PostgreSQL License, v3.1.11 (2026-06-10) | No AES-GCM, so it does not meet a "use AES-GCM" requirement. Supabase's documentation advises against it because it is to be deprecated |
+| [pgcrypsi](https://github.com/telkomdev/pgcrypsi) | `pgcrypsi_aes_{128,192,256}_gcm_{encrypt,decrypt}` with the key as an argument. MIT | Unmaintained: last pushed 2023-09-11, and built for OpenSSL 1.1.1 and `postgresql-server-dev-10` |
+| pg_tde (Percona), pg_vault_tde | Encryption at the storage layer (a table access method) | Transparent encryption of data at rest; no SQL function |
 
 ## 2. What is being built
 
@@ -82,12 +73,12 @@ gcm_decrypt(ciphertext bytea, key bytea)               RETURNS text   STABLE   S
 gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   STRICT PARALLEL SAFE
 ```
 
-- Names match mysql-gcm so SQL carries over. The extension is called `pg_gcm`, following the
+- The extension is called `pg_gcm`, following the
   ecosystem's `pg_` convention, and its GUCs use the `pg_gcm.` prefix that the library reserves
   (§5.6).
 - **Key length selects the suite**: 32 → AES-256-GCM, 24 → AES-192-GCM, 16 → AES-128-GCM. Anything
   else is an error, raised on every call because `key` need not be a constant.
-- **NULL handling is mysql-gcm's** (`spec/envelope.md` §4, rule 3): SQL NULL in any argument yields
+- **NULL handling**: SQL NULL in any argument yields
   SQL NULL, with no cryptographic work. Every function is therefore declared `STRICT`, and the server
   returns NULL without calling it.
 - **AAD is optional through overloading, not through `DEFAULT NULL`**, so that a call that omits
@@ -96,14 +87,13 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
   (reproduced on 15–18, §8). Dropping `STRICT` so that NULL reads as "no AAD" would instead make an
   explicit NULL — a nullable column, an unset bind parameter — seal silently *without* AAD; under one
   deterministic key that mixes "with AAD" and "without AAD" writes of the same plaintext, the
-  nonce-reuse condition `spec/envelope.md` §3 forbids, and it would no longer be mysql-gcm's NULL
-  rule. With two overloads,
-  the two-argument form means "no AAD", a NULL `aad` in the three-argument form gives NULL as it does
-  in MySQL, and an empty `aad` (`''`) seals exactly as the two-argument form does.
+  nonce-reuse condition the spec forbids. With two overloads,
+  the two-argument form means "no AAD", a NULL `aad` in the three-argument form gives NULL, and an
+  empty `aad` (`''`) seals exactly as the two-argument form does.
   A non-NULL default would give both as well: `aad bytea DEFAULT ''` with `STRICT` runs with an empty
   AAD when the argument is omitted and still returns NULL for an explicit one (§8). Overloading is the
-  choice made, not the only correct one; it keeps the surface as two arities, the way mysql-gcm's
-  optional argument reads, with no default expression to explain.
+  choice made, not the only correct one; it keeps the surface as two arities with no default
+  expression to explain.
 - A consequence of `STRICT` to state wherever the functions are documented: **a missing key yields
   NULL, not an error.** Declare an encrypted column `NOT NULL` when its plaintext is never NULL, so an
   unset key parameter fails the statement instead of storing NULL (§6, item 11).
@@ -117,53 +107,45 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 
 ### 2.2 The envelope
 
-Adopted from mysql-gcm `spec/envelope.md` unchanged — version byte, 12-byte nonce, ciphertext, 16-byte
-tag, versions `0x02`–`0x07` (`AGENTS.md` §2). Phase 1 copies the spec and vectors and adds a CI check
-that the copies match the pinned mysql-gcm commit. A change to the envelope happens in mysql-gcm first,
-or in both projects in lockstep, never here alone.
-
-mysql-gcm's spec is not yet divided into a shared part and a server binding: its §1 and §4 speak of
-`utf8mb4`, GLOBAL variables and `UDF_INIT`. The byte contract this project shares is its §2 (layout),
-§3 (derivation), §5 (worked examples) and the vector schema in §6; the CI check compares those. The
-PostgreSQL binding — SQLSTATEs, the encoding rule, the exceptions below — is a separate, clearly
-marked part. Dividing the upstream file the same way is a follow-up for mysql-gcm, not a precondition.
+The envelope is `version || nonce(12) || ciphertext || tag(16)`, where the version byte, `0x02`–`0x07`,
+names the suite and the variant (`AGENTS.md` §2). `spec/envelope.md`, written in Phase 1, is the
+normative definition: a byte-offset table, the nonce derivation, worked hex examples and the vector
+schema, kept free of PostgreSQL terms so that any implementation can read and write the format. The
+PostgreSQL binding — SQLSTATEs, the encoding rule, the exceptions below — is a separate, clearly marked
+part of the same file.
 
 The plaintext inside an envelope is **UTF-8**. `gcm_encrypt` converts the argument from the database
 encoding to UTF-8 before sealing; `gcm_decrypt` verifies the opened bytes are valid UTF-8 and converts
 them to the database encoding (§5.7 says how, and why not with the obvious server functions). A UTF-8
-database (the common case) does no conversion. This is the PostgreSQL counterpart of mysql-gcm tagging
-its result `utf8mb4`, and it is what makes the envelopes portable.
+database (the common case) does no conversion. Fixing the plaintext encoding makes an envelope
+independent of the database that sealed it.
 
-**Portable has three exceptions**, each of which authenticates and then fails as an error that
-`pg_gcm.strict` does not hide:
+**Three kinds of plaintext authenticate and then fail**, as an error that `pg_gcm.strict` does not
+hide. The first two can only come from an envelope this extension did not seal:
 
-1. A plaintext containing U+0000. MySQL's `utf8mb4` holds it; PostgreSQL `text` cannot, and UTF-8
-   verification rejects the zero byte on every supported major (§8).
-2. An envelope MySQL sealed from a `binary` argument that is not UTF-8 (mysql-gcm spec §2.3 notes that
-   `gcm_encrypt(UNHEX('ff'), key)` seals `FF`). MySQL returns an ill-formed string; PostgreSQL raises.
+1. A plaintext containing U+0000. PostgreSQL `text` cannot hold it, and UTF-8 verification rejects the
+   zero byte on every supported major (§8).
+2. A plaintext that is not UTF-8.
 3. A character the database encoding cannot hold, in a database that is not UTF-8.
 
-`0x01`, mysql-gcm's legacy AES-256-CBC dual-read envelope (`0x01 || iv(16) || CBC ciphertext`,
-mysql-gcm amendment A3), stays open as §8 O6. Two outcomes are possible, and Phase S chooses on two
-grounds — compatibility and security policy: implement it as mysql-gcm does, if
+`0x01` is reserved for a legacy, unauthenticated AES-256-CBC dual-read envelope
+(`0x01 || iv(16) || CBC ciphertext`) and stays open as §8 O6. Two outcomes are possible, and Phase S
+chooses on two grounds — compatibility and security policy: implement it, if
 `'\x01' || iv || encrypt_iv(data, key, iv, 'aes-cbc')` from `pgcrypto` with a 32-byte key opens
 correctly, which gives existing pgcrypto columns a migration path without re-encryption; or leave it
-unimplemented, which the spec's failure table already allows ("allocated-but-unimplemented version
-byte" → `bad_envelope`). The second costs the two `legacy` vectors a different expectation here and
-means a `0x01` row copied from MySQL does not open.
+unimplemented, an allocated-but-unimplemented version byte that fails as `bad_envelope`.
 
 If it is implemented, two conditions come with it and are stated wherever `0x01` is exposed:
 
-- **Prefixing is a migration only for legacy plaintext that is already UTF-8** (mysql-gcm spec §2.3).
+- **Prefixing is a migration only for legacy plaintext that is already UTF-8.**
   `encrypt_iv` takes `bytea` and converts nothing, so a column encrypted from LATIN1 bytes — `Müller`
-  as `4D FC 6C 6C 65 72` — opens and then fails UTF-8 verification. PostgreSQL fails loudly where MySQL
-  returns an ill-formed string, but it fails row by row: pure-ASCII values pass and the rest do not.
+  as `4D FC 6C 6C 65 72` — opens and then fails UTF-8 verification. It fails loudly, but row by row: pure-ASCII values pass and the rest do not.
   Data in any other encoding is decrypted the old way, converted, and re-sealed with `gcm_encrypt`.
 - **`0x01` is an exception to the authentication guarantee.** CBC has no tag: a changed IV or
   ciphertext block yields changed plaintext that still opens, `pg_gcm.strict = on` cannot detect it,
   and a wrong key can return garbage instead of an error. Adopting `0x01` therefore also means
-  deciding how it is refused once a migration is over. mysql-gcm leaves that to the application (its
-  constraint 8); a switch inside the extension would be a new GUC and an amendment in both projects.
+  deciding how it is refused once a migration is over. The default is to leave that to the
+  application; a switch inside the extension would be a new GUC and an amendment.
 
 ### 2.3 Configuration
 
@@ -174,7 +156,7 @@ pg_gcm.strict = on
 pg_gcm.min_key_bytes = 32
 ```
 
-`pg_gcm.strict` is `PGC_USERSET`: any session may relax it for itself, as mysql-gcm allows on 9.0+.
+`pg_gcm.strict` is `PGC_USERSET`: any session may relax it for itself.
 `pg_gcm.min_key_bytes` is `PGC_SUSET`: lowering it is an administrator decision, and PostgreSQL 15+
 can delegate it with `GRANT SET ON PARAMETER`. Both are read per call through their C variables, which
 PostgreSQL keeps current for the backend — no cross-thread synchronisation question arises, because a
@@ -197,26 +179,21 @@ until then `pg_gcm.*` names are placeholders (§8, confirmed on 15–18):
 
 A deployment that wants its configuration checked when the server starts preloads the library.
 
-## 3. Relationship to mysql-gcm
+## 3. The extension at a glance
 
-| Concern | mysql-gcm | postgres-gcm |
-|---|---|---|
-| Packaging | Component, `udf_registration` service | Extension, version-1 fmgr functions, PGXS |
-| Plaintext charset | Argument converted to `utf8mb4`, result tagged `utf8mb4` | Converted to UTF-8 to seal, UTF-8 verified and converted back on open |
-| NULL arguments | NULL in any argument gives NULL | The same, through `STRICT` |
-| Ill-formed plaintext | Returned as an ill-formed string | An error (§2.2) |
-| Strict scope | GLOBAL on 8.x, SESSION on 9.0+ | `PGC_USERSET` on every supported major |
-| Key-length floor | `gcm.min_key_bytes`, GLOBAL | `pg_gcm.min_key_bytes`, `PGC_SUSET` |
-| Lifetimes | component / `UDF_INIT` / operation | library load (backend) / `FmgrInfo` (`fn_extra`) / operation |
-| Errors | `mysql_runtime_error` | `ereport(ERROR, errcode(...))` with a SQLSTATE per failure class |
-| Concurrency | Threads in one process | One process per backend; parallel workers are separate processes |
-| Server tests | MTR + SQL scenarios | `pg_regress` (`make installcheck`) |
-| Load baseline | `AES_DECRYPT` (CBC) | `pgcrypto` `decrypt()` (CBC) and `pgp_sym_decrypt()` |
-
-What is shared without change: the envelope, the vectors, the deterministic-nonce construction and its
-label, the strict semantics, the NULL rule, and the operational responsibilities in mysql-gcm's
-amendment A8 "operational responsibility for keys and nonces" and amendment A12 (usage budgets,
-rotation, fixed AAD per deterministic key, recovery).
+| Concern | How |
+|---|---|
+| Packaging | Extension, version-1 fmgr functions, PGXS |
+| Plaintext encoding | Converted to UTF-8 to seal; UTF-8 verified and converted back on open |
+| NULL arguments | NULL in any argument gives NULL, through `STRICT` |
+| Ill-formed plaintext | An error (§2.2) |
+| Strict scope | `PGC_USERSET` on every supported major |
+| Key-length floor | `pg_gcm.min_key_bytes`, `PGC_SUSET` |
+| Lifetimes | library load (backend) / `FmgrInfo` (`fn_extra`) / operation |
+| Errors | `ereport(ERROR, errcode(...))` with a SQLSTATE per failure class |
+| Concurrency | One process per backend; parallel workers are separate processes |
+| Server tests | `pg_regress` (`make installcheck`) |
+| Load baseline | `pgcrypto` `decrypt()` (CBC) and `pgp_sym_decrypt()` |
 
 ## 4. Procedure
 
@@ -245,29 +222,28 @@ Record every answer in §8 with the command that produced it.
 
 ### Phase 1 — the spec
 
-Copy `spec/envelope.md` and `spec/test-vectors.json` from mysql-gcm at a pinned commit. Add the
-PostgreSQL binding as a separate part (§2.2): SQLSTATE per failure class, the encoding rule and its
-three exceptions, the `0x01` decision from Phase S, and what the SQL layer expects for a vector whose
-plaintext is not UTF-8. At mysql-gcm `2fe2da9` that is 1,345 of the 2,304 vectors (1,344 NIST cases and
-one deterministic case): the core opens them and the unit suite compares the bytes; through SQL the
-expected result is "authenticates, then the invalid-UTF-8 error", because `gcm_decrypt` returns `text`.
+Write `spec/envelope.md` and build `spec/test-vectors.json`: the NIST CAVP GCM known-answer tests plus
+this project's own vectors, reproducible with `scripts/check-vectors.py`. Add the PostgreSQL binding as
+a separate part (§2.2): SQLSTATE per failure class, the encoding rule and the plaintexts it rejects, the
+`0x01` decision from Phase S, and what the SQL layer expects for a vector whose plaintext is not UTF-8.
+The NIST plaintexts are arbitrary bytes: the core opens them and the unit suite compares the bytes;
+through SQL the expected result is "authenticates, then the invalid-UTF-8 error", because
+`gcm_decrypt` returns `text`.
 
 ### Phase 2 — implementation and tests
 
-The core (`gcm.c`, `envelope.c`, `nonce.c`) ports mysql-gcm's C++ core to C11 with the same boundaries.
+The core (`gcm.c`, `envelope.c`, `nonce.c`) is C11 and includes no PostgreSQL header.
 The glue (`fn_*.c`) handles arguments, encoding, GUCs and errors. Unit tests run the core against every
 vector without a server; `pg_regress` covers the SQL behaviour. Per-call-site caching of the key
-schedule (mysql-gcm amendment A11) comes after the baseline is measured, through an amendment here,
+schedule comes after the baseline is measured, through an amendment here,
 using `flinfo->fn_extra` and a memory-context reset callback that cleanses the key copy. That amendment
-cannot borrow A11's lifetime bound: a `UDF_INIT` is one execution of one statement, while an `FmgrInfo`
-can live longer — PL/pgSQL keeps the state of a simple expression until the end of the transaction
+has to bound the lifetime itself: an `FmgrInfo` can outlive a statement — PL/pgSQL keeps the state of a simple expression until the end of the transaction
 (`pl_exec.c`, `shared_simple_eval_estate`).
 
 ### Phase 3 — SQL E2E
 
-A compose file with a primary, a streaming replica, a mysql-gcm server and a Python runner: round trip,
-Korean `LIKE`, replication (the replica reads ciphertext it never encrypted), an envelope sealed by
-MySQL opened by PostgreSQL and the reverse, and NULL arguments giving NULL on both.
+A compose file with a primary, a streaming replica and a Python runner: round trip, Korean `LIKE`,
+replication (the replica reads ciphertext it never encrypted), and NULL arguments giving NULL.
 
 ### Phase 4 — distribution
 
@@ -292,8 +268,8 @@ functions cleanly.
 `ereport(ERROR)` unwinds with `longjmp`; it does not return. An `EVP_CIPHER_CTX` allocated by OpenSSL
 is not tracked by a PostgreSQL memory context, so an error raised while one is live leaks it, and a key
 copy in it is never cleansed. The core therefore returns an error code, and the glue releases every
-OpenSSL resource and cleanses every secret before raising. This is the same boundary mysql-gcm draws
-between core and adapter, made mandatory by the error model. (`pgcrypto` solves the same problem with a
+OpenSSL resource and cleanses every secret before raising. The error model makes this boundary
+mandatory. (`pgcrypto` solves the same problem with a
 ResourceOwner callback, whose API differs between 15–16 and 17+; keeping raising calls out of the
 window needs no version-specific code.)
 
@@ -333,7 +309,7 @@ Three things follow from `STABLE`, each confirmed on 15–18 (§8):
 
 ### 5.4 The key is a SQL argument, never configuration
 
-As in mysql-gcm amendment A1: no key in `postgresql.conf`, a GUC, a table or an environment variable.
+No key in `postgresql.conf`, a GUC, a table or an environment variable.
 The cost — the key is visible wherever the statement is — is an operational constraint (§6), and the
 mitigation is bind parameters, not code in the extension.
 
@@ -346,7 +322,7 @@ item 12).
 
 ### 5.5 A tag mismatch is not degraded to NULL by default
 
-Identical to mysql-gcm: strict on means an error; off means NULL; a malformed envelope, a wrong key
+Strict on means an error; off means NULL; a malformed envelope, a wrong key
 length and invalid UTF-8 after a successful open are errors regardless of strict.
 
 ### 5.6 `pg_gcm.` as the GUC prefix
@@ -354,8 +330,8 @@ length and invalid UTF-8 after a successful open are errors regardless of strict
 A custom GUC's prefix should be the library that defines it, so that
 `MarkGUCPrefixReserved("pg_gcm")` applies. What that buys is narrower than it sounds (§2.3, §8): once
 the library is loaded in a backend, `SET pg_gcm.strcit` is an error; before that, and in
-`postgresql.conf`, the typo is accepted as a placeholder and removed with a WARNING at load. mysql-gcm's
-`gcm.` prefix is not reused, because the reserved prefix must be the library's own.
+`postgresql.conf`, the typo is accepted as a placeholder and removed with a WARNING at load. A shorter
+`gcm.` prefix is not used, because the reserved prefix must be the library's own.
 
 ### 5.7 Encoding without letting the server write the message
 
@@ -417,14 +393,27 @@ callbacks — and the process is exiting anyway.
 4. **The functions are opaque to the planner.** `WHERE gcm_decrypt(col, $1) LIKE ...` scans the
    candidate set; selectivity must come from other predicates. There is no index on decrypted values,
    by design (§5.3).
-5. **`gcm_encrypt_det` reveals equality and costs more than the random variant** — as mysql-gcm
-   constraint 6, including one AAD convention per deterministic key (constraint 7).
+5. **`gcm_encrypt_det` reveals equality, frequency and length, and costs more than the random
+   variant** (two HMAC-SHA256 passes for the nonce). Use it only for join keys, UNIQUE constraints and
+   exact-match lookups, never for free text. **One AAD convention per deterministic key**: the nonce
+   comes from the plaintext alone, so sealing one plaintext under one key with two different AADs
+   reuses the (key, nonce) pair. Every deterministic call under a key uses identical AAD bytes, or
+   always none; a different AAD domain needs a different key.
 6. **Self-managed PostgreSQL only.** Managed services do not load this extension.
 7. **Install on every node that decrypts.** Streaming replicas get the extension's catalog entries
    through WAL but need the shared library installed on disk; a logical subscriber needs both.
-8. **`pg_gcm.min_key_bytes` guards against a truncated key** — as mysql-gcm constraint 16.
-9. **Usage budgets, rotation and recovery are the operator's responsibility** — as mysql-gcm
-   constraints 11–13, unchanged.
+8. **`pg_gcm.min_key_bytes` guards against a truncated key.** The key length picks the suite, so a
+   32-byte key cut to 24 or 16 bytes is a valid key for a weaker suite and would seal without
+   complaint. The default of 32 refuses that; lower it only to use a smaller suite on purpose.
+   Decryption never consults it, so raising it again cannot lock out data written while it was lower.
+9. **Usage budgets, rotation and recovery are the operator's responsibility.** Before deployment, set
+   a usage budget that sums every use of a key across servers, columns and applications, and the
+   criteria for rotating it. The extension counts nothing, rotates nothing and detects no repeated
+   nonce, and this project states no universal safe limit. Use independent, full-length random keys
+   per suite and security domain. Rotation changes deterministic ciphertext, so plan the migration of
+   joined and UNIQUE columns and keep old keys for old data and backups. Restoring a backup does not
+   reset usage; if the usage history or the random-number state of any writer is uncertain, stop
+   writing under that key and resume with a new one (NIST SP 800-38D §8).
 10. **The server must link OpenSSL 3.0 or later.** The official `postgres` images do. The PGDG packages
     for RHEL/Rocky 8 link 1.1.1 and are not supported. OpenSSL 3.0 itself left upstream support on
     2026-09-07; prefer a platform on 3.5.
@@ -441,9 +430,6 @@ callbacks — and the process is exiting anyway.
 
 The full text is in `LICENSE`; every source file carries `SPDX-License-Identifier: PostgreSQL`.
 
-- **Why not GPLv2, as mysql-gcm.** mysql-gcm is GPLv2 because a component links the GPLv2 MySQL
-  headers. PostgreSQL's headers are under the PostgreSQL License, which imposes nothing comparable, so
-  that reason does not carry over.
 - **Why the PostgreSQL License.** It is the license of PostgreSQL itself and of most of its contrib
   modules, so the extension can be packaged by distributions, listed on PGXN and read by the community
   without a license question. It is a short permissive license, compatible with OpenSSL 3's
@@ -451,10 +437,6 @@ The full text is in `LICENSE`; every source file carries `SPDX-License-Identifie
 - **Why not Apache-2.0.** Its patent grant is the real advantage, but this project implements a
   published, unencumbered construction (AES-GCM, HMAC-SHA256) and holds no patents, and matching the
   host project mattered more.
-- **Porting from mysql-gcm.** The core is ported from mysql-gcm, whose `src/` and `spec/` were written
-  by one author, the same as this project's (checked with `git log` on 2026-10-10). That author can
-  license the port here under the PostgreSQL License while mysql-gcm stays GPLv2. Code contributed to
-  mysql-gcm by anyone else is **not** ported without that contributor's written permission.
 
 ## 8. Established facts / open questions
 
@@ -468,9 +450,6 @@ the official `postgres:15`–`18` images on linux/arm64 the same day.
 - `pgcrypto` raw encryption supports `bf` and `aes` with `cbc` and `ecb`, and `cfb` from 18 (commit
   9ad1b3d01); no GCM or AEAD mode in 15–18, 19beta4 or master. PGP functions append a SHA-1 MDC.
   (Source: the cipher table in `contrib/pgcrypto/openssl.c`; `pgcrypto.sgml`; the 18 release notes.)
-- MySQL and MariaDB have no GCM in `block_encryption_mode`. (mysql-gcm design §1.1, measured.)
-- **mysql-gcm returns NULL for a NULL in any argument.** (`spec/envelope.md` §4 rule 3;
-  `src/udf_glue.cc` `any_arg_is_null`, at `2fe2da9`.)
 - **O2 — OpenSSL linked.** `postgres:15`–`18` (Debian trixie) link OpenSSL 3.5.7, the `-alpine`
   variants 3.5.8, `postgres:17-bookworm` 3.0.22. PGDG servers on Rocky 8 link `libcrypto.so.1.1` for 15
   and for 18. (Run: `ldd $(which postgres)` and `openssl version`, arm64 only — amd64 is O11.)
@@ -564,8 +543,6 @@ Numbers are never reused; O2, O3, O5, O8, O9 and O10 moved to "Confirmed" above.
 - PostgreSQL 18 documentation, extension building infrastructure (PGXS): https://www.postgresql.org/docs/18/extend-pgxs.html
 - PostgreSQL 18 documentation, customized options: https://www.postgresql.org/docs/18/runtime-config-custom.html
 - PostgreSQL versioning policy: https://www.postgresql.org/support/versioning/
-- mysql-gcm `docs/design.md` (amendments A1, A2, A3, A5, A8 "operational responsibility for keys and
-  nonces", A10, A11, A12) and `spec/envelope.md`
 - OpenSSL manual, `OPENSSL_malloc(3)` (`CRYPTO_set_mem_functions`) and `EVP_EncryptInit(3)`
 - NIST SP 800-38D: https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf
 - Oracle `DBMS_CRYPTO` (19c and 23ai/26ai), SQL Server Always Encrypted cryptography — for §1.1 only
