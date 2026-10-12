@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: PostgreSQL
 # PGXS build: `make USE_PGXS=1`, against the pg_config on PATH (or PG_CONFIG=...).
 MODULE_big = pg_gcm
-OBJS = src/pg_gcm.o src/fn_encrypt.o src/gcm.o src/envelope.o src/nonce.o
+OBJS = src/pg_gcm.o src/fn_encrypt.o src/fn_decrypt.o src/gcm.o src/envelope.o src/nonce.o
 EXTENSION = pg_gcm
 DATA = sql/pg_gcm--0.1.0.sql
 REGRESS = $(patsubst test/sql/%.sql,%,$(wildcard test/sql/*.sql))

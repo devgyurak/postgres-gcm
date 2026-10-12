@@ -28,3 +28,11 @@ LANGUAGE C STABLE STRICT PARALLEL SAFE COST 200;
 
 COMMENT ON FUNCTION gcm_encrypt_det(text, bytea) IS
 'Deterministic AES-GCM encryption: reveals equality, frequency and length. For joins, UNIQUE and exact match only, never free text';
+
+CREATE FUNCTION gcm_decrypt(ciphertext bytea, key bytea)
+RETURNS text
+AS 'MODULE_PATHNAME', 'gcm_decrypt'
+LANGUAGE C STABLE STRICT PARALLEL SAFE COST 50;
+
+COMMENT ON FUNCTION gcm_decrypt(bytea, bytea) IS
+'Opens an envelope and returns the text in the database encoding; pg_gcm.strict decides error or NULL on a tag mismatch';
