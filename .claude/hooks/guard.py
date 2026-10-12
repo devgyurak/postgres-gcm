@@ -137,7 +137,7 @@ def main() -> None:
             )
             if forced:
                 deny(
-                    "force-push is blocked in this repo (stack-ci-docker.md). "
+                    "force-push is blocked in this repo (CLAUDE.md). "
                     "Use --force-with-lease only with explicit user approval."
                 )
         elif sub == "add":
