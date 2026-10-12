@@ -7,7 +7,7 @@
 #include <vector>
 
 extern "C" {
-#include "envelope.h"
+#include "gcm.h"
 }
 
 using Bytes = std::vector<uint8_t>;

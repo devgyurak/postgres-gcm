@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: PostgreSQL
-# Unit suite for the server-independent core (src/envelope.c so far; gcm and nonce follow).
+# Unit suite for the server-independent core (src/gcm.c, envelope.c, nonce.c).
 # Links libcrypto only: no PostgreSQL header, no server.
 cmake_minimum_required(VERSION 3.20)
 project(pg_gcm_unit LANGUAGES C CXX)
@@ -34,7 +34,9 @@ set(SANITIZE -fsanitize=address,undefined -fno-omit-frame-pointer)
 set(CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 
 add_library(pg_gcm_core STATIC
-  ${CORE_DIR}/envelope.c)
+  ${CORE_DIR}/gcm.c
+  ${CORE_DIR}/envelope.c
+  ${CORE_DIR}/nonce.c)
 target_include_directories(pg_gcm_core PUBLIC ${CORE_DIR})
 target_compile_options(pg_gcm_core PRIVATE -Wall -Wextra -Werror ${SANITIZE})
 target_link_libraries(pg_gcm_core PUBLIC OpenSSL::Crypto)
@@ -42,7 +44,8 @@ target_link_libraries(pg_gcm_core PUBLIC OpenSSL::Crypto)
 add_executable(pg_gcm_unit
   main.cc
   alloc_counter.cc
-  envelope_test.cc)
+  envelope_test.cc
+  nonce_test.cc)
 target_compile_options(pg_gcm_unit PRIVATE -Wall -Wextra -Werror ${SANITIZE})
 target_link_options(pg_gcm_unit PRIVATE ${SANITIZE})
 target_link_libraries(pg_gcm_unit PRIVATE pg_gcm_core GTest::gtest GTest::gmock)
