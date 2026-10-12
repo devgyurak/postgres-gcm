@@ -29,6 +29,15 @@ if(NOT GTest_FOUND)
   FetchContent_MakeAvailable(googletest)
 endif()
 
+find_package(nlohmann_json QUIET)
+if(NOT nlohmann_json_FOUND)
+  include(FetchContent)
+  FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG 9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03) # v3.11.3
+  FetchContent_MakeAvailable(nlohmann_json)
+endif()
+
 # Sanitizers on every unit build; a release build of the extension never has them.
 set(SANITIZE -fsanitize=address,undefined -fno-omit-frame-pointer)
 set(CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
@@ -44,13 +53,19 @@ target_link_libraries(pg_gcm_core PUBLIC OpenSSL::Crypto)
 add_executable(pg_gcm_unit
   main.cc
   alloc_counter.cc
+  vectors.cc
   envelope_test.cc
   gcm_test.cc
   nonce_test.cc
+  vectors_test.cc
   leak_test.cc)
 target_compile_options(pg_gcm_unit PRIVATE -Wall -Wextra -Werror ${SANITIZE})
 target_link_options(pg_gcm_unit PRIVATE ${SANITIZE})
-target_link_libraries(pg_gcm_unit PRIVATE pg_gcm_core GTest::gtest GTest::gmock)
+target_link_libraries(pg_gcm_unit PRIVATE pg_gcm_core GTest::gtest GTest::gmock
+                      nlohmann_json::nlohmann_json)
+# Every vector is read from the specification's file; none is copied into a test.
+target_compile_definitions(pg_gcm_unit PRIVATE
+  PG_GCM_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/../../spec/test-vectors.json")
 
 # A process in which gcm_init never ran: what every call does when the fetch failed (design §5.8).
 add_executable(pg_gcm_unit_noinit no_init_test.cc)
@@ -61,5 +76,7 @@ target_link_libraries(pg_gcm_unit_noinit PRIVATE pg_gcm_core GTest::gtest GTest:
 # Without enable_testing(), ctest reports "No tests were found" and exits 0.
 enable_testing()
 include(GoogleTest)
-gtest_discover_tests(pg_gcm_unit)
-gtest_discover_tests(pg_gcm_unit_noinit)
+# PRE_TEST: the cases are listed when ctest runs, not when the suite was built, so a vector
+# added to the file is run without a rebuild.
+gtest_discover_tests(pg_gcm_unit DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(pg_gcm_unit_noinit DISCOVERY_MODE PRE_TEST)
