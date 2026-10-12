@@ -30,8 +30,9 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
   `[, aad bytea]` is **two overloads per function, never
   `DEFAULT NULL`**, so that omitting `aad` encrypts and an explicit NULL propagates. A NULL default
   cannot do both: under `STRICT` it makes the two-argument call return NULL, and without `STRICT` an
-  explicit NULL would seal silently without AAD — under one deterministic key, the nonce-reuse
-  condition. (`DEFAULT ''` would also work; overloading is the choice — design §2.1.)
+  explicit NULL would seal silently without AAD — the value would then open without the binding it
+  was meant to carry, and nothing would say so. (`DEFAULT ''` would also work; overloading is the
+  choice — design §2.1.)
 - `key`: 32 bytes (AES-256), 24 (AES-192) or 16 (AES-128). Any other length is an error. **The key
   length selects the suite and nothing else does.** Keys are never folded, padded or hashed to fit.
 - Plaintext is sealed as **UTF-8** whatever the database encoding, so an envelope does not
@@ -40,8 +41,11 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
   Verification and conversion use the forms that report by return value (`pg_verify_mbstr(...,
   true)`, `pg_do_encoding_conversion_buf(..., true)`): `pg_any_to_server` and `pg_server_to_any` put
   the offending bytes — decrypted plaintext — into the error message (design §5.7).
+- The associated data given to GCM is `A = version || aad`: every byte of an envelope is
+  authenticated, the version byte included (design §8 O13).
 - Deterministic nonce: `nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`,
-  `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]`.
+  `nonce = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[:12]` — the AAD is an input, so one
+  key may be used with any number of AAD values (design §8 O16).
 - Envelope (normative definition: `spec/envelope.md`, written in Phase 1):
 
 ```
