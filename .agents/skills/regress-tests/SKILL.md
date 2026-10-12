@@ -34,8 +34,9 @@ Rules: `testing.md`. One `.sql` per behaviour under `test/sql/`, its output unde
   (`name_1.out`), never a branch in the test.
 
 ## Running
-- `scripts/verify.sh <major>` builds, installs into `postgres:<major>`, runs `make installcheck`, and
-  prints `regression.diffs` on failure.
+- `scripts/verify.sh <major>` installs the build that `scripts/build-in-docker.sh <major>` left into
+  the `postgres:<major>` container that `scripts/dev-up.sh <major>` started, runs `make installcheck`,
+  and prints `regression.diffs` on failure (the `dev-container` skill).
 - Re-record only with `PG_GCM_RECORD=1 scripts/verify.sh <major>`, which copies `results/` over
   `test/expected/`. Every changed line is explained in the PR.
 

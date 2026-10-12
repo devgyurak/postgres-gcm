@@ -55,7 +55,7 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
 | Lifetime | Resource and responsibility |
 |---|---|
 | backend (library load) | The fetched `EVP_CIPHER` and `EVP_MAC` handles, the GUC variables. Created in `_PG_init`, handles first (design §5.8). PostgreSQL never unloads a library and the handles are never released: no `on_proc_exit` callback, which would not run in a backend forked from a preloading postmaster anyway |
-| call site (`flinfo->fn_extra`) | Only after the A11-equivalent amendment: a scheduled cipher context and the key copy it was scheduled for, allocated in `fn_mcxt`, cleansed by a memory-context reset callback. An `FmgrInfo` is **not** bounded by one statement — PL/pgSQL keeps a simple expression's state to the end of the transaction — so that amendment sets its own bound |
+| call site (`flinfo->fn_extra`) | Only after the design amendment that Phase 2 anticipates (design §4): a scheduled cipher context and the key copy it was scheduled for, allocated in `fn_mcxt`, cleansed by a memory-context reset callback. An `FmgrInfo` is **not** bounded by one statement — PL/pgSQL keeps a simple expression's state to the end of the transaction — so that amendment sets its own bound |
 | operation | The EVP operation, the nonce, MAC output and scratch copies. Released on every path before returning or raising |
 
 - Input `bytea`/`text` comes from the caller's datum. Detoasting may make a copy (`PG_GETARG_BYTEA_PP`);

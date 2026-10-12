@@ -101,7 +101,7 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 
 ### 2.2 봉투
 
-봉투는 `version || nonce(12) || 암호문 || tag(16)` 이고, version 바이트 `0x02`~`0x07` 이 suite 와
+봉투는 `version || nonce(12) || ciphertext || tag(16)` 이고, version 바이트 `0x02`~`0x07` 이 suite 와
 변형을 나타낸다 (`AGENTS.md` §2). Phase 1 에서 쓰는 `spec/envelope.md` 가 규범 정의다. 바이트 오프셋
 표, nonce 유도, hex 예시, 벡터 스키마를 담고, 어떤 구현이든 이 형식을 읽고 쓸 수 있도록 PostgreSQL
 용어 없이 쓴다. PostgreSQL 바인딩 — SQLSTATE, 인코딩 규칙, 아래의 예외 — 은 같은 파일 안에 명확히
@@ -120,7 +120,7 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 2. UTF-8 이 아닌 평문.
 3. UTF-8 이 아닌 DB 에서, DB 인코딩이 담을 수 없는 문자.
 
-`0x01` 은 인증이 없는 레거시 AES-256-CBC dual-read 봉투 (`0x01 || iv(16) || CBC 암호문`) 용으로
+`0x01` 은 인증이 없는 레거시 AES-256-CBC dual-read 봉투 (`0x01 || iv(16) || CBC ciphertext`) 용으로
 예약되어 있고 §8 O6 으로 남는다. 결과는 둘 중 하나이고, Phase S 가 호환성과 보안 정책이라는 두 근거로
 고른다. `pgcrypto` 에서 32 바이트 키로 만든 `'\x01' || iv || encrypt_iv(data, key, iv, 'aes-cbc')` 가
 제대로 열리면 구현하고, 그러면 기존 pgcrypto 컬럼에 재암호화 없는 이관 경로가 생긴다. 아니면
@@ -452,7 +452,7 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 - **O8 — 누수 게이트.** `CRYPTO_set_mem_functions` 는 OpenSSL 이 무엇이든 할당한 뒤에는 0 을 돌려주고
   (`crypto/mem.c`, `allow_customize`), postmaster 는 preload 라이브러리를 올리기 전에 `RAND_bytes` 를
   부르므로, backend 안에서는 할당 카운터를 설치할 수 없다. `USE_VALGRIND` 없이 빌드한 서버의 valgrind
-  는 거짓 양성을 낸다 (`pg_config_manual.h`). 공식 이미지는 그렇게 빌드되어 있지 않다. 게이트는 단위
+  는 거짓 양성을 낸다 (`pg_config_manual.h`). 공식 이미지는 `USE_VALGRIND` 로 빌드되어 있지 않다. 게이트는 단위
   테스트의 할당 카운터다. (소스; OpenSSL 3.0 과 3.5.)
 - **O9 — 병렬 워커.** 워커는 리더의 라이브러리를 로드한 다음 기본값이 아닌 모든 GUC 를 복원하며,
   사용자 정의, `PGC_SUSET`, `SET LOCAL` 값도 포함한다 (`parallel.c:1446-1457`; `guc.c` 의
