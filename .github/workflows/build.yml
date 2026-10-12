@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: PostgreSQL
+# The PGXS build of the extension, -Wall -Wextra -Werror, for every image of
+# docker/versions.json on amd64 and arm64. The build fails unless pg_gcm.so resolves the
+# libcrypto.so.3 the server itself links and exports nothing but its SQL functions.
+# Never path-filtered.
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      all: ${{ steps.list.outputs.all }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: list
+        run: echo "all=$(python3 scripts/ci-matrix.py all)" >>"$GITHUB_OUTPUT"
+
+  build:
+    needs: images
+    name: build (${{ matrix.entry.label }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.images.outputs.all) }}
+        arch: [amd64, arm64]
+    env:
+      IMAGE: ${{ matrix.entry.image }}
+      MACHINE: ${{ matrix.arch == 'arm64' && 'aarch64' || 'x86-64' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build
+        run: scripts/build-in-docker.sh "$IMAGE"
+      - name: The build is for this runner's architecture
+        run: file "build/$IMAGE/pg_gcm.so" | tee /dev/stderr | grep -q "$MACHINE"

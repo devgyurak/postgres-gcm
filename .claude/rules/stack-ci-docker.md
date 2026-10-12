@@ -12,8 +12,11 @@ paths:
   required SQL checks), `e2e.yml`, `load.yml` (nightly/dispatch), `bench.yml`, `release.yml` (tags).
   Added phase by phase; never one giant file.
 - Pin actions by SHA (`actions/checkout@<sha> # v4`), checked by `scripts/check-action-pins.py`.
-- Matrix axes: PostgreSQL majors (the exact images live in one place, `docker/versions.json`) ×
-  `amd64 / arm64`. That file has three groups: `supported` (the majors), `prerelease` (a major before
+- Matrix axes: PostgreSQL majors (the exact images live in one place, `docker/versions.json`, and a
+  workflow takes its matrix from `scripts/ci-matrix.py`, never from a list of its own) ×
+  `amd64 / arm64` in `build.yml`; `unit.yml` and `regress.yml` run on amd64. No job is
+  `continue-on-error`: a failure under it does not fail the run and is easy to miss. The pre-release image fails visibly and
+  is the one job not meant to be a required check. That file has three groups: `supported` (the majors), `prerelease` (a major before
   its release image exists) and `openssl-floor` (a supported major on an image whose server links
   OpenSSL 3.0, the oldest in scope — `17-bookworm`). OpenSSL is whatever each image's server links, and the build job fails unless
   `ldd` shows the server and `pg_gcm.so` resolving the same `libcrypto.so.3` (design §0: 3.0 or later).
