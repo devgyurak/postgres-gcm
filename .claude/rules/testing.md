@@ -42,8 +42,8 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
   its `nonce_hex` (a `det` vector derives its own, unless `nonce_derived` is false). The **SQL** suite
   consumes the envelope vectors only: `gcm_decrypt` gives the text when `plaintext_class` is `text`
   and the invalid-UTF-8 error (`22021`) when it is `not_utf8` or `contains_nul`; a `det` vector of
-  class `text` must also seal to its `envelope_hex`, with `pg_gcm.min_key_bytes` lowered for the
-  statement when its key is 24 or 16 bytes; a failing vector gives the error of spec §2.5. No SQL
+  class `text` must also seal to its `envelope_hex`, with `pg_gcm.min_key_bytes` lowered to 16
+  (`SET LOCAL`) for the transaction that seals them; a failing vector gives the error of spec §2.5. No SQL
   test seals a `random` vector — there is no nonce argument, by design.
 - `python3 scripts/check-vectors.py` re-derives every vector with a second implementation, and
   `--self-test` checks that it notices each of a fixed list of breaks to the file and the spec. Both
@@ -58,9 +58,16 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
   `-fsanitize=address,undefined`.
 - Required cases: NIST CAVP KAT, empty plaintext, with and without AAD, one-bit tag and
   nonce flips, truncated envelopes (0, 1, 12, 28 bytes), unknown version, key lengths 0, 15, 16, 24,
-  31, 32, 33, deterministic same-in-same-out, the nonce_key derivation vector, every suite.
+  31, 32, 33, deterministic same-in-same-out, the derived nonce of every `det` vector through
+  `gcm_nonce_derive` itself, every suite. (`nonce_key_hex` is an intermediate value that
+  `scripts/check-vectors.py` reproduces and no C test reads: the nonce key never leaves
+  `gcm_nonce_derive`, and a wrong one cannot give a right nonce.)
+- The loader refuses a vector whose `kind` or `expect` it does not know, a member its kind must
+  carry and does not, and text that is not whole hexadecimal bytes; two tests compare the ids the
+  suites are parameterised over with the ids in the file.
 - Deterministic nonce collision bound: zero duplicates over random plaintexts (100k in PR CI, 1M
-  nightly).
+  on a push and nightly). The test fails when asked for fewer than 100k, or for something that is not
+  a number.
 - Error-path resource test: every core error path releases every OpenSSL object (counting allocator
   through `CRYPTO_set_mem_functions`, called first in `main`, **with its return value asserted to be
   1** — it returns 0, and counts nothing, once OpenSSL has allocated). This is the project's only leak
@@ -73,7 +80,8 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
 ## Regression (`test/sql`, `test/expected`)
 - Runs with `make installcheck` against a server in the build image, per supported major.
 - Required: a NULL in each argument position of each function giving NULL; empty and maximum-length
-  behaviour; the two- and three-argument forms, and an empty `aad` equal to the two-argument form;
+  behaviour (`54000` is reached from SQL only where a conversion buffer is the limit: a 256 MB text
+  in a non-UTF-8 database; the 1 GB limits are not tested); the two- and three-argument forms, and an empty `aad` equal to the two-argument form;
   wrong key lengths; `pg_gcm.min_key_bytes`, including a placeholder set before the library loads;
   `pg_gcm.strict` on and off; a forged tag; a truncated envelope; the Korean `LIKE '%길%'` case; a
   non-UTF-8 database (`EUC_KR`) round trip and an unrepresentable character; an opened plaintext that

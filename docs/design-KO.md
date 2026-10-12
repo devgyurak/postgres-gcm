@@ -4,14 +4,14 @@
 
 > 이 문서는 `docs/design.md` 의 번역이다. 두 문서가 다르면 영어 문서가 맞고, 이 번역을 고친다.
 
-상태: **Phase 1 완료** (2026-10-12). 봉투가 명세됐다 — `spec/envelope.md`, 그리고
-`scripts/check-vectors.py` 가 재현하는 `spec/test-vectors.json` — 그리고 그 스파이크 (AES-256, AAD 없음,
-`pg_gcm.strict`) 가 PostgreSQL 15~18 에서 빌드되고 점검을 통과한다 (§4, §8). **스파이크는 두 가지 점에서
-명세보다 앞서 만들어졌다: version 바이트를 인증하지 않고, 결정적 nonce 를 평문만으로 유도한다** (§2.2).
-스파이크가 봉인한 봉투는 명세대로는 열리지 않는다. Phase 2 가 코드를 명세에 맞춘다 (이슈 #19).
-릴리스된 것은 없다. 설계가 기대는 PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께
-§8 에 기록되어 있거나, §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식
-이미지와 대조했고, 스파이크 실행과 명세 작성은 2026-10-12 에 했으며, 각각에서 확인된 것을 §8 에 적었다.
+상태: **Phase 2 완료** (2026-10-12). 확장이 명세 — `spec/envelope.md` 와 `spec/test-vectors.json` — 를
+구현한다. 세 가지 키 길이, AAD 가 있는 형태와 없는 형태, `pg_gcm.strict` 와 `pg_gcm.min_key_bytes` 까지다.
+코어는 단위 테스트에서 모든 벡터를, SQL 함수는 회귀 테스트에서 모든 봉투 벡터를 PostgreSQL 15~18 에서
+실행한다 (§4, §8). **릴리스된 것은 없고 아직 쓸 수 있는 단계가 아니다**: 복제를 포함한 SQL E2E, 부하
+게이트, 배포는 Phase 3 과 4 다. 설계가 기대는 PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나,
+근거와 함께 §8 에 기록되어 있거나, §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18
+소스, 공식 이미지와 대조했고, 스파이크 실행, 명세 작성, 구현을 명세에 맞추는 일은 2026-10-12 에 했으며,
+각각에서 확인된 것을 §8 에 적었다.
 
 ## 0. 목표와 범위
 
@@ -250,10 +250,10 @@ version 바이트를 인증하면 (§2.2) NIST 벡터는 봉투가 아니다 —
 
 ### Phase 2 — 구현과 테스트
 
-Phase 2 는 스파이크를 명세에 맞추는 일로 시작한다 (이슈 #19). version 바이트를 associated data 에 넣고,
-결정적 nonce 도 associated data 에서 유도하고, 코어에 AAD 인자와 24 바이트, 16 바이트 suite 를 더하고,
-스파이크 테스트의 인라인 known answer 를 단위 테스트와 회귀 테스트가 읽는 `spec/test-vectors.json` 으로
-바꾼다.
+Phase 2 는 스파이크를 명세에 맞췄다 (이슈 #19). version 바이트를 associated data 에 넣었고, 결정적
+nonce 도 associated data 에서 유도하며, 코어에 AAD 인자와 24 바이트, 16 바이트 suite 를, glue 에
+`pg_gcm.min_key_bytes` 를 더했고, 스파이크 테스트의 인라인 known answer 를 단위 테스트와 회귀 테스트가
+읽는 `spec/test-vectors.json` 으로 바꿨다. 관찰한 것은 §8 "Phase 2 에서 확인된 것" 에 있다.
 
 코어(`gcm.c`, `envelope.c`, `nonce.c`)는 C11 이고 PostgreSQL 헤더를 포함하지 않는다. glue
 (`fn_*.c`)는 인자, 인코딩, GUC, 오류를 다룬다. 단위 테스트는 서버 없이 모든 벡터로 코어를 돌리고,
@@ -712,6 +712,21 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 
 ### Phase 2 에서 확인된 것 (2026-10-12)
 
+- **코드가 명세를 구현한다.** 코어는 여섯 version 바이트 모두를 `A = version || aad` 로 봉인하고 열며,
+  결정적 nonce 를 `be64(len(A)) || A || P` 에서 유도한다. glue 는 인자 세 개짜리 형태와
+  `pg_gcm.min_key_bytes` 를 더한다. 단위 테스트는 `spec/test-vectors.json` 을 읽고, 77 개 벡터 중 어느
+  스위트도 소비하지 않는 것이 있으면 실패하는 테스트가 있다. NIST 벡터 15 개는 테스트 seam 을 통해
+  프리미티브에서, 모든 봉투 벡터는 open 으로, 유효한 벡터는 자기 nonce 로 seal 해서 (결정적 벡터는
+  스스로 유도하고, `gcm_nonce_derive` 만 따로 불러 유도된 nonce 각각과도 비교한다) 실행하고, 실패하는 벡터는 출력 버퍼가 0 으로 지워졌는지까지 본다. 회귀 테스트도 같은
+  파일을 읽는다. 봉투 벡터 62 개가 `pg_gcm.strict` on 과 off 에서 `gcm_decrypt` 를 거치고, nonce 가
+  유도되는 결정적 벡터 11 개는 바이트 단위로 같은 봉투로 봉인된다. 이제 테스트에 직접 적힌 known
+  answer 는 없다. PostgreSQL 15.19, 16.15, 17.11, 18.6 (OpenSSL 3.5.7), 17.11 (OpenSSL 3.0.22),
+  19beta4 에서 관찰했다: 단위 테스트 302 개, 회귀 파일 18 개, 그리고 라이브러리를 지연 로드한 경우와
+  preload 한 경우의 `scripts/verify.sql`.
+- **nonce 충돌 테스트.** 한 키와 한 AAD 로 서로 다른 평문 100 만 개를 결정적으로 봉인하면 서로 다른
+  nonce 100 만 개가 나온다 (PR 에서는 10 만 개). 이는 유도 과정이 제대로 연결됐는지 보는 점검이다 —
+  너무 적은 바이트로 잘리거나 입력이 상수면 실패한다 — 96 비트 nonce 의 birthday bound 에 대해서는
+  아무것도 말해 주지 않으며, 어떤 테스트도 거기에 닿을 수 없다. §6 의 9 번 항목이 그대로 규칙이다.
 - **O14 — 변환은 `pg_catalog` 에서만 찾는다.** `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` 를 쓴다.
   17.11 에서 관찰한 것: superuser 가 아니어도 스키마에 `CREATE` 권한이 있는 role 은 거기에 기본 변환을
   만들 수 있고, `search_path` 를 따라가면 내장 변환보다 먼저 발견된다. 다만 이미 있는 함수만 묶을 수
@@ -719,7 +734,12 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   거부했고, 그 role 은 C 함수도 internal 함수도 만들 수 없었다. 따라서 노출은 superuser 가 설치한 변환
   함수가 호출자의 `search_path` 에 따라 선택되는 경우였다. `pg_catalog` 에서 찾으면 결과가
   `search_path` 와 무관해진다. 대가는, 사이트가 DB 인코딩에 대해 따로 둔 기본 변환을 이 함수들이 쓰지
-  않는다는 것이다.
+  않는다는 것이다. 회귀 테스트 `conversion_lookup` 이 15~18 과 19beta4 에서 그 차이를 보인다. 내장
+  변환의 기본 표시를 지운 일회용 EUC_KR DB 에서 모든 함수가 `42883` 을 내고, `search_path` 의
+  스키마에 기본 변환을 두어 서버 자신의 `SET client_encoding` 이 그것을 찾게 된 뒤에도 계속 `42883`
+  을 낸다. `scripts/check-architecture.py` 도 `src/` 의 `FindDefaultConversionProc` 를 거부한다. 기본
+  상태의 서버에서 `42883` 은 거의 도달할 수 없다. 17.11 에서 UTF-8 로의 변환이 없는 서버 인코딩은
+  MULE_INTERNAL 하나였고, 19beta4 에는 그 인코딩이 없다.
 - **O15 — 호출마다 찾는 형태를 유지하고, 하한도 3.0.0 그대로다.** 17.11, OpenSSL 3.5.7 (arm64 노트북 한
   대, 두 번 실행, 잘해야 2 배 이내의 정밀도) 에서 `gcm_encrypt_det` 는 호출당 약 1.1 µs,
   `gcm_encrypt` 는 0.6 µs, `LIKE` 를 붙인 `gcm_decrypt` 는 0.3 µs 다. 앞의 둘 사이 0.5 µs 에는 digest 를
@@ -727,6 +747,33 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   양의 상한이다. 절감분 자체는 따로 재지 않았다. 그 반대편에는 3.0.0 에서 실패하는 컨텍스트가 있다.
   결정적 변형은 조인 키와 정확 일치 조회용이지 대량 텍스트용이 아니므로, 이것 때문에 하한을 올리지
   않는다. 다시 열 자리는 Phase 4 의 부하 게이트다.
+- **`pg_gcm.min_key_bytes` 와 placeholder**, 15~18 과 19beta4 (회귀 테스트 `min_key_bytes`). 라이브러리가
+  로드되기 전에 superuser 가 설정한 값은 로드될 때 유지된다. 16, 24, 32 가 아닌 값은 경고와 함께
+  버려지고 기본값이 적용된다. 이 파라미터를 설정할 수 없는 role 이 설정한 값은 라이브러리가 로드될 때
+  "permission denied to set parameter" 와 함께 버려지므로, placeholder 는 `PGC_SUSET` 을 우회하는
+  길이 아니다. `GRANT SET ON PARAMETER` 로 위임한다. 설정보다 짧은 키는 `22023` 과 전용 메시지로
+  거부되고, 어떤 suite 에도 해당하지 않는 길이는 설정과 무관하게 키 길이 메시지를 유지한다.
+- **라이브러리는 SQL 함수만 내보낸다.** PGXS 는 PostgreSQL 16 부터만 `-fvisibility=hidden` 으로
+  컴파일한다. 15 용 빌드의 `nm -D` 에는 테스트 seam 둘을 포함한 코어 함수 전부가 나왔고, 각각 동적
+  링커를 통해 호출할 수 있으며 먼저 로드된 라이브러리가 가로챌 수 있었다. SQL 에서 닿는 것은 없었다.
+  이제 프로젝트 헤더가 SQL 에서 호출하는 함수 외의 모든 것을 hidden visibility 로 선언하고,
+  `scripts/build-in-docker.sh` 는 동적 심볼이 정확히 그 함수들, 그 fmgr 레코드, `_PG_init`,
+  `Pg_magic_func` 가 아니면 실패한다. pragma 를 뺀 빌드에서 실제로 실패하는 것을 확인했다.
+- **CI.** `unit.yml` 은 libcrypto 마다 빌드 이미지 하나 (가장 새로운 지원 메이저, 그리고 OpenSSL 하한)
+  에서 sanitizer 를 켜고 단위 테스트를 실행한다. `build.yml` 은 `docker/versions.json` 의 모든 이미지를
+  amd64 와 arm64 에서 `-Werror` 로 빌드하고, `pg_gcm.so` 가 서버 자신의 `libcrypto.so.3` 로 해석되지
+  않으면 실패한다. `regress.yml` 은 모든 이미지에서 `make installcheck` 와 `scripts/verify.sql` 을
+  실행한다. 셋 다 이미지 목록을 그 파일을 읽는 `scripts/ci-matrix.py` 에서 받는다.
+  `continue-on-error` 인 job 은 없다. 그 설정에서는 실패해도 실행이 실패하지 않아 놓치기 쉽기 때문이다.
+  프리릴리스 이미지는 눈에 보이게 실패하고, 그 job 만 required check 로 삼지 않는다 (O1). GitHub 는
+  schedule 을 기본 브랜치에서만 실행하므로, nightly 실행은 이 파일들이 `main` 에 들어갈 때 시작된다.
+  그때까지 100 만 평문 실행은 `develop` 에 push 할 때마다 일어난다.
+- **어떤 테스트도 다루지 않는 것.** `54000` 은 변환 버퍼가 한계인 경우 — EUC_KR DB 에서 256 MB 텍스트를
+  봉인할 때 — 만 테스트하고, 1 GB 근처의 한계와 여는 쪽은 테스트하지 않는다. tag 불일치나 거부된
+  할당이 아닌 EVP 호출 실패 (O8, 변함없음). 백엔드 밖에서는 관찰할 수 없는 `PG_FINALLY` 의 cleanse.
+  UTF-8 이 아닌 DB 에서는 호출마다 카탈로그에서 변환을 찾고 함수 관리자를 통해 호출하는데, 그 비용은
+  Phase 4 의 부하 게이트 전에는 측정하지 않는다. 스위트는 CI 에서는 amd64 로, 개발 장비에서는 arm64 로
+  실행된다. arm64 에서 CI 는 컴파일만 하고 실행하지 않는다.
 
 ### 미확인
 
@@ -735,7 +782,7 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 
 | # | 질문 | 확인 방법 |
 |---|---|---|
-| O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 스파이크는 이미 `19beta4` 에서 빌드되고 통과한다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
+| O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 확장은 `19beta4` 에서 빌드되고 모든 스위트를 통과하며, 그 CI job 은 pre-release 라고 표시되고 required check 로 삼지 않는다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
 
 ## 9. 참고 자료
 
