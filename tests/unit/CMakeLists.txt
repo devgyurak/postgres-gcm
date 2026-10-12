@@ -40,10 +40,12 @@ target_compile_options(pg_gcm_core PRIVATE -Wall -Wextra -Werror ${SANITIZE})
 target_link_libraries(pg_gcm_core PUBLIC OpenSSL::Crypto)
 
 add_executable(pg_gcm_unit
+  main.cc
+  alloc_counter.cc
   envelope_test.cc)
 target_compile_options(pg_gcm_unit PRIVATE -Wall -Wextra -Werror ${SANITIZE})
 target_link_options(pg_gcm_unit PRIVATE ${SANITIZE})
-target_link_libraries(pg_gcm_unit PRIVATE pg_gcm_core GTest::gtest GTest::gtest_main)
+target_link_libraries(pg_gcm_unit PRIVATE pg_gcm_core GTest::gtest GTest::gmock)
 
 # Without enable_testing(), ctest reports "No tests were found" and exits 0.
 enable_testing()
