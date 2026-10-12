@@ -1,0 +1,11 @@
+-- Given: keys whose length names no suite
+-- When: each is used to encrypt, and one to decrypt
+-- Then: every call is an error that states the length and nothing else
+\set VERBOSITY terse
+\set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
+SELECT gcm_encrypt('x', ''::bytea);
+SELECT gcm_encrypt('x', decode(repeat('00', 15), 'hex'));
+SELECT gcm_encrypt('x', decode(repeat('00', 31), 'hex'));
+SELECT gcm_encrypt('x', decode(repeat('00', 33), 'hex'));
+SELECT gcm_encrypt_det('x', decode(repeat('00', 33), 'hex'));
+SELECT gcm_decrypt(gcm_encrypt('x', :k), decode(repeat('00', 31), 'hex'));
