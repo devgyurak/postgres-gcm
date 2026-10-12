@@ -1,0 +1,11 @@
+-- SPDX-License-Identifier: PostgreSQL
+\echo Use "CREATE EXTENSION pg_gcm_probe" to load this file. \quit
+
+CREATE FUNCTION probe_set_mem_functions() RETURNS text
+AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT;
+
+CREATE FUNCTION probe_plain(int4) RETURNS int4
+AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT;
+
+CREATE FUNCTION probe_try(int4) RETURNS int4
+AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT;
