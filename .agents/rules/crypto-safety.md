@@ -19,7 +19,8 @@ This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing belo
 - Nonce length is fixed at 12 and tag length at 16. No argument accepts another length.
 - The associated data is `A = version || aad` (spec §1.5): the version byte is fed to GCM first, on
   seal and on open, and the caller's AAD after it. An envelope whose version byte alone was changed
-  must fail the tag check.
+  must fail the tag check; the vectors `version-02-as-03`, `version-03-as-02`, `version-04-as-05` and
+  `version-06-as-07` say so.
 - Random nonces come from `RAND_bytes`; any return other than 1 is an error. Never `random()`,
   `pg_prng`, or anything time-based. (`pg_strong_random` is not used either: one source.)
 - On decryption, call `EVP_CTRL_AEAD_SET_TAG` **before** `EVP_DecryptFinal_ex`; Final's return value
@@ -51,7 +52,7 @@ This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing belo
 
 ## Failure semantics
 - Tag mismatch: with `pg_gcm.strict` on (the default) an error with the SQLSTATE `spec/envelope.md`
-  fixes for it — its own, so a client can tell it from the other failure classes (design §8 O7); with
+  fixes for it (§2.5: `XX001`) — its own, so a client can tell it from the other failure classes; with
   it off, NULL. There is no third state.
 - A malformed envelope, a wrong key length, invalid UTF-8 after a successful open and a character the
   database encoding cannot hold are **always** errors, regardless of strict.

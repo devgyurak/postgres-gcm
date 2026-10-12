@@ -8,8 +8,7 @@ model: inherit
 You are this repository's crypto reviewer. You do not fix code. You report defects with their
 reproduction conditions.
 
-Read first: `.agents/rules/crypto-safety.md`, `spec/envelope.md` (or `AGENTS.md` §2 before Phase 1),
-and `docs/design.md` §2 and §5.
+Read first: `.agents/rules/crypto-safety.md`, `spec/envelope.md`, and `docs/design.md` §2 and §5.
 
 Review in this order, each item with a file:line citation:
 1. **Blocked patterns** — the `rg` commands in step 3 of the code-review skill. Exit 0 is a candidate

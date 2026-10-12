@@ -2,12 +2,16 @@
 
 English | [한국어](design-KO.md)
 
-Status: **Phase S done** (2026-10-12). A minimal extension — AES-256, no AAD, `pg_gcm.strict` — builds
-and passes its checks on PostgreSQL 15–18 (§4, §8). Nothing is released, the envelope specification is
-not written (Phase 1), and everything beyond the spike is still a plan. Every claim about PostgreSQL
-behaviour that the design leans on is either cited in §9, recorded with its evidence in §8, or listed
-in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources and the official images on
-2026-10-10 and the spike ran on 2026-10-12; §8 records what each established.
+Status: **Phase 1 done** (2026-10-12). The envelope is specified — `spec/envelope.md`, with
+`spec/test-vectors.json` reproduced by `scripts/check-vectors.py` — and a spike of it (AES-256, no AAD,
+`pg_gcm.strict`) builds and passes its checks on PostgreSQL 15–18 (§4, §8). **The spike predates the
+specification in two respects: it does not authenticate the version byte, and it derives the
+deterministic nonce from the plaintext alone** (§2.2). An envelope it seals does not open under the
+specification; Phase 2 brings the code to it (issue #19). Nothing is released. Every claim about
+PostgreSQL behaviour that the design leans on is either cited in §9, recorded with its evidence in §8,
+or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources and the official
+images on 2026-10-10; the spike ran and the specification was written on 2026-10-12; §8 records what
+each established.
 
 ## 0. Goal and scope
 
@@ -110,7 +114,7 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 ### 2.2 The envelope
 
 The envelope is `version || nonce(12) || ciphertext || tag(16)`, where the version byte, `0x02`–`0x07`,
-names the suite and the variant (`AGENTS.md` §2). `spec/envelope.md`, written in Phase 1, is the
+names the suite and the variant (`AGENTS.md` §2). `spec/envelope.md` is the
 normative definition: a byte-offset table, the nonce derivation, worked hex examples and the vector
 schema, kept free of PostgreSQL terms so that any implementation can read and write the format. The
 PostgreSQL binding — SQLSTATEs, the encoding rule, the exceptions below — is a separate, clearly marked
@@ -245,11 +249,21 @@ Write `spec/envelope.md` and build `spec/test-vectors.json`: the NIST CAVP GCM k
 this project's own vectors, reproducible with `scripts/check-vectors.py`. Add the PostgreSQL binding as
 a separate part (§2.2): SQLSTATE per failure class, the encoding rule and the plaintexts it rejects, the
 `0x01` decision from Phase S, and what the SQL layer expects for a vector whose plaintext is not UTF-8.
-The NIST plaintexts are arbitrary bytes: the core opens them and the unit suite compares the bytes;
-through SQL the expected result is "authenticates, then the invalid-UTF-8 error", because
-`gcm_decrypt` returns `text`.
+
+Done on 2026-10-12; §8 "Established in Phase 1" has the answers. Two things came out differently from
+this section as first written. With the version byte authenticated (§2.2), a NIST vector is not an
+envelope — its associated data is NIST's, not `version || aad` — so the NIST known answers test the
+primitive, in the unit suite, and SQL never sees them; "authenticates, then the invalid-UTF-8 error"
+is carried instead by the project's own vectors whose plaintexts are not UTF-8 or hold U+0000. And the
+phase did not only write down the construction it was handed: review of the specification changed it
+twice, in O13 and O16.
 
 ### Phase 2 — implementation and tests
+
+Phase 2 starts by bringing the spike to the specification (issue #19): the version byte goes into the
+associated data, the deterministic nonce is derived from the associated data too, the core gains the
+AAD argument and the 24- and 16-byte suites, and the inline known answers of the spike's tests give
+way to `spec/test-vectors.json`, read by the unit and the regression suites.
 
 The core (`gcm.c`, `envelope.c`, `nonce.c`) is C11 and includes no PostgreSQL header.
 The glue (`fn_*.c`) handles arguments, encoding, GUCs and errors. Unit tests run the core against every
@@ -685,6 +699,50 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   the extension's alone — the server raises it for corrupted storage — and it sits in the
   internal-error class although the commonest cause is a wrong key, because the format cannot tell a
   wrong key from a modified envelope.
+- **The vectors.** `spec/test-vectors.json` holds 77. Fifteen are NIST CAVP known answers for
+  AES-GCM, five per key size, taken unchanged from `gcmEncryptExtIV128/192/256.rsp` in NIST's
+  `gcmtestvectors.zip` (the URL is in the file; SHA-256
+  `f9fc479e134cde2980b3bb7cddbcb567b2cd96fd753835243ed067699f26a023`, retrieved 2026-10-12): `Count
+  = 0` of the parameter sets with a 96-bit IV, a 128-bit tag and (plaintext, AAD) lengths of (0, 0),
+  (128, 0), (0, 128), (104, 160) and (408, 720) bits. Sixty-two are this project's. 30 open: all six
+  version bytes, with and without AAD (one of 300 bytes), around the block boundary, the empty text,
+  a four-byte character, plaintexts that are not UTF-8 (a foreign byte pair, an overlong form, a
+  surrogate, a cut-off character) or that hold U+0000, and one envelope labelled deterministic whose
+  nonce is not the derived one. 32 do not (14 `bad_tag`, 10 `bad_envelope`, 8 `bad_key_length`),
+  each derived from a valid one by a stated change; four of them are a valid envelope with only its
+  version byte changed (`version-02-as-03`, `version-03-as-02`, `version-04-as-05`,
+  `version-06-as-07`), all `bad_tag` — O13 in bytes. Keys are public: the `00..1f` pattern cut to
+  the suite's length, 32 zero bytes, and NIST's.
+- **How far they are checked.** `python3 scripts/check-vectors.py` (`cryptography` 50.0.2 and the
+  standard library's HMAC) recomputes every NIST vector on the primitive, opens every envelope to
+  its expected outcome, re-seals every valid one to the same bytes and re-derives every
+  deterministic nonce. It requires the vectors the documents name, each of them the case its name
+  says, and at least one for every suite, outcome and plaintext class; and it checks the worked
+  examples of `spec/envelope.md` against the vector each names — a run of twelve or more hexadecimal
+  digits must be a whole member of it, a row of a field table the whole field at its offset, and the
+  suite and outcomes tables must have their rows. `--self-test` breaks the file and the spec in
+  memory in 35 ways and fails unless each is caught, which shows the gate notices those breaks and
+  not every possible one; the lint workflow runs both. Three limits. The project's vectors were
+  *generated* with the checker's own functions, so its agreeing with them is not independent
+  evidence. What is independent: a scratch copy of the spike's core, given the two changes of O13
+  and O16 and calling EVP directly (OpenSSL 3.6.4), sealed the 16 AES-256 vectors that have no AAD
+  to their exact bytes, opened them and refused the 9 `bad_tag` ones among them; and the crypto
+  review recomputed 76 of the 77 — all but `det-256-300-byte-aad`, added afterwards, whose nonce was
+  re-derived with the `openssl` command — with an AES-GCM and an HMAC written for the purpose. That
+  copy of the core is not in the repository: **no committed C code runs a vector until Phase 2**
+  (issue #19). And the check of the spec sees hexadecimal runs and table rows, not prose.
+- **The order of checks when opening** (spec §1.7) is fixed and has vectors of its own: a key length
+  that names no suite, then the envelope's length and version byte, then the key length against the
+  suite, then the tag. It is the order the spike's glue already follows. An opener does not
+  recompute a deterministic nonce (vector `det-256-nonce-not-derived`): doing so would cost two
+  HMACs on every `gcm_decrypt`, the path the load gate measures, to defend against a holder of the
+  key.
+- **The vector schema changed** from the one first written in `docs.md`: a `nist` vector carries a
+  ciphertext and a tag instead of an envelope; `expect` gains `bad_key_length`; a valid vector
+  carries a `plaintext_class` (`text`, `not_utf8`, `contains_nul`), which is what the SQL layer
+  reads to know whether to expect text or `22021`; a failing one names the vector it was
+  `derived_from`; and `nonce_derived: false` marks the one deterministic vector a sealer cannot
+  reproduce.
 
 ### Open
 

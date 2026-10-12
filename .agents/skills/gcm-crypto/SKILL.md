@@ -63,6 +63,5 @@ handle is there (`gcm_ready()`). A failing core path ends with
 `ERR_clear_error()`, so no entry of ours stays queued in the backend.
 
 ## After any change
-- `ctest --test-dir build/unit` (every vector, every suite) and `python scripts/check-vectors.py`
-  (from Phase 1).
+- `ctest --test-dir build/unit` (every vector, every suite) and `python3 scripts/check-vectors.py`.
 - Run the `crypto-reviewer` subagent and attach its report to the PR.

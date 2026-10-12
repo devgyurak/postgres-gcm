@@ -36,12 +36,18 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
 ## Common
 - Every vector lives in `spec/test-vectors.json`. Unit and regression tests read
   every case from it; never copy a value out of it.
-- The two layers do not assert the same thing. The **unit** suite consumes every vector as the spec's
-  table says, bytes compared. The **SQL** suite cannot: `gcm_decrypt` returns `text`, and the NIST
-  plaintexts are arbitrary bytes, not UTF-8.
-  For those the SQL expectation is "authenticates, then the invalid-UTF-8 error", fixed in the
-  PostgreSQL part of the spec; for the rest it is the plaintext. No SQL test feeds a NIST vector to an
-  encryption function — there is no nonce argument, by design.
+- The two layers do not assert the same thing (spec §1.11, §2.8). The **unit** suite consumes every
+  vector, bytes compared: a `nist` vector against the primitive through a test seam — it is not an
+  envelope, its associated data is NIST's — and an envelope vector through open, and through seal with
+  its `nonce_hex` (a `det` vector derives its own, unless `nonce_derived` is false). The **SQL** suite
+  consumes the envelope vectors only: `gcm_decrypt` gives the text when `plaintext_class` is `text`
+  and the invalid-UTF-8 error (`22021`) when it is `not_utf8` or `contains_nul`; a `det` vector of
+  class `text` must also seal to its `envelope_hex`, with `pg_gcm.min_key_bytes` lowered for the
+  statement when its key is 24 or 16 bytes; a failing vector gives the error of spec §2.5. No SQL
+  test seals a `random` vector — there is no nonce argument, by design.
+- `python3 scripts/check-vectors.py` re-derives every vector with a second implementation, and
+  `--self-test` checks that it notices each of a fixed list of breaks to the file and the spec. Both
+  run in the lint workflow. A vector that the checker cannot reproduce does not go in.
 - No real keys and no PHI in a fixture. Keys are the public NIST vectors or the `00..1f` pattern.
 - For `gcm_encrypt` (non-deterministic), verify properties: length, version byte, two calls differ,
   and the round trip.

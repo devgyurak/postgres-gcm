@@ -26,9 +26,14 @@ paths:
   derivation, worked hex examples and the vector schema, from which another implementation could be
   built. The PostgreSQL binding (SQLSTATEs, the encoding rule and the plaintexts it rejects, what SQL
   expects for a non-UTF-8 vector) is a clearly separated part (design §2.2).
-- `spec/test-vectors.json` schema:
-  `{ "version": 1, "vectors": [ { "id", "kind": "random|det|nist", "key_hex", "nonce_key_hex"?, "nonce_hex"?, "aad_hex", "plaintext_hex", "envelope_hex", "expect": "ok|bad_tag|bad_envelope" } ] }`.
-  Adding a field is a minor change; changing the meaning of one is major.
+- The schema of `spec/test-vectors.json` is spec §1.11 and is not restated anywhere else. Adding a
+  member is a minor change; changing the meaning of one is major and a new `version`.
+- No hexadecimal example is typed into the spec by hand. Each worked example names its vector, and
+  `scripts/check-vectors.py` checks runs of twelve or more hexadecimal digits, the bytes at stated
+  offsets, the suite table and the outcomes table against it. It does not read prose: a claim made in
+  words is the author's and the reviewer's to check.
+- A vector is added as inputs and derived by the checker's implementation, never pasted from the
+  extension's output; then `--self-test` must still pass.
 - The license is **the PostgreSQL License** (design §7): full text in `LICENSE`,
   `SPDX-License-Identifier: PostgreSQL` at the head of every source and script file, and a link to
   `LICENSE` from both READMEs. The `pg_regress` inputs and expected outputs (`test/sql`,

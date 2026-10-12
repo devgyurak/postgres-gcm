@@ -2,10 +2,12 @@
 
 **AES-GCM for PostgreSQL, with `LIKE` on the decrypted value.**
 
-> **Spike stage — not for use.** A minimal extension (AES-256 only, no AAD) exists to answer the
-> design's open questions; nothing is released, and the envelope format is not yet specified. The plan,
-> decisions and open questions are in [`docs/design.md`](docs/design.md); the working rules for people
-> and coding agents are in [`AGENTS.md`](AGENTS.md).
+> **Specified, not yet implemented — not for use.** The envelope format is defined in
+> [`spec/envelope.md`](spec/envelope.md) with test vectors beside it. The code is still the spike that
+> answered the design's open questions (AES-256 only, no AAD); it does not implement the specification
+> yet and its envelopes are not the specified ones. Nothing is released. The plan, decisions and open
+> questions are in [`docs/design.md`](docs/design.md); the working rules for people and coding agents
+> are in [`AGENTS.md`](AGENTS.md).
 
 Planned SQL surface:
 

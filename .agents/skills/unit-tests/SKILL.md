@@ -27,7 +27,14 @@ tests/unit/*_test.cc        extern "C" { #include "gcm.h" }
 - Run: `cmake -S tests/unit -B build/unit -DCMAKE_BUILD_TYPE=Debug && cmake --build build/unit -j && ctest --test-dir build/unit --output-on-failure`.
 - On macOS, also run the suite in the Linux build image (`scripts/unit-in-docker.sh <major>`) — the
   CI compiler is GCC, and that image has the libcrypto the server links.
-- Until `spec/test-vectors.json` exists (Phase 1), the known answers are in the test sources with
-  the command that produced them; they move to the JSON file then.
-- Vectors: `python scripts/check-vectors.py` re-derives every vector with `cryptography` and fails on
-  a mismatch with `spec/test-vectors.json`.
+- `spec/test-vectors.json` exists (spec §1.11). A `nist` vector runs against the primitive through a
+  test seam that takes the whole associated data; an envelope vector runs through open, and through
+  seal with its `nonce_hex`. The spike's tests still carry inline known answers from before the spec
+  (test cases 13 and 14 of the GCM specification as envelopes, which the spec does not accept as
+  such, and nonces derived the old way); replacing them with the file is the first task of Phase 2
+  (issue #19).
+- Vectors: `python3 scripts/check-vectors.py` re-derives every vector with `cryptography` and the
+  standard library's HMAC, requires the vectors the documents name, and checks the worked examples of
+  `spec/envelope.md` against them; `--self-test` breaks its inputs and must catch every break. Both
+  need `pip install -r scripts/requirements-lint.txt`. A new vector is written as inputs and derived
+  by that second implementation — never pasted from the extension's own output.
