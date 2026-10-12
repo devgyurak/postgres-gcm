@@ -37,6 +37,8 @@ jobs:
         run: python3 scripts/check-architecture.py
       - name: Spec vectors reproduce
         run: python3 scripts/check-vectors.py
+      - name: The vector check notices a broken file
+        run: python3 scripts/check-vectors.py --self-test
       - name: shellcheck
         run: shellcheck -x scripts/*.sh scripts/spike/*.sh .claude/hooks/*.sh
       - name: ruff
