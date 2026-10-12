@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: PostgreSQL
+# Static checks that need no PostgreSQL server: the agent adapters, the architecture
+# boundaries, action pins, shell and Python lint. Never path-filtered.
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the pinned lint tools
+        run: python3 -m pip install --quiet -r scripts/requirements-lint.txt
+      - name: Agent adapters are in sync with their sources
+        run: scripts/agents-sync.sh --check
+      - name: Actions are pinned by commit
+        run: python3 scripts/check-action-pins.py
+      - name: Architecture boundaries
+        run: python3 scripts/check-architecture.py
+      - name: shellcheck
+        run: shellcheck -x scripts/*.sh scripts/spike/*.sh .claude/hooks/*.sh
+      - name: ruff
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: mypy
+        run: mypy --strict scripts/*.py .claude/hooks/*.py
+      - name: actionlint
+        run: actionlint
