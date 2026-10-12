@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: PostgreSQL
-# Unit suite for the server-independent core (src/envelope.c and nonce.c so far; gcm follows).
+# Unit suite for the server-independent core (src/gcm.c, envelope.c, nonce.c).
 # Links libcrypto only: no PostgreSQL header, no server.
 cmake_minimum_required(VERSION 3.20)
 project(pg_gcm_unit LANGUAGES C CXX)
@@ -34,6 +34,7 @@ set(SANITIZE -fsanitize=address,undefined -fno-omit-frame-pointer)
 set(CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 
 add_library(pg_gcm_core STATIC
+  ${CORE_DIR}/gcm.c
   ${CORE_DIR}/envelope.c
   ${CORE_DIR}/nonce.c)
 target_include_directories(pg_gcm_core PUBLIC ${CORE_DIR})
