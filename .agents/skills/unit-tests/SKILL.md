@@ -29,10 +29,18 @@ tests/unit/*_test.cc        extern "C" { #include "gcm.h" }
   CI compiler is GCC, and that image has the libcrypto the server links.
 - `spec/test-vectors.json` exists (spec §1.11). A `nist` vector runs against the primitive through a
   test seam that takes the whole associated data; an envelope vector runs through open, and through
-  seal with its `nonce_hex`. The spike's tests still carry inline known answers from before the spec
-  (test cases 13 and 14 of the GCM specification as envelopes, which the spec does not accept as
-  such, and nonces derived the old way); replacing them with the file is the first task of Phase 2
-  (issue #19).
+  seal with its `nonce_hex` (`vectors.{h,cc}`, `vectors_test.cc`); `nonce_test.cc` runs each derived
+  nonce through `gcm_nonce_derive`. The loader ends the run on a kind, an expect, a missing member
+  or hexadecimal it cannot read, and `VectorFile` compares the ids the suites run with the ids in
+  the file. No test file carries a known answer of its own.
+- `gtest_discover_tests(... DISCOVERY_MODE PRE_TEST)`: the cases are listed when `ctest` runs, so a
+  vector added to the file is run without a rebuild.
+- `collision_test.cc` seals `PG_GCM_COLLISION_N` distinct plaintexts (100,000 by default; CI sets
+  1,000,000 on a push and nightly) and counts repeated nonces. Its loop is in a helper, not in the
+  test body, and it fails when the variable is not a whole number of at least 100,000.
+- GCC warns (`-Wdangling-reference`, an error here) on a `const T &` bound to the result of a
+  function that takes a temporary by reference: a lookup helper takes `const char *`, not
+  `const std::string &`. clang on macOS says nothing, so run the image too.
 - Vectors: `python3 scripts/check-vectors.py` re-derives every vector with `cryptography` and the
   standard library's HMAC, requires the vectors the documents name, and checks the worked examples of
   `spec/envelope.md` against them; `--self-test` breaks its inputs and must catch every break. Both

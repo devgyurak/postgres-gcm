@@ -4,6 +4,24 @@ Notable changes per release. Envelope changes get their own entry with a compati
 
 ## Unreleased
 
+### Phase 2 — implementation and tests (2026-10-12)
+- The extension implements `spec/envelope.md`. AES-128, AES-192 and AES-256 are selected by the key
+  length (16, 24 or 32 bytes); each function has a three-argument form taking `aad`; the associated
+  data is `version || aad` and the deterministic nonce is derived from it and the plaintext.
+- `pg_gcm.min_key_bytes` (`PGC_SUSET`, default 32): the two encryption functions refuse a shorter
+  key with `22023`. Decryption does not consult it.
+- The encoding conversion is looked up in `pg_catalog` alone, not along `search_path` (design O14).
+  The HMAC digest is still resolved by name on each deterministic call (design O15: kept).
+- **Compatibility:** an envelope sealed by a Phase S build does not open any more. Nothing was
+  released, so nothing stored is affected.
+- Tests read `spec/test-vectors.json` and carry no known answer of their own: the unit suite runs
+  all 77 vectors and a nonce collision test; the regression suite runs the 62 envelope vectors,
+  the AAD forms, `pg_gcm.min_key_bytes` (placeholders included) and the conversion lookup.
+- `pg_gcm.so` exports its SQL functions and nothing else on every major; on PostgreSQL 15 a build
+  used to export the core's functions too. The build fails on a stray export.
+- CI: the `unit`, `build` (every image × amd64 and arm64) and `regress` workflows, their matrices
+  taken from `docker/versions.json`.
+
 ### Phase 1 — the spec (2026-10-12)
 - `spec/envelope.md`: the envelope format (Part 1, free of PostgreSQL terms) and its PostgreSQL
   binding (Part 2): functions, keys, NULL, text and encodings, one SQLSTATE per failure class.

@@ -35,7 +35,13 @@ Rules: `testing.md`. One `.sql` per behaviour under `test/sql/`, its output unde
   envelopes); an `ok` vector gives its text when `plaintext_class` is `text` and `22021` otherwise; a
   `det` vector of class `text` whose nonce is derived also seals to its `envelope_hex`, with
   `SET LOCAL pg_gcm.min_key_bytes` at its key length; `bad_tag` is `XX001` with strict on and NULL
-  with it off; `bad_envelope` and `bad_key_length` are their errors either way.
+  with it off; `bad_envelope` and `bad_key_length` are their errors either way. The path is relative
+  to the directory `make` runs in, so `scripts/verify.sh` copies `spec/` beside `test/`.
+- A test that needs one vector takes it from the file with `\gset` (`invalid_text.sql`); a known
+  answer is never pasted into a `.sql` file, and an expected file shows ids and outcomes, not bytes.
+- `min_key_bytes.sql` sets a placeholder before the library is loaded and reconnects (`\c -`) for
+  each case, so it needs a server that does not preload `pg_gcm` — the one `scripts/dev-up.sh`
+  starts without `--preload`.
 - Where output legitimately differs by major, use an alternative expected file
   (`name_1.out`), never a branch in the test.
 
@@ -50,4 +56,4 @@ Rules: `testing.md`. One `.sql` per behaviour under `test/sql/`, its output unde
 ## Must always exist
 `korean_like` (`LIKE '%길%'` on a decrypted value), `strict_on_off`, `min_key_bytes`, `null_args`,
 `aad_forms`, `encoding_euc_kr`, `invalid_text` (non-UTF-8 and U+0000 plaintexts, no bytes in the
-message), `parallel_strict`, `volatility` (from `pg_proc`) and `vectors`.
+message), `conversion_lookup` (`42883`; `pg_catalog` alone, design O14), `parallel_strict`, `volatility` (from `pg_proc`) and `vectors`.

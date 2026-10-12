@@ -2,14 +2,15 @@
 
 **AES-GCM for PostgreSQL, with `LIKE` on the decrypted value.**
 
-> **Specified, not yet implemented — not for use.** The envelope format is defined in
-> [`spec/envelope.md`](spec/envelope.md) with test vectors beside it. The code is still the spike that
-> answered the design's open questions (AES-256 only, no AAD); it does not implement the specification
-> yet and its envelopes are not the specified ones. Nothing is released. The plan, decisions and open
-> questions are in [`docs/design.md`](docs/design.md); the working rules for people and coding agents
-> are in [`AGENTS.md`](AGENTS.md).
+> **Implemented to the specification, not released — not for use yet.** The envelope format is
+> defined in [`spec/envelope.md`](spec/envelope.md) with test vectors beside it, and the extension on
+> `develop` implements it: its unit suite runs every vector and its regression suite every envelope
+> vector, on PostgreSQL 15–18. The end-to-end tests with replication, the load gate, the operational
+> constraints document and release packaging are still to come, and the format may change until
+> 0.1.0. The plan, decisions and open questions are in [`docs/design.md`](docs/design.md); the
+> working rules for people and coding agents are in [`AGENTS.md`](AGENTS.md).
 
-Planned SQL surface:
+SQL surface:
 
 ```sql
 CREATE EXTENSION pg_gcm;

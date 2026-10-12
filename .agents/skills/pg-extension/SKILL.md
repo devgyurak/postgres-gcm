@@ -82,7 +82,12 @@ bitcode, for which the server-dev package already brings the matching `clang`.
 - A released script is frozen. Changes ship as `pg_gcm--<from>--<to>.sql`, and the regression suite
   tests `ALTER EXTENSION pg_gcm UPDATE`.
 
-## Phase S (done)
-The minimal version exists: AES-256, the two-argument forms of the three functions, `pg_gcm.strict`.
-Phase 2 adds the AAD overloads, the 24- and 16-byte suites and `pg_gcm.min_key_bytes`; until 0.1.0 is
-released its install script is still edited in place.
+## What the library exports
+`gcm_encrypt`, `gcm_encrypt_det`, `gcm_decrypt`, their `pg_finfo_*` records, `_PG_init` and
+`Pg_magic_func` — nothing else. PGXS compiles with `-fvisibility=hidden` only from PostgreSQL 16, so
+every project header wraps its declarations in `#pragma GCC visibility push(hidden)` / `pop`; a new
+header does the same. `scripts/build-in-docker.sh` reads `nm -D` and fails unless the list is exactly that.
+
+## Before 0.1.0
+The whole surface of design §2 exists. Until 0.1.0 is released its install script is still edited in
+place; from then on it is frozen as above.
