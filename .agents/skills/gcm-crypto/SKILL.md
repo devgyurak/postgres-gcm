@@ -19,8 +19,11 @@ Anything that changes a byte on the wire is a design amendment first.
 3. `EVP_EncryptInit_ex2(ctx, cipher, key, nonce, NULL)`, then check
    `EVP_CIPHER_CTX_get_iv_length(ctx) == 12`. **No `ivlen` param**: 12 is AES-GCM's default IV
    length, and before OpenSSL 3.0.12 a length passed in that call was applied after the IV had been
-   copied (CVE-2023-5363; design §8). AAD through `EVP_EncryptUpdate(ctx, NULL, &n, aad, aad_len)`
-   when present; data; `EVP_EncryptFinal_ex`; `EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, tag)`.
+   copied (CVE-2023-5363; design §8). The associated data is `A = version || aad` (spec §1.5):
+   `EVP_EncryptUpdate(ctx, NULL, &n, &version, 1)` first, always, then
+   `EVP_EncryptUpdate(ctx, NULL, &n, aad, aad_len)` when the caller's AAD is not empty; then the
+   data; `EVP_EncryptFinal_ex`; `EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, tag)`.
+   (The Phase S spike feeds no associated data at all; doing this is the first change of Phase 2.)
 4. Write `version || nonce || ct || tag` into the caller's buffer, whose size the caller computed.
 
 ## Open
@@ -31,15 +34,19 @@ Anything that changes a byte on the wire is a design amendment first.
    allocated-but-unimplemented version; a v1 path is a design amendment first. The obstacle is
    security policy, not compatibility: v1 is unauthenticated, strict cannot see tampering, and its
    plaintext must already be UTF-8 (design §2.2).
-2. Init with the nonce; AAD; data into the caller's buffer;
-   `EVP_CTRL_AEAD_SET_TAG` **before** `EVP_DecryptFinal_ex`.
+2. Init with the nonce; the version byte from the envelope, then the caller's AAD, as associated
+   data; data into the caller's buffer; `EVP_CTRL_AEAD_SET_TAG` **before** `EVP_DecryptFinal_ex`.
+   The order of checks before that is spec §1.7.
 3. Final returns 0 → `OPENSSL_cleanse(out, len)` and `GCM_BAD_TAG`. A tag mismatch pushes nothing
    onto OpenSSL's error queue, and neither do a missing tag, key or IV on that path, so the queue
    cannot tell them apart: the code guarantees those three by construction (design §8).
 
 ## Deterministic nonce
-`nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`; `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]`
-through `EVP_MAC`: one `EVP_MAC_CTX_new` per call, `OSSL_MAC_PARAM_DIGEST = "SHA256"` in the first
+`nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`;
+`nonce = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[:12]` with `A = version || aad`
+(spec §1.8; design §8 O16) — three `EVP_MAC_update` calls: the eight length bytes, `A`, the
+plaintext. The Phase S spike still derives it from the plaintext alone; Phase 2 changes that first.
+Through `EVP_MAC`: one `EVP_MAC_CTX_new` per call, `OSSL_MAC_PARAM_DIGEST = "SHA256"` in the first
 `EVP_MAC_init`, and `NULL` params in the second, which re-keys the same context. **Do not** prepare a
 keyless context once and `EVP_MAC_CTX_dup` it per call: that fails on OpenSSL 3.0.0 and drops a
 digest reference each time (design §8 O15). Cleanse `nonce_key` and the full MAC output.

@@ -39,7 +39,8 @@ Review in this order, each item with a file:line citation:
    (confirm in context), 1 a pass, 2 "check failed". Read for hardcoded keys and keys or plaintext
    reaching `elog`/`ereport`/`errdetail`/`errhint`/`errcontext`.
 2. **AEAD correctness** — `EVP_CTRL_AEAD_SET_TAG` before `DecryptFinal`; Final's return checked; output
-   cleansed on failure; nonce 12 and tag 16 fixed; AAD before data.
+   cleansed on failure; nonce 12 and tag 16 fixed; the version byte, then the caller's AAD, as
+   associated data before the data.
 3. **Envelope** — offsets and minimum lengths per the spec; unknown versions rejected; no unsigned
    underflow on truncated input; byte-for-byte agreement with the worked examples in the spec.
 4. **Keys** — length in {32, 24, 16} checked every call, suite from length only, `pg_gcm.min_key_bytes`
@@ -47,7 +48,8 @@ Review in this order, each item with a file:line citation:
    cleansed before `pfree` on every path, including the `ereport` paths (`PG_FINALLY`); **no argument
    cleansed or modified in place** — only a pointer that differs from `PG_GETARG_POINTER(n)` is a copy.
 5. **Determinism** — same input, same output; nonce computed over the UTF-8 bytes (not the database
-   encoding); no AAD or session state in the nonce; the label is the single constant in `nonce.h`, matching the spec.
+   encoding) and over the associated data, `be64(len(A)) || A || plaintext`; no session state in the
+   nonce; the label is the single constant in `nonce.h`, matching the spec.
 6. **Failure semantics** — strict on → error, off → NULL, nothing else; bad envelope, bad key length,
    invalid UTF-8 and an untranslatable character are errors regardless of strict; no bytes in
    messages, which rules out `pg_any_to_server`, `pg_server_to_any` and `pg_verify_mbstr(..., false)`

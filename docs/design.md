@@ -87,9 +87,9 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
   `aad` encrypts while an explicit NULL propagates. **A NULL default cannot give both.** Under
   `STRICT`, a defaulted NULL makes the two-argument call return NULL without encrypting anything
   (reproduced on 15–18, §8). Dropping `STRICT` so that NULL reads as "no AAD" would instead make an
-  explicit NULL — a nullable column, an unset bind parameter — seal silently *without* AAD; under one
-  deterministic key that mixes "with AAD" and "without AAD" writes of the same plaintext, the
-  nonce-reuse condition the spec forbids. With two overloads,
+  explicit NULL — a nullable column, an unset bind parameter — seal silently *without* AAD: the
+  value would then open without the binding it was meant to carry, and nothing would say so. With
+  two overloads,
   the two-argument form means "no AAD", a NULL `aad` in the three-argument form gives NULL, and an
   empty `aad` (`''`) seals exactly as the two-argument form does.
   A non-NULL default would give both as well: `aad bytea DEFAULT ''` with `STRICT` runs with an empty
@@ -115,6 +115,13 @@ normative definition: a byte-offset table, the nonce derivation, worked hex exam
 schema, kept free of PostgreSQL terms so that any implementation can read and write the format. The
 PostgreSQL binding — SQLSTATEs, the encoding rule, the exceptions below — is a separate, clearly marked
 part of the same file.
+
+**Every byte of an envelope is authenticated.** The associated data given to GCM is the version byte
+followed by the caller's AAD, `version || aad` (spec §1.5; decided in Phase 1, §8 O13). Without that
+the version byte would be the one byte outside the tag, and `0x03` could be rewritten as `0x02` to
+make a second, different envelope of one plaintext without the key. The deterministic nonce is derived
+from that same associated data and the plaintext (spec §1.8; §8 O16), so one deterministic key can
+serve any number of AAD values.
 
 The plaintext inside an envelope is **UTF-8**. `gcm_encrypt` converts the argument from the database
 encoding to UTF-8 before sealing; `gcm_decrypt` verifies the opened bytes are valid UTF-8 and converts
@@ -415,11 +422,15 @@ callbacks — and the process is exiting anyway.
    candidate set; selectivity must come from other predicates. There is no index on decrypted values,
    by design (§5.3).
 5. **`gcm_encrypt_det` reveals equality, frequency and length, and costs more than the random
-   variant** (two HMAC-SHA256 passes for the nonce). Use it only for join keys, UNIQUE constraints and
-   exact-match lookups, never for free text. **One AAD convention per deterministic key**: the nonce
-   comes from the plaintext alone, so sealing one plaintext under one key with two different AADs
-   reuses the (key, nonce) pair. Every deterministic call under a key uses identical AAD bytes, or
-   always none; a different AAD domain needs a different key.
+   variant** (two HMAC-SHA256 passes for the nonce). Use it only for join keys, UNIQUE constraints
+   and exact-match lookups, never for free text. The AAD is an input to its nonce (§8 O16), so it
+   may differ from call to call; values sealed with different AADs do not compare equal, which is
+   the point of binding a value to a row and the end of joining on it. **`gcm_decrypt` opens either
+   variant**, so where the uniqueness of a deterministic column matters, give the column a check on
+   the version byte — `CHECK (get_byte(col, 0) = 3)` for AES-256 — or, more weakly, a key or AAD
+   that no random-nonce column shares. Otherwise a random-nonce envelope of the same value can be
+   stored beside it. Every distinct pair of AAD and value is a nonce of its own, so a per-row AAD
+   spends the key's usage budget (item 9) once per row.
 6. **Self-managed PostgreSQL only.** Managed services do not load this extension.
 7. **Install on every node that decrypts.** Streaming replicas get the extension's catalog entries
    through WAL but need the shared library installed on disk; a logical subscriber needs both.
@@ -579,8 +590,8 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   for a malformed envelope, `XX001` for a tag mismatch, `22021` for text that is not UTF-8, `22P05`
   for an untranslatable character, `54000` for a value too long and `XX000` for an OpenSSL failure.
   Each exists in `errcodes.txt` on 15–18, and a regression test reads four of them back. One choice
-  is not settled and stays in "Open": `XX001` puts the commonest operational failure, a wrong key,
-  in the internal-error class.
+  was left open here and is settled in Phase 1, below: `XX001` puts the commonest operational
+  failure, a wrong key, in the internal-error class.
 - **O8, run.** `CRYPTO_set_mem_functions` returned 0 in a preloading postmaster and in a backend
   loading on first call (the probe module's `_PG_init`; logged, and readable through SQL). In the
   unit suite, called first in `main`, it returned 1. One call makes 2 OpenSSL allocations to seal, 2
@@ -639,16 +650,50 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   an HMAC result (step 5). The `CRYPTO_set_mem_functions` probe and the `PG_TRY` timing are in a
   measurement-only module, `scripts/spike/pg_gcm_probe`, not in the extension.
 
+### Established in Phase 1 (2026-10-12)
+
+- **O13 — the version byte is authenticated.** Decided: the associated data given to GCM is `version
+  || aad` (§2.2; spec §1.5). The alternative was to record the weakness as accepted. It was not
+  taken because the weakness is concrete — without the key, one envelope could be turned into a
+  second, different one that opens to the same plaintext — and closing it costs one byte of
+  associated data and nothing on the wire. What it does not close is transplanting: `gcm_decrypt`
+  opens either variant, so a random-nonce envelope of the same value under the same key and AAD is
+  still a second envelope, and §6 item 5 says what a deterministic column does about that. One
+  consequence for this phase: a NIST vector is no longer an envelope (its associated data is
+  NIST's), so the NIST known answers are vectors of the primitive and SQL never sees them.
+- **O16 — the deterministic nonce is derived from the associated data too.** Raised by the Phase 1
+  crypto review and decided the same day: `nonce = HMAC-SHA256(nonce_key, be64(len(A)) || A ||
+  P)[0:12]` with `A = version || aad` (spec §1.8). This reverses the earlier rule that AAD was not
+  an input. Under that rule one plaintext sealed with two AADs used one (key, nonce) pair twice, and
+  for GCM that is not a local failure: the difference of the two tags is a polynomial in the
+  authentication subkey whose coefficients are the two associated data, so anyone who knows both
+  AADs can solve for the subkey (Joux; SP 800-38D, Appendix A). With it, every envelope already
+  sealed under that key, of either variant, can be altered — ciphertext, version byte and the AAD it
+  answers to — and given a tag that verifies. The earlier answer was an operational rule — one AAD
+  convention per deterministic key — that the function's own signature invited callers to break: a
+  per-row AAD is the natural use of the argument and was exactly the forbidden case. Nothing is
+  given up, because envelopes with different AADs never compared equal anyway; their tags differed.
+  The length prefix makes the HMAC message unambiguous. The change costs nothing now and would have
+  cost every stored deterministic envelope later.
+- **O7 — the SQLSTATEs are settled** (spec §2.5). The spike's table stands, `XX001` for a tag
+  mismatch included, and gains `42883` for a database encoding with no default conversion to or from
+  UTF-8, which the spike already raises. An existing code was preferred to one of the extension's
+  own. A class-level code of class 22 was the alternative, and what decided against it was run on
+  15–18 (`scripts/spike/sqlstate-handlers.sql`): in PL/pgSQL, `WHEN SQLSTATE '22000'` and `WHEN
+  data_exception` both catch a `22023`; `WHEN data_corrupted` catches `XX001` and neither `XX000`
+  nor `XX002`; and `WHEN internal_error`, being the class, catches `XX001` as well. `XX001` is not
+  the extension's alone — the server raises it for corrupted storage — and it sits in the
+  internal-error class although the commonest cause is a wrong key, because the format cannot tell a
+  wrong key from a modified envelope.
+
 ### Open
 
-Numbers are never reused. O2–O6 and O8–O12 are answered above; O7 is narrowed to one question, and
-O13, O14 and O15 came out of the Phase S review.
+Numbers are never reused. O2–O13 and O16 are answered above; O7, O13 and O16 in Phase 1. O14 and O15
+came out of the Phase S review and belong to Phase 2.
 
 | # | Question | How to settle it |
 |---|---|---|
 | O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the spike already builds and passes on `19beta4` | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
-| O7 | Is `XX001` (`data_corrupted`, the internal-error class) the right SQLSTATE for a tag mismatch, when the commonest cause is a wrong key? The other classes the spike uses (above) stand unless the spec finds a reason | Phase 1: `spec/envelope.md` fixes the table. Prefer an existing class, and keep one class per failure so a client can tell a forged tag from a wrong key length |
-| O13 | The version byte is not authenticated. Changing `0x03` to `0x02`, or back, gives a different envelope that opens to the same plaintext, so someone who can write to a deterministic column but holds no key can put a second copy of a value past a UNIQUE constraint. Bind the version byte into the tag as AAD, or record this as accepted? | Phase 1, before an envelope exists outside tests: it changes the construction, so it is an amendment here first |
 | O14 | `FindDefaultConversionProc` resolves through `search_path`. In a database that is not UTF-8, the plaintext is handed to whichever default conversion comes first, as the server's own client-encoding conversion is. Accept that, or look the conversion up in `pg_catalog` alone? | Phase 2, with the encoding code: establish who can create a default conversion, then decide |
 
 | O15 | A deterministic call resolves SHA-256 by name inside `EVP_MAC_init`, because `EVP_MAC` takes no fetched digest. A keyless `EVP_MAC_CTX` prepared once and duplicated per call avoids that, and it passed here on 3.0.22, 3.5.7 and 3.6.4 — but upstream's `hmac_prov.c` shows `EVP_MAC_CTX_dup` of a keyless HMAC context failing on 3.0.0 and dropping a digest reference each time (fixed in 3.0.1 and 3.0.4; read, not run), so the spike keeps the per-call form. Raise the floor to 3.0.1 with a run-time version check, or keep it? | Phase 2, against the measured cost of the deterministic variant |

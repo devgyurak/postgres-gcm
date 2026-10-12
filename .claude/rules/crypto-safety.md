@@ -18,6 +18,9 @@ This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing belo
   bundling, no `dlopen` of another version, and no fallback to legacy symbols for a 1.1.1 server —
   that platform is out of scope (design §0).
 - Nonce length is fixed at 12 and tag length at 16. No argument accepts another length.
+- The associated data is `A = version || aad` (spec §1.5): the version byte is fed to GCM first, on
+  seal and on open, and the caller's AAD after it. An envelope whose version byte alone was changed
+  must fail the tag check.
 - Random nonces come from `RAND_bytes`; any return other than 1 is an error. Never `random()`,
   `pg_prng`, or anything time-based. (`pg_strong_random` is not used either: one source.)
 - On decryption, call `EVP_CTRL_AEAD_SET_TAG` **before** `EVP_DecryptFinal_ex`; Final's return value
@@ -40,8 +43,8 @@ This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing belo
   planner's copies are not ours to cleanse, and no document may claim that no key copy remains in
   backend memory (design §5.2).
 - Derive the deterministic nonce key as `HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`. Never use the
-  encryption key directly as an HMAC key (domain separation). The label is a single constant in
-  `nonce.h`.
+  encryption key directly as the key of the HMAC over the plaintext (domain separation). The label is
+  a single constant in `nonce.h`.
 - No key bytes in a repository file, `postgresql.conf`, a GUC, an environment variable, a test fixture
   or any DDL. The only exception is the public vector keys in `spec/test-vectors.json`.
 - That a key in a SQL statement can reach the server log is a **known operational constraint**
@@ -61,15 +64,20 @@ This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing belo
   the offending character into the error message, and in `gcm_decrypt` those bytes are plaintext
   (design §5.7).
 - Never put key, plaintext, nonce, tag or ciphertext bytes in a message, a `DETAIL`, a `HINT`, a
-  `CONTEXT` callback or an assertion. Lengths and the version byte are as far as it goes.
+  `CONTEXT` callback or an assertion. Lengths, the version byte and the names of encodings are as far
+  as it goes.
 
 ## The deterministic variant
-- `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]` over the **UTF-8** plaintext bytes. AAD is not an
-  input. Changing that means amending the design first.
+- `nonce = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[:12]`, with `A = version || aad` and
+  the **UTF-8** plaintext bytes (spec §1.8). The associated data **is** an input: a nonce derived
+  from the plaintext alone lets two AADs reuse one (key, nonce) pair, which breaks GCM's
+  authentication for the whole key (design §8 O16). Changing the derivation means amending the
+  design first.
 - For joins, UNIQUE constraints and exact-match lookups only. Keep the warning against free text in the
   documentation and the function comments.
-- Every deterministic call under one key uses the same AAD bytes, or always none. Different AAD domains
-  need different keys. The extension does not enforce this and must not be described as enforcing it.
+- `gcm_decrypt` opens either variant. A deterministic column whose uniqueness matters needs a check on
+  the version byte, or a key or AAD no random-nonce column shares (design §6 item 5). The extension
+  does not enforce this and must not be described as enforcing it.
 
 ## Operational responsibility
 - Design §6 item 9 is the rule: a usage budget summing every use of a key, rotation criteria,
