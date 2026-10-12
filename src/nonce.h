@@ -26,11 +26,16 @@
 /* Domain separation: the encryption key is never the key of the HMAC over the plaintext. */
 #define GCM_DET_NONCE_LABEL "pg_gcm/v1/det-nonce"
 
+/* Not part of the library's dynamic interface: see envelope.h. */
+#pragma GCC visibility push(hidden)
+
 enum gcm_error gcm_nonce_derive(EVP_MAC *hmac,
 								const uint8_t *key, size_t key_len,
 								uint8_t version,
 								const uint8_t *aad, size_t aad_len,
 								const uint8_t *plaintext, size_t plaintext_len,
 								uint8_t nonce[GCM_NONCE_LEN]);
+
+#pragma GCC visibility pop
 
 #endif							/* PG_GCM_NONCE_H */
