@@ -23,7 +23,6 @@ Anything that changes a byte on the wire is a design amendment first.
    `EVP_EncryptUpdate(ctx, NULL, &n, &version, 1)` first, always, then
    `EVP_EncryptUpdate(ctx, NULL, &n, aad, aad_len)` when the caller's AAD is not empty; then the
    data; `EVP_EncryptFinal_ex`; `EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, tag)`.
-   (The Phase S spike feeds no associated data at all; doing this is the first change of Phase 2.)
 4. Write `version || nonce || ct || tag` into the caller's buffer, whose size the caller computed.
 
 ## Open
@@ -45,7 +44,7 @@ Anything that changes a byte on the wire is a design amendment first.
 `nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`;
 `nonce = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[:12]` with `A = version || aad`
 (spec §1.8; design §8 O16) — three `EVP_MAC_update` calls: the eight length bytes, `A`, the
-plaintext. The Phase S spike still derives it from the plaintext alone; Phase 2 changes that first.
+plaintext.
 Through `EVP_MAC`: one `EVP_MAC_CTX_new` per call, `OSSL_MAC_PARAM_DIGEST = "SHA256"` in the first
 `EVP_MAC_init`, and `NULL` params in the second, which re-keys the same context. **Do not** prepare a
 keyless context once and `EVP_MAC_CTX_dup` it per call: that fails on OpenSSL 3.0.0 and drops a

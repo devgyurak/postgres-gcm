@@ -2,16 +2,15 @@
 
 English | [한국어](design-KO.md)
 
-Status: **Phase 1 done** (2026-10-12). The envelope is specified — `spec/envelope.md`, with
-`spec/test-vectors.json` reproduced by `scripts/check-vectors.py` — and a spike of it (AES-256, no AAD,
-`pg_gcm.strict`) builds and passes its checks on PostgreSQL 15–18 (§4, §8). **The spike predates the
-specification in two respects: it does not authenticate the version byte, and it derives the
-deterministic nonce from the plaintext alone** (§2.2). An envelope it seals does not open under the
-specification; Phase 2 brings the code to it (issue #19). Nothing is released. Every claim about
-PostgreSQL behaviour that the design leans on is either cited in §9, recorded with its evidence in §8,
-or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources and the official
-images on 2026-10-10; the spike ran and the specification was written on 2026-10-12; §8 records what
-each established.
+Status: **Phase 2 done** (2026-10-12). The extension implements the specification — `spec/envelope.md`,
+with `spec/test-vectors.json` — for the three key sizes, with and without AAD, with `pg_gcm.strict` and
+`pg_gcm.min_key_bytes`. Its core runs every vector in the unit suite and its SQL functions every
+envelope vector in the regression suite, on PostgreSQL 15–18 (§4, §8). **Nothing is released and it is
+not for use yet**: the SQL E2E with replication, the load gate and distribution are Phases 3 and 4.
+Every claim about PostgreSQL behaviour that the design leans on is either cited in §9, recorded with
+its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources
+and the official images on 2026-10-10; the spike ran, the specification was written and the
+implementation was brought to it on 2026-10-12; §8 records what each established.
 
 ## 0. Goal and scope
 
@@ -260,10 +259,11 @@ twice, in O13 and O16.
 
 ### Phase 2 — implementation and tests
 
-Phase 2 starts by bringing the spike to the specification (issue #19): the version byte goes into the
-associated data, the deterministic nonce is derived from the associated data too, the core gains the
-AAD argument and the 24- and 16-byte suites, and the inline known answers of the spike's tests give
-way to `spec/test-vectors.json`, read by the unit and the regression suites.
+Phase 2 brought the spike to the specification (issue #19): the version byte went into the
+associated data, the deterministic nonce is derived from the associated data too, the core gained the
+AAD argument and the 24- and 16-byte suites, the glue gained `pg_gcm.min_key_bytes`, and the inline
+known answers of the spike's tests gave way to `spec/test-vectors.json`, read by the unit and the
+regression suites. §8 "Established in Phase 2" records what was observed.
 
 The core (`gcm.c`, `envelope.c`, `nonce.c`) is C11 and includes no PostgreSQL header.
 The glue (`fn_*.c`) handles arguments, encoding, GUCs and errors. Unit tests run the core against every
@@ -746,6 +746,24 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
 
 ### Established in Phase 2 (2026-10-12)
 
+- **The code implements the specification.** The core seals and opens all six version bytes with
+  `A = version || aad` and derives the deterministic nonce from `be64(len(A)) || A || P`; the glue
+  adds the three-argument forms and `pg_gcm.min_key_bytes`. The unit suite reads
+  `spec/test-vectors.json`, and one of its tests fails if any of the 77 vectors is consumed by no
+  suite: the 15 NIST vectors run on the primitive through a test seam, every envelope vector
+  through open, every valid one through seal with its nonce (a deterministic one derives its own,
+  and `gcm_nonce_derive` is also run alone against each derived nonce), and every failing one must
+  leave the output buffer zeroed. The regression suite reads the same
+  file: the 62 envelope vectors go through `gcm_decrypt` with `pg_gcm.strict` on and off, and the
+  11 deterministic ones whose nonce is derived are sealed to their exact bytes. No known answer is
+  written into a test any more. Observed on PostgreSQL 15.19, 16.15, 17.11 and 18.6 with OpenSSL
+  3.5.7, on 17.11 with OpenSSL 3.0.22 and on 19beta4: 302 unit tests, 18 regression files, and
+  `scripts/verify.sql` with the library loaded lazily and preloaded.
+- **The nonce collision test.** A million distinct plaintexts sealed deterministically under one
+  key and AAD give a million distinct nonces (100,000 on a pull request). That is a check of the
+  derivation's wiring — a truncation to too few bytes or a constant input would fail it — and says
+  nothing about the birthday bound of a 96-bit nonce, which no test can reach. §6 item 9 stays the
+  rule.
 - **O14 — the conversion is looked up in `pg_catalog` alone**, with
   `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)`. Observed on 17.11: a role that is not a
   superuser but has `CREATE` on a schema can create a default conversion there, and along
@@ -754,7 +772,14 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   written for, and the role could create no C or internal function. So the exposure was to a
   conversion function a superuser had installed, chosen by the caller's `search_path`. Looking in
   `pg_catalog` makes the result independent of `search_path`; the price is that a site's own
-  default conversion for the database encoding is not used by these functions.
+  default conversion for the database encoding is not used by these functions. The regression
+  test `conversion_lookup` shows the difference on 15–18 and 19beta4: in a throwaway EUC_KR
+  database whose built-in conversions are unmarked as defaults, every function gives `42883`, and
+  goes on giving it when a schema on `search_path` holds default conversions that the server's own
+  `SET client_encoding` then finds. `scripts/check-architecture.py` also refuses
+  `FindDefaultConversionProc` in `src/`. On a stock server `42883` is nearly unreachable:
+  MULE_INTERNAL was the one server encoding without a conversion to UTF-8 on 17.11, and 19beta4
+  does not have that encoding.
 - **O15 — the per-call form stays, and the floor stays at 3.0.0.** On 17.11 with OpenSSL 3.5.7
   (one arm64 laptop, two runs, good to a factor of two at best) `gcm_encrypt_det` costs about
   1.1 µs a call, `gcm_encrypt` 0.6 µs and `gcm_decrypt` with `LIKE` 0.3 µs. The 0.5 µs between the
@@ -763,6 +788,39 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   Against it stands a context that fails on 3.0.0. The deterministic variant is for join keys and
   exact-match lookups, not bulk text, so the floor is not raised for it. The load gate of Phase 4
   is where this would be reopened.
+- **`pg_gcm.min_key_bytes` and placeholders**, on 15–18 and 19beta4 (regression test
+  `min_key_bytes`). A value a superuser sets before the library is loaded holds when it loads. A
+  value that is not 16, 24 or 32 is dropped with a warning and the default applies. A value set by
+  a role that may not set the parameter is dropped with "permission denied to set parameter" when
+  the library loads, so a placeholder is not a way round `PGC_SUSET`. `GRANT SET ON PARAMETER`
+  delegates it. A key below the setting is refused with `22023` and a message of its own; a length
+  that names no suite keeps the key-length message whatever the setting.
+- **The library exports its SQL functions and nothing else.** PGXS compiles with
+  `-fvisibility=hidden` from PostgreSQL 16 only: `nm -D` of the build for 15 listed every core
+  function, the two test seams among them, each callable through the dynamic linker and open to
+  interposition by a library loaded earlier. None was reachable from SQL. The project's headers
+  now declare everything but the SQL-callable functions with hidden visibility, and
+  `scripts/build-in-docker.sh` fails unless the dynamic symbols are exactly those functions,
+  their fmgr records, `_PG_init` and `Pg_magic_func`; it was seen to fail on a build without the
+  pragmas.
+- **CI.** `unit.yml` runs the unit suite under the sanitizers in one build image per libcrypto
+  (the newest supported major, and the OpenSSL floor); `build.yml` builds with `-Werror` for
+  every image of `docker/versions.json` on amd64 and arm64 and fails unless `pg_gcm.so` resolves
+  the server's own `libcrypto.so.3`; `regress.yml` runs `make installcheck` and
+  `scripts/verify.sql` for every image. Each takes its list of images from
+  `scripts/ci-matrix.py`, which reads that file. No job is `continue-on-error`, under which a
+  failure does not fail the run and is easy to miss: the pre-release image fails visibly, and its job is the one not
+  meant to be a required check (O1). GitHub runs a schedule from the default branch only, so the
+  nightly run starts when these files reach `main`; until then the million-plaintext run happens
+  on every push to `develop`.
+- **What no test covers.** `54000` is tested where a conversion buffer is the limit — a 256 MB
+  text sealed in an EUC_KR database — and not at the limits near a gigabyte, nor on the opening
+  side. Any failure of an EVP call other than a tag mismatch or a refused allocation (O8,
+  unchanged). The `PG_FINALLY` cleansing, which nothing outside the backend can observe. In a
+  database that is not UTF-8 every call looks the conversion up in the catalog and calls it
+  through the function manager; that cost is not measured before the load gate of Phase 4. The
+  suites run on amd64 in CI and on arm64 on the development machine; on arm64 CI compiles and
+  does not run them.
 
 ### Open
 
@@ -771,7 +829,7 @@ Phase 2.
 
 | # | Question | How to settle it |
 |---|---|---|
-| O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the spike already builds and passes on `19beta4` | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
+| O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the extension builds and passes every suite on `19beta4`, in a CI job labelled pre-release that is not meant to be a required check | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
 
 ## 9. References
 

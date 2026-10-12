@@ -15,7 +15,7 @@ extension **registers new SQL functions**, **takes the key as a SQL argument** a
 working through PostgreSQL's own `LIKE`, `ILIKE` and collations. It supports PostgreSQL 15–18 on a
 server that links **OpenSSL 3.0 or later** (design §0).
 
-## 2. Public surface (planned — a change updates `docs/design.md`, `spec/` and the regression tests in the same PR)
+## 2. Public surface (a change updates `docs/design.md`, `spec/` and the regression tests in the same PR)
 
 ```
 gcm_encrypt(plaintext text, key bytea [, aad bytea])      -> bytea  VOLATILE  random nonce (RAND_bytes, 12 B)
@@ -65,7 +65,7 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
 - Out of scope from the start: keyring or KMS integration, key ids, a key stored in a GUC or a table.
   If asked for one, turn it back into a proposal to amend the design.
 
-## 3. Repository layout (planned; Phase S creates the first of it)
+## 3. Repository layout (`tests/e2e`, `tests/load`, `tests/bench` and `docs/ops-constraints.md` come in Phases 3 and 4)
 
 ```
 AGENTS.md / CLAUDE.md          Agent instructions (this file is the source)
@@ -92,7 +92,7 @@ tests/e2e/                     compose: primary + streaming replica + a Python S
 tests/load/                    Load: decrypt + LIKE over 10k/100k/300k rows, gated against pgcrypto
 tests/bench/                   Core micro-benchmarks (Google Benchmark) — ratios against bare EVP
 scripts/                       dev-up.sh, build-in-docker.sh, verify.sh (+ verify.sql), unit-in-docker.sh,
-                               agents-sync.sh, check-architecture.py, check-action-pins.py, check-vectors.py, lib.sh
+                               agents-sync.sh, check-architecture.py, check-action-pins.py, check-vectors.py, ci-matrix.py, lib.sh
 scripts/spike/                 The Phase S measurements (measure.sh, ldd.sh, a never-shipped probe module)
 docker/                        build.Dockerfile (postgres:<major> + server-dev headers) + versions.json
 .github/workflows/             CI — added per phase (ci-release skill)
@@ -112,7 +112,7 @@ docker/                        build.Dockerfile (postgres:<major> + server-dev h
 | Architecture boundaries | `python3 scripts/check-architecture.py` | `.agents/rules/architecture.md` |
 | Agent adapters | `scripts/agents-sync.sh [--check]` | this file, §7 |
 
-If a command does not exist yet (Phase S), **create it as that skill prescribes**. Do not introduce a
+If a command does not exist yet (E2E and load, Phases 3 and 4), **create it as that skill prescribes**. Do not introduce a
 different build method on your own.
 
 ## 5. Absolute rules (the full text is in `.agents/rules/`)
@@ -167,11 +167,11 @@ different build method on your own.
 
 ## 6. Current phase and roadmap
 
-Current: **Phase 1 — the spec, done (2026-10-12).** `spec/envelope.md` and `spec/test-vectors.json` fix
-the byte format, the vectors and the SQL failure semantics. The spike on `develop` (AES-256, no AAD)
-passes `scripts/verify.sh` on 15–18 but **predates the spec in two respects**: it does not authenticate
-the version byte, and it derives the deterministic nonce from the plaintext alone. Its tests still
-carry inline known answers. Phase 2 starts there (issue #19). Nothing is released. Next is Phase 2.
+Current: **Phase 2 — implementation and tests, done (2026-10-12).** The extension implements
+`spec/envelope.md`: the three suites by key length, the AAD overloads, `pg_gcm.strict` and
+`pg_gcm.min_key_bytes`. The unit suite runs all 77 vectors of `spec/test-vectors.json` and the
+regression suite the 62 envelope vectors, on 15–18; the `unit`, `build` and `regress` workflows run
+them on every pull request. Nothing is released and it is not for use yet. Next is Phase 3.
 
 | Phase | Deliverable | Done when |
 |---|---|---|
