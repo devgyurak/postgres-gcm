@@ -14,6 +14,12 @@ gcm_version_key_len(uint8_t version)
 		case GCM_V_AES256_RANDOM:
 		case GCM_V_AES256_DET:
 			return GCM_KEY_LEN_AES256;
+		case GCM_V_AES128_RANDOM:
+		case GCM_V_AES128_DET:
+			return GCM_KEY_LEN_AES128;
+		case GCM_V_AES192_RANDOM:
+		case GCM_V_AES192_DET:
+			return GCM_KEY_LEN_AES192;
 		default:
 			return 0;
 	}
@@ -22,9 +28,17 @@ gcm_version_key_len(uint8_t version)
 uint8_t
 gcm_version_for(size_t key_len, int deterministic)
 {
-	if (key_len != GCM_KEY_LEN_AES256)
-		return 0;
-	return deterministic ? GCM_V_AES256_DET : GCM_V_AES256_RANDOM;
+	switch (key_len)
+	{
+		case GCM_KEY_LEN_AES256:
+			return deterministic ? GCM_V_AES256_DET : GCM_V_AES256_RANDOM;
+		case GCM_KEY_LEN_AES128:
+			return deterministic ? GCM_V_AES128_DET : GCM_V_AES128_RANDOM;
+		case GCM_KEY_LEN_AES192:
+			return deterministic ? GCM_V_AES192_DET : GCM_V_AES192_RANDOM;
+		default:
+			return 0;
+	}
 }
 
 enum gcm_error

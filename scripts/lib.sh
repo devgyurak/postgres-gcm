@@ -50,6 +50,22 @@ print(digest.hexdigest())
 PY
 }
 
+# vector_field <id> <member> — one member of one vector of spec/test-vectors.json, so that a
+# script compares against the file and never against a value copied out of it.
+vector_field() {
+  python3 - "$ROOT/spec/test-vectors.json" "$1" "$2" <<'PY'
+import json
+import sys
+
+path, vector_id, member = sys.argv[1:]
+with open(path, encoding="utf-8") as f:
+    found = [v for v in json.load(f)["vectors"] if v["id"] == vector_id]
+if len(found) != 1 or member not in found[0]:
+    sys.exit(f"error: spec/test-vectors.json has no vector {vector_id} with a member {member}")
+print(found[0][member])
+PY
+}
+
 build_image_tag() {
   echo "pg-gcm-build:$1"
 }
