@@ -46,7 +46,7 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
 - Deterministic nonce: `nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`,
   `nonce = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[:12]` — the AAD is an input, so one
   key may be used with any number of AAD values (design §8 O16).
-- Envelope (normative definition: `spec/envelope.md`, written in Phase 1):
+- Envelope (normative definition: `spec/envelope.md`):
 
 ```
 0x01  legacy AES-256-CBC — reserved; never produced and not opened in 0.1 (design §8 O6)
@@ -75,8 +75,8 @@ docs/design.md                 The design document — rationale, decisions, ope
 docs/design-KO.md              Its Korean translation. The English file above is canonical
 LICENSE                        The PostgreSQL License (design §7)
 docs/ops-constraints.md        Operational constraints — also duplicated on the README's first screen (Phase 4)
-spec/envelope.md               The envelope and failure semantics (Phase 1)
-spec/test-vectors.json         NIST CAVP GCM KAT plus the project's own vectors (Phase 1)
+spec/envelope.md               The envelope (Part 1) and its PostgreSQL binding with the failure semantics (Part 2)
+spec/test-vectors.json         NIST CAVP GCM KAT plus the project's own vectors, reproduced by scripts/check-vectors.py
 src/                           The extension (C11)
   pg_gcm.{h,c}                 _PG_init, GUC registration, what the glue files share
   fn_encrypt.c fn_decrypt.c    The SQL-callable glue — argument checks, encoding, error translation only
@@ -92,7 +92,7 @@ tests/e2e/                     compose: primary + streaming replica + a Python S
 tests/load/                    Load: decrypt + LIKE over 10k/100k/300k rows, gated against pgcrypto
 tests/bench/                   Core micro-benchmarks (Google Benchmark) — ratios against bare EVP
 scripts/                       dev-up.sh, build-in-docker.sh, verify.sh (+ verify.sql), unit-in-docker.sh,
-                               agents-sync.sh, check-architecture.py, check-action-pins.py, lib.sh
+                               agents-sync.sh, check-architecture.py, check-action-pins.py, check-vectors.py, lib.sh
 scripts/spike/                 The Phase S measurements (measure.sh, ldd.sh, a never-shipped probe module)
 docker/                        build.Dockerfile (postgres:<major> + server-dev headers) + versions.json
 .github/workflows/             CI — added per phase (ci-release skill)
@@ -108,6 +108,7 @@ docker/                        build.Dockerfile (postgres:<major> + server-dev h
 | Regression tests | `scripts/verify.sh 17` (after the two rows above: installs the build into the dev container, runs `make installcheck`, then `scripts/verify.sql`) | `regress-tests` |
 | E2E | `docker compose -f tests/e2e/compose.yml up --exit-code-from runner` | `e2e-load-tests` |
 | Load | `python tests/load/run.py --rows 300000 --baseline pgcrypto` | `e2e-load-tests` |
+| Spec vectors | `python3 scripts/check-vectors.py`, and `--self-test` (needs `pip install -r scripts/requirements-lint.txt`) | `unit-tests` |
 | Architecture boundaries | `python3 scripts/check-architecture.py` | `.agents/rules/architecture.md` |
 | Agent adapters | `scripts/agents-sync.sh [--check]` | this file, §7 |
 
@@ -166,9 +167,11 @@ different build method on your own.
 
 ## 6. Current phase and roadmap
 
-Current: **Phase S — the spike, done (2026-10-12).** A minimal extension (AES-256, no AAD) builds and
-passes `scripts/verify.sh` on 15–18; the answers are in `docs/design.md` §8. Nothing is released and
-the envelope specification is not written. Next is Phase 1.
+Current: **Phase 1 — the spec, done (2026-10-12).** `spec/envelope.md` and `spec/test-vectors.json` fix
+the byte format, the vectors and the SQL failure semantics. The spike on `develop` (AES-256, no AAD)
+passes `scripts/verify.sh` on 15–18 but **predates the spec in two respects**: it does not authenticate
+the version byte, and it derives the deterministic nonce from the plaintext alone. Its tests still
+carry inline known answers. Phase 2 starts there (issue #19). Nothing is released. Next is Phase 2.
 
 | Phase | Deliverable | Done when |
 |---|---|---|

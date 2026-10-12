@@ -31,8 +31,11 @@ Rules: `testing.md`. One `.sql` per behaviour under `test/sql/`, its output unde
   `EXPLAIN (ANALYZE, FORMAT JSON)` — the top node is `Gather`, `Workers Launched` is above zero, and
   the row count is the expected one — as `parallel_strict.sql` does through a small helper function.
 - The `vectors` file reads `spec/test-vectors.json` (`\set` from a backquoted `cat`, then
-  `jsonb_array_elements`) and asserts per `testing.md`: the plaintext where it is UTF-8, the
-  invalid-UTF-8 error where it is not.
+  `jsonb_array_elements`) and asserts per spec §2.8: `nist` vectors are skipped (they are not
+  envelopes); an `ok` vector gives its text when `plaintext_class` is `text` and `22021` otherwise; a
+  `det` vector of class `text` whose nonce is derived also seals to its `envelope_hex`, with
+  `SET LOCAL pg_gcm.min_key_bytes` at its key length; `bad_tag` is `XX001` with strict on and NULL
+  with it off; `bad_envelope` and `bad_key_length` are their errors either way.
 - Where output legitimately differs by major, use an alternative expected file
   (`name_1.out`), never a branch in the test.
 

@@ -11,7 +11,7 @@ from source.
 ## Workflows by phase
 | Phase | Workflow | Trigger | Does |
 |---|---|---|---|
-| S | `lint.yml` | PR, push | `agents-sync.sh --check`, `check-action-pins.py`, `check-architecture.py`, shellcheck, ruff, mypy, actionlint |
+| S | `lint.yml` | PR, push | `agents-sync.sh --check`, `check-action-pins.py`, `check-architecture.py`, `check-vectors.py` and its `--self-test` (from Phase 1), shellcheck, ruff, mypy, actionlint |
 | 2 | `unit.yml` | PR, push | core unit tests with sanitizers; asserts a non-zero test count |
 | 2 | `build.yml` | PR, push | majors × amd64/arm64 PGXS build, `-Werror` |
 | 2 | `regress.yml` | PR, push | `make installcheck` per major — **the required checks**, never path-filtered |

@@ -4,6 +4,22 @@ Notable changes per release. Envelope changes get their own entry with a compati
 
 ## Unreleased
 
+### Phase 1 — the spec (2026-10-12)
+- `spec/envelope.md`: the envelope format (Part 1, free of PostgreSQL terms) and its PostgreSQL
+  binding (Part 2): functions, keys, NULL, text and encodings, one SQLSTATE per failure class.
+- **Format decisions, both changes to the construction.** The version byte is authenticated: the
+  associated data given to GCM is `version || aad` (design O13). The deterministic nonce is derived
+  from that associated data as well as the plaintext, so one key may be used with any number of AAD
+  values (design O16); the earlier rule of one AAD convention per deterministic key is gone.
+- **Compatibility:** an envelope sealed by a Phase S build does not open under the specification, and
+  the reverse. Nothing was released, so nothing stored is affected. The code on `develop` is still the
+  spike; Phase 2 brings it to the specification (issue #19).
+- `spec/test-vectors.json`: 77 vectors — 15 NIST CAVP known answers for AES-GCM and 62 of the
+  project's own, 30 that open and 32 that do not — and `scripts/check-vectors.py`, which re-derives
+  every one with a second implementation and, with `--self-test`, checks that it notices a fixed
+  list of broken inputs. Both run in the lint workflow.
+- The SQLSTATEs are settled (design O7): a tag mismatch stays `XX001`.
+
 ### Phase S — the spike (2026-10-12)
 - A minimal extension, not for use: AES-256-GCM only, the two-argument forms of `gcm_encrypt`,
   `gcm_encrypt_det` and `gcm_decrypt`, and `pg_gcm.strict`. No AAD, no 24- or 16-byte keys, no

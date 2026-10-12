@@ -30,7 +30,7 @@ paths:
   SQL_ASCII database verifies the plaintext as UTF-8 on encryption. All of it runs **outside** the core
   and outside any window where an OpenSSL resource is live.
 - Errors: `ereport(ERROR, (errcode(...), errmsg(...)))` with the SQLSTATE fixed by `spec/envelope.md`
-  — until Phase 1 writes it, the ones the spike uses (design §8, O7). Messages carry lengths and the
+  §2.5, one code per failure class. Messages carry lengths, the names of encodings and the
   version byte at most.
 - `_PG_init`: fetch the OpenSSL handles first, recording a failure instead of raising; then
   `DefineCustomBoolVariable` / `DefineCustomIntVariable`; then `MarkGUCPrefixReserved("pg_gcm")` (the
