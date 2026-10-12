@@ -53,7 +53,7 @@ bitcode, for which the server-dev package already brings the matching `clang`.
    a detoasted copy is ever cleansed, and an argument is never modified.
 3. Key length in {32, 24, 16}; on encryption, also `>= pg_gcm_min_key_bytes`. Error otherwise.
 4. Everything that can raise and needs no secret comes first: the handle check (a failed fetch in
-   `_PG_init` surfaces here) and `FindDefaultConversionProc` when the database is neither UTF8 nor
+   `_PG_init` surfaces here) and `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` when the database is neither UTF8 nor
    SQL_ASCII. The result's size is known only once the text is UTF-8, so its `palloc`
    (`1 + 12 + len + 16` for an envelope, checked against `MaxAllocSize`) happens inside the `PG_TRY`
    of step 8, where a failure still cleanses every copy.
