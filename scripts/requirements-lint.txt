@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: PostgreSQL
+# Lint tools, pinned (.github/workflows/lint.yml). Refresh the three together.
+ruff==0.17.0
+mypy==2.4.0
+actionlint-py==1.7.12.25

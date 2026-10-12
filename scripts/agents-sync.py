@@ -13,6 +13,7 @@ import os
 import pathlib
 import re
 import sys
+from typing import TypedDict
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CHECK = "--check" in sys.argv
@@ -20,7 +21,15 @@ problems: list[str] = []
 generated: set[pathlib.Path] = set()
 
 # ---- per-agent permissions (OpenCode) and sandbox (Codex). Read-only by default. -----------------
-RO_BASH = {
+
+
+class AgentPolicy(TypedDict):
+    bash: dict[str, str]
+    webfetch: str
+    codex_sandbox: str
+
+
+RO_BASH: dict[str, str] = {
     "*": "ask",
     "git diff*": "allow",
     "git log*": "allow",
@@ -42,7 +51,7 @@ RO_BASH = {
     "git reset*": "deny",
     "rm *": "deny",
 }
-RUNNER_BASH = {
+RUNNER_BASH: dict[str, str] = {
     "*": "ask",
     "cmake *": "allow",
     "ctest *": "allow",
@@ -61,7 +70,7 @@ RUNNER_BASH = {
     "git add*": "deny",
     "rm -rf *": "deny",
 }
-AGENT_POLICY = {
+AGENT_POLICY: dict[str, AgentPolicy] = {
     "code-reviewer": {
         "bash": RO_BASH,
         "webfetch": "deny",
@@ -85,12 +94,12 @@ AGENT_POLICY = {
 }
 
 
-def frontmatter(text: str):
+def frontmatter(text: str) -> tuple[str, str]:
     m = re.match(r"---\n(.*?)\n---\n(.*)", text, re.DOTALL)
     return (m.group(1), m.group(2)) if m else ("", text)
 
 
-def emit(path: pathlib.Path, content: str):
+def emit(path: pathlib.Path, content: str) -> None:
     rel = path.relative_to(ROOT)
     generated.add(path)
     if CHECK:
@@ -149,8 +158,13 @@ for f in sorted((ROOT / ".agents/rules").glob("*.md")):
 # ---- OpenCode + Codex agents ---------------------------------------------------------------------
 for f in sorted((ROOT / ".claude/agents").glob("*.md")):
     fm, body = frontmatter(f.read_text())
-    name = re.search(r"^name: (.*)$", fm, re.MULTILINE).group(1).strip()
-    desc = re.search(r"^description: (.*)$", fm, re.MULTILINE).group(1).strip()
+    name_m = re.search(r"^name: (.*)$", fm, re.MULTILINE)
+    desc_m = re.search(r"^description: (.*)$", fm, re.MULTILINE)
+    if name_m is None or desc_m is None:
+        problems.append(f"{f.relative_to(ROOT)}: front matter needs name: and description:")
+        continue
+    name = name_m.group(1).strip()
+    desc = desc_m.group(1).strip()
     pol = AGENT_POLICY.get(name)
     if pol is None:
         problems.append(f"no AGENT_POLICY for {name} (add it to scripts/agents-sync.py)")
