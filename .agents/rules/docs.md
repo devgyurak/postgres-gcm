@@ -31,4 +31,6 @@ paths:
   Adding a field is a minor change; changing the meaning of one is major.
 - The license is **the PostgreSQL License** (design §7): full text in `LICENSE`,
   `SPDX-License-Identifier: PostgreSQL` at the head of every source and script file, and a link to
-  `LICENSE` from both READMEs. Changing it means amending design §7 first.
+  `LICENSE` from both READMEs. The `pg_regress` inputs and expected outputs (`test/sql`,
+  `test/expected`) are the exception: they begin with their `-- Given:` line, which is echoed into
+  the output a reviewer reads. Changing it means amending design §7 first.

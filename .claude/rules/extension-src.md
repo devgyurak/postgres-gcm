@@ -29,13 +29,14 @@ paths:
   message and allocate the copy where the caller cannot cleanse it. A UTF8 database converts nothing; a
   SQL_ASCII database verifies the plaintext as UTF-8 on encryption. All of it runs **outside** the core
   and outside any window where an OpenSSL resource is live.
-- Errors: `ereport(ERROR, (errcode(...), errmsg(...)))` with the SQLSTATE fixed by `spec/envelope.md`.
-  Messages carry lengths and the version byte at most.
+- Errors: `ereport(ERROR, (errcode(...), errmsg(...)))` with the SQLSTATE fixed by `spec/envelope.md`
+  — until Phase 1 writes it, the ones the spike uses (design §8, O7). Messages carry lengths and the
+  version byte at most.
 - `_PG_init`: fetch the OpenSSL handles first, recording a failure instead of raising; then
   `DefineCustomBoolVariable` / `DefineCustomIntVariable`; then `MarkGUCPrefixReserved("pg_gcm")` (the
   `guc-config` skill covers versions). No `on_proc_exit` (design §5.8).
-- Compiled with the server's `CFLAGS` from PGXS plus `-Wall -Wextra -Werror` in CI. C11. No C++ in the
-  shipped library.
+- Compiled with the server's `CFLAGS` from PGXS plus `-Wall -Wextra -Werror` in CI
+  (`make PG_GCM_WERROR=1`). C11, as `-std=gnu11`. No C++ in the shipped library.
 - Each function's SQL behaviour (a NULL in each argument position, the empty string, maximum length,
   the two- and three-argument forms, an empty `aad`, a wrong key length, strict on and off, a
   non-UTF-8 database) is covered by `pg_regress`.

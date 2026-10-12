@@ -2,10 +2,12 @@
 
 English | [한국어](design-KO.md)
 
-Status: **Phase 0, planning** (2026-10-10). Nothing here is implemented. Every claim about PostgreSQL
-behaviour that the design leans on is either cited in §9, recorded with its evidence in §8 "Confirmed",
-or listed in §8 "Open" for Phase S to settle. The plan was checked against the PostgreSQL 15–18
-sources and the official images on 2026-10-10; §8 records what that established.
+Status: **Phase S done** (2026-10-12). A minimal extension — AES-256, no AAD, `pg_gcm.strict` — builds
+and passes its checks on PostgreSQL 15–18 (§4, §8). Nothing is released, the envelope specification is
+not written (Phase 1), and everything beyond the spike is still a plan. Every claim about PostgreSQL
+behaviour that the design leans on is either cited in §9, recorded with its evidence in §8, or listed
+in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources and the official images on
+2026-10-10 and the spike ran on 2026-10-12; §8 records what each established.
 
 ## 0. Goal and scope
 
@@ -97,10 +99,10 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 - A consequence of `STRICT` to state wherever the functions are documented: **a missing key yields
   NULL, not an error.** Declare an encrypted column `NOT NULL` when its plaintext is never NULL, so an
   unset key parameter fails the statement instead of storing NULL (§6, item 11).
-- Each function is declared with an explicit `COST`, settled in Phase S from the measured per-call
-  cost. A C function defaults to cost 1, and the planner orders the quals of one scan by cost, so
-  without it `gcm_decrypt(...) LIKE ...` is not placed after the cheap predicates that §6 item 4
-  relies on.
+- Each function is declared with an explicit `COST`: 50 for `gcm_decrypt`, 100 for `gcm_encrypt` and
+  200 for `gcm_encrypt_det`, round values from the Phase S measurement (§8). A C function defaults to
+  cost 1, and the planner orders the quals of one scan by cost, so without it
+  `gcm_decrypt(...) LIKE ...` is not placed after the cheap predicates that §6 item 4 relies on.
 - Binary plaintext (`bytea` in, `bytea` out) is deliberately not in 0.1: overloading `text` and `bytea`
   on the first argument makes an untyped literal ambiguous. If wanted, it gets distinct names
   (`gcm_encrypt_bytes`, `gcm_decrypt_bytes`) through an amendment.
@@ -129,11 +131,13 @@ hide. The first two can only come from an envelope this extension did not seal:
 3. A character the database encoding cannot hold, in a database that is not UTF-8.
 
 `0x01` is reserved for a legacy, unauthenticated AES-256-CBC dual-read envelope
-(`0x01 || iv(16) || CBC ciphertext`) and stays open as §8 O6. Two outcomes are possible, and Phase S
-chooses on two grounds — compatibility and security policy: implement it, if
-`'\x01' || iv || encrypt_iv(data, key, iv, 'aes-cbc')` from `pgcrypto` with a 32-byte key opens
-correctly, which gives existing pgcrypto columns a migration path without re-encryption; or leave it
-unimplemented, an allocated-but-unimplemented version byte that fails as `bad_envelope`.
+(`0x01 || iv(16) || CBC ciphertext`). **0.1 does not implement it** (§8 O6, settled in Phase S): the
+byte stays allocated, and an envelope that carries it fails as a malformed envelope. Compatibility is
+not the obstacle: `encrypt_iv(data, key, iv, 'aes-cbc')` from `pgcrypto` with a 32-byte key is plain
+AES-256-CBC with PKCS#7 padding, so `'\x01' || iv || …` would give existing pgcrypto columns a
+migration path without re-encryption. Security policy is: it would put an unauthenticated format
+behind a function whose point is authentication. Implementing it later is an amendment to this
+document and changes no envelope already written.
 
 If it is implemented, two conditions come with it and are stated wherever `0x01` is exposed:
 
@@ -220,6 +224,14 @@ Build the smallest extension that answers the open questions in §8, on every su
 
 Record every answer in §8 with the command that produced it.
 
+Done on 2026-10-12, on 15–18, on 19beta4 and on an image whose server links OpenSSL 3.0; the answers
+are in §8 "Established in Phase S". Three things differ from the steps as written, and §8 says why.
+The spike includes `gcm_encrypt_det`, because its nonce is the only place SQL can see an HMAC result
+(step 5). The `CRYPTO_set_mem_functions` probe and the `PG_TRY` timing live in a measurement-only
+module, not in the extension's `_PG_init` (steps 6 and 7). And step 6's counting allocator reaches
+the paths an allocation failure or a tag mismatch takes, not every failure an EVP call can have;
+the rest is shown by structure.
+
 ### Phase 1 — the spec
 
 Write `spec/envelope.md` and build `spec/test-vectors.json`: the NIST CAVP GCM known-answer tests plus
@@ -281,8 +293,10 @@ conversion buffer, scratch space, the opened plaintext before it becomes the res
   Cleansing it in place would zero the key in a cached plan or corrupt a table page; the copy test is
   the one `PG_FREE_IF_COPY` uses (pointer inequality with `PG_GETARG_POINTER`).
 - The result `text`, the caller's datums, and the copies the planner makes when it evaluates a `STABLE`
-  call (§5.3) are outside the extension's reach. Cleansing is defence in depth for our own buffers, not
-  a guarantee that no copy of a key remains in backend memory.
+  call (§5.3) are outside the extension's reach. So are the server's intermediates when it detoasts
+  a value for us — the fetched chunks and the compressed form, which it frees without zeroing even
+  when the call succeeds. Cleansing is defence in depth for our own buffers, not a guarantee that no
+  copy of a key remains in backend memory.
 - A stretch of glue that holds one of our own secret copies and can still raise — `palloc` on
   out-of-memory, for one — is wrapped in `PG_TRY` / `PG_FINALLY`, so the copy is cleansed on the error
   path too. No OpenSSL context is live inside such a block.
@@ -349,7 +363,8 @@ The glue therefore uses the forms that report by return value, present on every 
   glue allocated (`inlen * MAX_CONVERSION_GROWTH + 1`, overflow-checked against `MaxAllocSize`). A
   count shorter than `inlen` after a successful verification means a character the target cannot hold.
 - The conversion procedure comes from `FindDefaultConversionProc`, a catalog lookup that can raise
-  (with no data in its message). It runs before any secret copy exists.
+  (with no data in its message). It runs before any secret copy exists. It resolves through
+  `search_path`, as the server's own client-encoding conversion does (§8 O14).
 
 | Database encoding | `gcm_encrypt*` | `gcm_decrypt` |
 |---|---|---|
@@ -368,6 +383,10 @@ facts about library loading require this (§8). Under `shared_preload_libraries`
 `_PG_init` is fatal to the postmaster, so the server would not start. Under lazy loading, the library
 is not marked loaded until `_PG_init` returns, so an `ERROR` after `DefineCustom*Variable` makes every
 later call re-run `_PG_init` and fail with "attempt to redefine parameter", hiding the real cause.
+
+The handles are static in the core (`gcm.c`), fetched by `gcm_init()`, which `_PG_init` calls and
+the unit suite calls from `main`. One thing is still resolved per call: `EVP_MAC` takes its digest by
+name, so each deterministic call names SHA-256 to `EVP_MAC_init` (§8 O15).
 
 The handles live for the life of the process and are not released. An `on_proc_exit` callback
 registered while preloading would never run in a backend — the child discards the postmaster's
@@ -388,8 +407,10 @@ callbacks — and the process is exiting anyway.
    function bodies and policies are stored in the catalog and dumped by `pg_dump`. Do not wrap these
    functions in a function declared `IMMUTABLE` to index them (§5.3).
 3. **Decrypted values can reach disk.** A sort or hash over `gcm_decrypt(...)` that exceeds `work_mem`
-   writes plaintext to temporary files (Phase S measures when). Encrypt the volume that holds
-   `temp_tablespaces`.
+   writes plaintext to temporary files. Phase S saw it at the default `work_mem` of 4MB: a sort of
+   10–15-byte names left memory somewhere between 30,000 and 300,000 rows depending on the major, and
+   the temporary file held the names in the clear while the table file held none (§8). Encrypt the
+   volume that holds `temp_tablespaces`.
 4. **The functions are opaque to the planner.** `WHERE gcm_decrypt(col, $1) LIKE ...` scans the
    candidate set; selectivity must come from other predicates. There is no index on decrypted values,
    by design (§5.3).
@@ -518,20 +539,119 @@ the official `postgres:15`–`18` images on linux/arm64 the same day.
   (`describe.c`). The volatility test reads `pg_proc` instead. (Source.)
 - **`pg_regress` and `\c`.** `pg_regress` unsets `PGCLIENTENCODING` unless `--encoding` is given, and
   after `\c` psql takes the new database's encoding as the client encoding; `--load-extension` applies
-  only to the databases `pg_regress` creates. (Source: `pg_regress.c`, `psql/command.c`; not run.)
+  only to the databases `pg_regress` creates. (Source: `pg_regress.c`, `psql/command.c`; run on 17 in
+  Phase S, below.)
 
-### Open (to be answered in Phase S)
+### Established in Phase S (2026-10-12)
 
-Numbers are never reused; O2, O3, O5, O8, O9 and O10 moved to "Confirmed" above.
+"Run" here is this repository's scripts on linux/arm64, against the digest-pinned images of
+`docker/versions.json`: `postgres:15`–`18` (15.19, 16.15, 17.11, 18.6; OpenSSL 3.5.7),
+`postgres:19beta4`, and `postgres:17-bookworm` (17.11; OpenSSL 3.0.22). Unless a line says otherwise
+the result was the same on all six. Per image `M` the commands are `scripts/build-in-docker.sh M`,
+`scripts/unit-in-docker.sh M`, `scripts/dev-up.sh M` and `scripts/verify.sh M` (steps 1–6),
+`scripts/spike/measure.sh M` (step 7, O6, O8, O12), and `scripts/spike/ldd.sh all` (step 8).
+
+- **Steps 1–4 pass.** The PGXS build is clean under `-Wall -Wextra -Werror`, and `ldd` shows the
+  server and `pg_gcm.so` resolving the same `libcrypto.so.3`. `CREATE EXTENSION` installs 0.1.0; 14
+  `pg_regress` files pass, and so do the 35 checks of `scripts/verify.sql` with the library loaded
+  lazily and again preloaded. A key that is not 32 bytes is an error. A forged tag is an error with
+  `pg_gcm.strict` on and NULL with it off, while a truncated envelope, an unimplemented version byte
+  and an authenticated plaintext that is not text (the GCM specification's test case 14: sixteen
+  zero bytes) stay errors with it off. `LIKE '%길%'` on a decrypted value is true in a UTF8 and in
+  an `EUC_KR` database; the `EUC_KR` database seals nine bytes of UTF-8 for six bytes of text and
+  derives the same deterministic nonce, each database opens what the other sealed, and a character
+  `EUC_KR` cannot hold is an error whose message has no byte of it. A SQL_ASCII database refuses to
+  seal bytes that are not UTF-8. A parallel scan with `pg_gcm.strict = off` returns NULL from every
+  worker (O9, now with the real variable).
+- **O4 — handles after fork.** They work. With `shared_preload_libraries = 'pg_gcm'`,
+  `pg_gcm.strict` is a real variable before a backend's first call (the postmaster loaded the
+  library), and in each of two backends an AES-256-GCM round trip succeeds and the deterministic
+  nonce of `'홍길동'` under the `00..1f` key is `f55369153b2a94fcbc9b633f`, the value Python's
+  `hmac` gives. What a backend inherits is the fetched `EVP_CIPHER` and `EVP_MAC`. The same holds
+  when the backend loads the library itself.
+- **O3, run.** The two backends' first random nonces differed in every run, preloaded and not.
+- **O6 — `0x01`.** Compatibility: yes. `encrypt_iv(convert_to('홍길동','UTF8'), key32, iv,
+  'aes-cbc')` from `pgcrypto` gives 16 bytes that `openssl enc -d -aes-256-cbc -K … -iv …` opens to
+  `홍길동`: AES-256-CBC with PKCS#7 padding and nothing else. (It was opened with OpenSSL's own
+  command, not with a CBC path in the extension.) Decision: not implemented in 0.1; the byte stays
+  reserved (§2.2). Reversing that is an amendment and breaks no envelope.
+- **O7 — SQLSTATEs, as far as the spike goes.** The spike raises `22023` for a key length, `22P03`
+  for a malformed envelope, `XX001` for a tag mismatch, `22021` for text that is not UTF-8, `22P05`
+  for an untranslatable character, `54000` for a value too long and `XX000` for an OpenSSL failure.
+  Each exists in `errcodes.txt` on 15–18, and a regression test reads four of them back. One choice
+  is not settled and stays in "Open": `XX001` puts the commonest operational failure, a wrong key,
+  in the internal-error class.
+- **O8, run.** `CRYPTO_set_mem_functions` returned 0 in a preloading postmaster and in a backend
+  loading on first call (the probe module's `_PG_init`; logged, and readable through SQL). In the
+  unit suite, called first in `main`, it returned 1. One call makes 2 OpenSSL allocations to seal, 2
+  to open and 13 to seal deterministically (19 on 3.0.22). The suite refuses each of the first 32 in
+  turn: every call gives back all it took, never reports the failure as a tag mismatch, and leaves
+  either the right output or a cleansed buffer. **What that does not execute:** an EVP call that
+  fails for another reason while its context is live. Those exits rest on structure — one `done:`
+  label per function, and no `return` between acquiring a context and that label — which
+  `scripts/check-architecture.py` enforces. Step 6 is shown to that extent and no further.
+- **O11 — amd64.** On amd64 `postgres` links `/lib/x86_64-linux-gnu/libcrypto.so.3` and `openssl
+  version` is 3.5.7 for 15–18 and 19beta4, as on arm64; `17-bookworm` is 3.0.22 on both.
+- **O12 — `PG_TRY`.** One `PG_TRY` / `PG_FINALLY` block costs a few nanoseconds per call: 2–7 ns on
+  most of ten runs (3M calls of a function with the block against the same function without it),
+  with one run reading below zero — the difference is at the noise floor. That is at most about 2%
+  of one decrypt-and-`LIKE` row. It does not change a load gate.
+- **Step 7 — cost.** Over 300k rows of 10–15-byte Korean names, in one backend with JIT off:
+  `gcm_decrypt(...) LIKE '%길%'` costs 0.30–0.41 µs a row above the bare scan, `gcm_encrypt`
+  0.64–1.00 µs, `gcm_encrypt_det` 0.99–1.18 µs, and `pgcrypto`'s `convert_from(decrypt_iv(...,
+  'aes-cbc'), 'UTF8') LIKE` 0.58–0.68 µs: the GCM query takes 0.49–0.63 of the CBC one. In units of
+  a cost-1 operator the answer is rough. An `int4ge` qual is a few nanoseconds, at the noise floor
+  of these runs (it read 1–11 ns), so the ratio is good to a factor of two or three — 37–65 for
+  decrypt, 64–111 for encrypt and 88–190 for the deterministic variant on the four runs where the
+  yardstick held. The declared `COST` is therefore round: 50, 100 and 200. With it, a query written
+  as `gcm_decrypt(...) LIKE '%길%' AND id % 2 = 0` is planned with `id % 2 = 0` first.
+- **Step 7 — temporary files.** With `work_mem` at its default of 4MB, `ORDER BY` the decrypted name
+  stays in memory at 30,000 rows on every major and is an external merge at 60,000 on 15, at 100,000
+  on 16 and at 300,000 on 17–19; `GROUP BY` it spills at 100,000 on 15–17 and at 300,000 on 18–19.
+  While a cursor over the sorted 300k rows is open, `base/pgsql_tmp` holds one file of about 7 MB in
+  which the fragment `길동` occurs about 37,500 times; the table's own file holds none.
+- **OpenSSL, from the sources of 3.0 and 3.5.** An `ivlen` parameter passed to `EVP_*Init_ex2` was
+  applied after the IV had been copied until 3.0.12 / 3.1.4 (CVE-2023-5363); 12 is AES-GCM's
+  default, so the core passes no parameter and checks `EVP_CIPHER_CTX_get_iv_length`. A tag mismatch
+  in `EVP_DecryptFinal_ex` pushes nothing onto the error queue, and neither does a missing key, IV
+  or tag on that path. `ERR_clear_error` keeps each entry's data buffer for reuse, and OpenSSL keeps
+  the DRBGs and the thread's error state for the life of the process, so the unit suite runs every
+  path once before it takes a baseline.
+- **PostgreSQL, from the sources of 15–18.** `pg_do_encoding_conversion_buf` returns the number of
+  source bytes it consumed, NUL-terminates its output, and with a destination of `srclen *
+  MAX_CONVERSION_GROWTH + 1` is offered the whole input; 0 is ambiguous for empty input, which the
+  glue therefore does not convert. `FindDefaultConversionProc` walks `search_path` ("Open", O14).
+  `-Wextra` fails on the server's own headers (unused parameters in static inlines), so the
+  `-Werror` build takes them with `-isystem`.
+- **`pg_regress` and `\c`, run on 17.** After `\c` to an `EUC_KR` database with `PGCLIENTENCODING`
+  unset, `SHOW client_encoding` is `EUC_KR` and a UTF-8 literal fails with `invalid byte sequence
+  for encoding "EUC_KR"`; `SET client_encoding = 'UTF8'` cures it. `pg_regress` stops at the first
+  test that has no expected file.
+- **The official image, run.** Its init-time server answers `pg_isready` on the socket before the
+  real server is up; a check over TCP does not. A preloading server needs the library on disk before
+  it starts (`docker create`, `docker cp`, `docker start`).
+- **O1, so far.** The spike builds from `postgresql-server-dev-19` in `postgres:19beta4` and passes
+  everything above. 19 stays out of the supported set until its release image exists.
+- **Where things live** (decided while building; `AGENTS.md` §3 and `architecture.md` say the same).
+  The fetched handles are static in the core, behind `gcm_init()`, because the unit suite needs them
+  without a server. The glue includes no OpenSSL header and cleanses through `gcm_cleanse`. The
+  spike includes the two-argument `gcm_encrypt_det`, because its nonce is the only place SQL can see
+  an HMAC result (step 5). The `CRYPTO_set_mem_functions` probe and the `PG_TRY` timing are in a
+  measurement-only module, `scripts/spike/pg_gcm_probe`, not in the extension.
+
+### Open
+
+Numbers are never reused. O2–O6 and O8–O12 are answered above; O7 is narrowed to one question, and
+O13, O14 and O15 came out of the Phase S review.
 
 | # | Question | How to settle it |
 |---|---|---|
-| O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28) | Add it to `docker/versions.json` when the release image exists; until then build the spike against `19beta4` |
-| O4 | Do `EVP_MAC` handles fetched in the postmaster work in forked backends? `EVP_CIPHER` has precedent — the postmaster's `SSL_CTX` fetches ciphers before forking — but nothing documents either | Phase S step 5: preload, then a known-answer HMAC in two backends |
-| O6 | Is `0x01` (AES-256-CBC, PKCS#7, IV prefixed) implemented, and on what terms (§2.2)? Compatibility: does it match `pgcrypto`'s `encrypt_iv(..., 'aes-cbc')` with a 32-byte key? Security policy: it is unauthenticated and `pg_gcm.strict` cannot see tampering, so adopting it means stating that exception and deciding how `0x01` is refused after a migration | Encrypt with pgcrypto, open with the spike; then decide both parts together, not compatibility alone |
-| O7 | Which SQLSTATE fits each failure class (bad key length, bad envelope, bad tag, invalid UTF-8, untranslatable character, OpenSSL failure)? Candidates in use elsewhere: `22023`, `XX001`, `22021`, `22P05`; `pgcrypto` raises everything as `39000` | `errcodes.txt`; prefer existing classes over a custom one, and one class per failure so a client can tell a forged tag from a wrong key length |
-| O11 | Do the amd64 images link the same OpenSSL as the arm64 ones checked for O2? | `ldd` and `openssl version` on amd64 |
-| O12 | What does a `PG_TRY` block per call cost over 300k rows, and does it change the load gate? | Phase S step 7, with and without the block |
+| O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the spike already builds and passes on `19beta4` | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
+| O7 | Is `XX001` (`data_corrupted`, the internal-error class) the right SQLSTATE for a tag mismatch, when the commonest cause is a wrong key? The other classes the spike uses (above) stand unless the spec finds a reason | Phase 1: `spec/envelope.md` fixes the table. Prefer an existing class, and keep one class per failure so a client can tell a forged tag from a wrong key length |
+| O13 | The version byte is not authenticated. Changing `0x03` to `0x02`, or back, gives a different envelope that opens to the same plaintext, so someone who can write to a deterministic column but holds no key can put a second copy of a value past a UNIQUE constraint. Bind the version byte into the tag as AAD, or record this as accepted? | Phase 1, before an envelope exists outside tests: it changes the construction, so it is an amendment here first |
+| O14 | `FindDefaultConversionProc` resolves through `search_path`. In a database that is not UTF-8, the plaintext is handed to whichever default conversion comes first, as the server's own client-encoding conversion is. Accept that, or look the conversion up in `pg_catalog` alone? | Phase 2, with the encoding code: establish who can create a default conversion, then decide |
+
+| O15 | A deterministic call resolves SHA-256 by name inside `EVP_MAC_init`, because `EVP_MAC` takes no fetched digest. A keyless `EVP_MAC_CTX` prepared once and duplicated per call avoids that, and it passed here on 3.0.22, 3.5.7 and 3.6.4 — but upstream's `hmac_prov.c` shows `EVP_MAC_CTX_dup` of a keyless HMAC context failing on 3.0.0 and dropping a digest reference each time (fixed in 3.0.1 and 3.0.4; read, not run), so the spike keeps the per-call form. Raise the floor to 3.0.1 with a run-time version check, or keep it? | Phase 2, against the measured cost of the deterministic variant |
 
 ## 9. References
 

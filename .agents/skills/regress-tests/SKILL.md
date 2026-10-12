@@ -25,8 +25,11 @@ Rules: `testing.md`. One `.sql` per behaviour under `test/sql/`, its output unde
 - Forcing a parallel plan: set `parallel_setup_cost = 0`, `parallel_tuple_cost = 0`,
   `min_parallel_table_scan_size = 0` and `max_parallel_workers_per_gather = 2`, which are spelt the
   same on every major. Not `debug_parallel_query`: it is `force_parallel_mode` on 15, and a test may
-  not branch on the version. Assert the plan shape in the same file (`EXPLAIN (COSTS OFF)`) so a
-  serial plan fails the test instead of passing vacuously.
+  not branch on the version. **A plan that says "Workers Planned" proves nothing**: with no worker
+  available the leader runs everything and the result is the same. Also set
+  `parallel_leader_participation = off`, and assert on one execution's own
+  `EXPLAIN (ANALYZE, FORMAT JSON)` — the top node is `Gather`, `Workers Launched` is above zero, and
+  the row count is the expected one — as `parallel_strict.sql` does through a small helper function.
 - The `vectors` file reads `spec/test-vectors.json` (`\set` from a backquoted `cat`, then
   `jsonb_array_elements`) and asserts per `testing.md`: the plaintext where it is UTF-8, the
   invalid-UTF-8 error where it is not.
@@ -38,7 +41,8 @@ Rules: `testing.md`. One `.sql` per behaviour under `test/sql/`, its output unde
   the `postgres:<major>` container that `scripts/dev-up.sh <major>` started, runs `make installcheck`,
   and prints `regression.diffs` on failure (the `dev-container` skill).
 - Re-record only with `PG_GCM_RECORD=1 scripts/verify.sh <major>`, which copies `results/` over
-  `test/expected/`. Every changed line is explained in the PR.
+  `test/expected/`. Every changed line is explained in the PR. (`pg_regress` stops at the first test
+  with no expected file — seen on 17 — so the record mode gives a new test an empty one first.)
 
 ## Must always exist
 `korean_like` (`LIKE '%길%'` on a decrypted value), `strict_on_off`, `min_key_bytes`, `null_args`,

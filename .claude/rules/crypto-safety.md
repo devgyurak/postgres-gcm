@@ -7,7 +7,9 @@ This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing belo
 - Fetch algorithms by name: `EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL)` (and `AES-192-GCM`,
   `AES-128-GCM`), `EVP_MAC_fetch(NULL, "HMAC", NULL)` with the `SHA256` digest. Never call a legacy
   symbol such as `EVP_aes_256_gcm()` or `HMAC()`.
-- Fetch once per backend (`_PG_init`) and cache. Do not fetch per call. The fetch comes **before** the
+- Fetch once per backend (`_PG_init`) and cache. Do not fetch per call. (One name is still resolved
+  per call: `EVP_MAC` takes its digest by name, so each deterministic call names SHA-256 to
+  `EVP_MAC_init` — design §8, O15.) The fetch comes **before** the
   GUCs are registered, and a failed fetch is recorded, never raised: an `ERROR` in `_PG_init` stops the
   postmaster under `shared_preload_libraries`, and after `DefineCustom*Variable` it leaves a lazily
   loaded backend failing with "attempt to redefine parameter" (design §5.8). A call that finds no
