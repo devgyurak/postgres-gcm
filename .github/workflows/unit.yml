@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: PostgreSQL
+# The unit suite of the server-independent core, under AddressSanitizer and UBSan, in the
+# build image: GCC, and the libcrypto the server of that image links — one image per
+# libcrypto in docker/versions.json (the newest supported major, and the OpenSSL floor).
+# Never path-filtered.
+name: unit
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  schedule:
+    # Nightly. GitHub runs a schedule from the default branch only.
+    - cron: "17 18 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unit-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      unit: ${{ steps.list.outputs.unit }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: list
+        run: echo "unit=$(python3 scripts/ci-matrix.py unit)" >>"$GITHUB_OUTPUT"
+
+  unit:
+    needs: images
+    name: unit (${{ matrix.entry.label }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.images.outputs.unit) }}
+    env:
+      IMAGE: ${{ matrix.entry.image }}
+      # The nonce collision test seals 100,000 plaintexts on a pull request and 1,000,000 on
+      # a push and on the nightly run (.agents/rules/testing.md).
+      PG_GCM_COLLISION_N: ${{ github.event_name == 'pull_request' && '100000' || '1000000' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # The script fails when ctest finds no test: a gate that ran nothing has not passed.
+      - name: Unit suite
+        run: scripts/unit-in-docker.sh "$IMAGE"
