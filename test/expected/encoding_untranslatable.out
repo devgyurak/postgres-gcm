@@ -9,7 +9,7 @@ SELECT gcm_encrypt('😀', :k) AS emoji \gset
 SET client_min_messages = warning;
 DROP DATABASE IF EXISTS regress_pg_gcm_untranslatable;
 RESET client_min_messages;
-CREATE DATABASE regress_pg_gcm_untranslatable ENCODING 'EUC_KR' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;
+CREATE DATABASE regress_pg_gcm_untranslatable ENCODING 'EUC_KR' LOCALE_PROVIDER libc LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;
 \c regress_pg_gcm_untranslatable
 SET client_encoding = 'UTF8';
 CREATE EXTENSION pg_gcm;
