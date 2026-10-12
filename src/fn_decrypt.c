@@ -3,14 +3,14 @@
  * fn_decrypt.c — gcm_decrypt: arguments, the strict policy, UTF-8 verification and
  * conversion to the database encoding, error translation.
  *
- * STRICT, so no argument is NULL here. The opened bytes are verified as UTF-8 and converted
- * with the forms that report by return value, so that no server message ever carries a byte
- * of decrypted text (design §5.7).
+ * STRICT, so no argument is NULL here; the two-argument form is the three-argument form with
+ * an empty aad (spec 2.1). The opened bytes are verified as UTF-8 and converted with the
+ * forms that report by return value, so that no server message ever carries a byte of
+ * decrypted text (spec 2.4, 2.6).
  */
 #include "postgres.h"
 
 #include "fmgr.h"
-#include "catalog/namespace.h"
 #include "mb/pg_wchar.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
@@ -33,14 +33,16 @@ enum open_failure
 	OPEN_TOO_LONG
 };
 
-/* gcm_decrypt(ciphertext bytea, key bytea) -> text in the database encoding. STABLE. */
+/* gcm_decrypt(ciphertext bytea, key bytea [, aad bytea]) -> text in the database encoding. STABLE. */
 Datum
 gcm_decrypt(PG_FUNCTION_ARGS)
 {
 	int			db_encoding = GetDatabaseEncoding();
-	bool		direct = (db_encoding == PG_UTF8 || db_encoding == PG_SQL_ASCII);
-	Oid			from_utf8 = InvalidOid;
+	bool		has_aad = PG_NARGS() > 2;
+	Oid			from_utf8;
+	bool		direct;
 	bytea	   *volatile key = NULL;
+	bytea	   *volatile aad = NULL;
 	bytea	   *volatile envelope = NULL;
 	char	   *volatile opened = NULL; /* the opened UTF-8 bytes: the result's data, or scratch */
 	volatile Size opened_cap = 0;
@@ -56,15 +58,9 @@ gcm_decrypt(PG_FUNCTION_ARGS)
 	/* Can raise, holds no secret: the handle check and the conversion lookup. */
 	if (!gcm_ready())
 		pg_gcm_raise(GCM_OPENSSL_FAILURE, 0, 0);
-	if (!direct)
-	{
-		from_utf8 = FindDefaultConversionProc(PG_UTF8, db_encoding);
-		if (!OidIsValid(from_utf8))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_FUNCTION),
-					 errmsg("default conversion function for encoding \"%s\" to \"%s\" does not exist",
-							pg_encoding_to_char(PG_UTF8), GetDatabaseEncodingName())));
-	}
+	from_utf8 = pg_gcm_conversion_proc(false);
+	/* A UTF8 or SQL_ASCII database converts nothing: the core opens straight into the result. */
+	direct = !OidIsValid(from_utf8);
 
 	/*
 	 * design §5.2: the key copy and the opened plaintext are ours to cleanse, on the error
@@ -81,6 +77,8 @@ gcm_decrypt(PG_FUNCTION_ARGS)
 
 		if (failure == OPEN_OK)
 		{
+			if (has_aad)
+				aad = PG_GETARG_BYTEA_PP(2);
 			envelope = PG_GETARG_BYTEA_PP(0);
 			envelope_len = VARSIZE_ANY_EXHDR(envelope);
 
@@ -99,6 +97,8 @@ gcm_decrypt(PG_FUNCTION_ARGS)
 				opened = palloc(opened_cap);
 
 			rc = gcm_open((const uint8_t *) VARDATA_ANY(key), key_len,
+						  aad == NULL ? NULL : (const uint8_t *) VARDATA_ANY(aad),
+						  aad == NULL ? 0 : VARSIZE_ANY_EXHDR(aad),
 						  (const uint8_t *) VARDATA_ANY(envelope), envelope_len,
 						  (uint8_t *) opened, opened_cap, &opened_len);
 		}
@@ -167,6 +167,8 @@ gcm_decrypt(PG_FUNCTION_ARGS)
 		}
 		pg_gcm_release_copy((struct varlena *) key, PG_GETARG_DATUM(1), true);
 		pg_gcm_release_copy((struct varlena *) envelope, PG_GETARG_DATUM(0), false);
+		if (has_aad)
+			pg_gcm_release_copy((struct varlena *) aad, PG_GETARG_DATUM(2), false);
 	}
 	PG_END_TRY();
 

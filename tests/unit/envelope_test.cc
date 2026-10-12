@@ -24,7 +24,7 @@ INSTANTIATE_TEST_SUITE_P(Lengths, TruncatedEnvelope, ::testing::Values(0u, 1u, 1
 
 class UnopenedVersion : public ::testing::TestWithParam<int> {};
 
-// Phase S opens AES-256 only: 0x04..0x07 are allocated, and join the opened set in Phase 2.
+// 0x01 is reserved for the legacy format and is not opened; nothing above 0x07 is allocated.
 TEST_P(UnopenedVersion, GivenVersionByteThisBuildDoesNotOpen_WhenParsed_ThenBadEnvelope) {
   // Given
   Bytes env(29, 0);
@@ -38,8 +38,65 @@ TEST_P(UnopenedVersion, GivenVersionByteThisBuildDoesNotOpen_WhenParsed_ThenBadE
   EXPECT_EQ(rc, GCM_BAD_ENVELOPE);
 }
 
-INSTANTIATE_TEST_SUITE_P(Versions, UnopenedVersion,
-                         ::testing::Values(0x00, 0x01, 0x04, 0x05, 0x06, 0x07, 0x08, 0xff));
+INSTANTIATE_TEST_SUITE_P(Versions, UnopenedVersion, ::testing::Values(0x00, 0x01, 0x08, 0xff));
+
+struct VersionCase {
+  const char *name;
+  uint8_t version;
+  size_t key_len;
+  int deterministic;
+};
+
+const VersionCase kVersions[] = {
+    {"V02", 0x02, 32, 0}, {"V03", 0x03, 32, 1}, {"V04", 0x04, 16, 0},
+    {"V05", 0x05, 16, 1}, {"V06", 0x06, 24, 0}, {"V07", 0x07, 24, 1},
+};
+
+class OpenedVersion : public ::testing::TestWithParam<VersionCase> {};
+
+TEST_P(OpenedVersion, GivenAllocatedVersionByte_WhenParsed_ThenAcceptedWithItsKeyLength) {
+  // Given
+  Bytes env(29, 0);
+  env[0] = GetParam().version;
+  gcm_envelope_view view{};
+
+  // When
+  const gcm_error rc = gcm_envelope_parse(env.data(), env.size(), &view);
+
+  // Then
+  EXPECT_EQ(rc, GCM_OK);
+  EXPECT_EQ(view.version, GetParam().version);
+  EXPECT_EQ(gcm_version_key_len(view.version), GetParam().key_len);
+}
+
+TEST_P(OpenedVersion, GivenKeyLengthAndVariant_WhenVersionChosen_ThenItIsTheSuitesByte) {
+  // Given
+  const VersionCase c = GetParam();
+
+  // When
+  const uint8_t version = gcm_version_for(c.key_len, c.deterministic);
+
+  // Then
+  EXPECT_EQ(version, c.version);
+}
+
+INSTANTIATE_TEST_SUITE_P(Versions, OpenedVersion, ::testing::ValuesIn(kVersions),
+                         [](const auto &info) { return std::string(info.param.name); });
+
+class NoSuiteKeyLength : public ::testing::TestWithParam<size_t> {};
+
+TEST_P(NoSuiteKeyLength, GivenKeyLengthThatNamesNoSuite_WhenVersionChosen_ThenZero) {
+  // Given
+  const size_t key_len = GetParam();
+
+  // When
+  const uint8_t version = gcm_version_for(key_len, 0);
+
+  // Then
+  EXPECT_EQ(version, 0);
+}
+
+INSTANTIATE_TEST_SUITE_P(Lengths, NoSuiteKeyLength, ::testing::Values(0u, 15u, 20u, 31u, 33u, 64u));
 
 TEST(Envelope, GivenMinimalEnvelope_WhenParsed_ThenEmptyCiphertextAndFieldsAtSpecOffsets) {
   // Given
@@ -95,19 +152,6 @@ TEST(Envelope, GivenNoViewToFill_WhenParsed_ThenBadEnvelope) {
 
   // Then
   EXPECT_EQ(rc, GCM_BAD_ENVELOPE);
-}
-
-TEST(Envelope, Given32ByteKey_WhenVersionChosen_ThenRandomIs02AndDeterministicIs03) {
-  // Given
-  const size_t key_len = 32;
-
-  // When
-  const uint8_t random = gcm_version_for(key_len, 0);
-  const uint8_t det = gcm_version_for(key_len, 1);
-
-  // Then
-  EXPECT_EQ(random, 0x02);
-  EXPECT_EQ(det, 0x03);
 }
 
 }  // namespace

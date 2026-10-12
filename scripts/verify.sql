@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: PostgreSQL
--- The Phase S checks of docs/design.md §4, one labelled row per check:
+-- The Phase S checks of docs/design.md §4, kept as the smoke test of an installed build, one
+-- labelled row per check:
 --
 --   step | mode | check | observed | ok / FAIL / info
 --
 -- Run by scripts/verify.sh, which sets:
 --   mode   lazy | preload            how the library reaches the backend
 --   probe  0 | 1                     1 = the per-backend part of step 5 only
+--   det_nonce                        nonce_hex of the vector det-256-korean
+--   not_text_envelope, not_text_key  the vector random-256-contains-nul
+-- The last three come from spec/test-vectors.json: no known answer is written in this file.
 -- The probe part must be the first thing a fresh backend runs.
 \set ON_ERROR_STOP on
 \pset format unaligned
@@ -13,8 +17,8 @@
 \pset fieldsep ' | '
 -- The public 00..1f pattern key (.agents/rules/testing.md). Never a real key.
 \set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
--- HMAC-SHA256(HMAC-SHA256(k, 'pg_gcm/v1/det-nonce'), utf8('홍길동'))[:12], from Python's hmac module.
-\set det_nonce 'f55369153b2a94fcbc9b633f'
+\set k24 '\'\\x000102030405060708090a0b0c0d0e0f1011121314151617\'::bytea'
+\set k16 '\'\\x000102030405060708090a0b0c0d0e0f\'::bytea'
 
 \if :probe
 -- ---------------------------------------------------------------------------------------------
@@ -29,7 +33,7 @@ SELECT 'S5', :'mode', 'first random nonce of this backend',
 SELECT 'S5', :'mode', 'AES-256-GCM round trip',
        gcm_decrypt(gcm_encrypt('홍길동', :k), :k),
        CASE WHEN gcm_decrypt(gcm_encrypt('홍길동', :k), :k) = '홍길동' THEN 'ok' ELSE 'FAIL' END;
-SELECT 'S5', :'mode', 'HMAC-SHA256 nonce known answer (O4)',
+SELECT 'S5', :'mode', 'HMAC-SHA256 nonce known answer (O4, O16)',
        encode(substring(gcm_encrypt_det('홍길동', :k) FROM 2 FOR 12), 'hex'),
        CASE WHEN encode(substring(gcm_encrypt_det('홍길동', :k) FROM 2 FOR 12), 'hex') = :'det_nonce'
             THEN 'ok' ELSE 'FAIL' END;
@@ -41,8 +45,8 @@ SELECT 'END', :'mode', 'probe', pg_backend_pid()::text, 'info';
 \c postgres
 DROP DATABASE IF EXISTS pg_gcm_verify;
 DROP DATABASE IF EXISTS pg_gcm_verify_euckr;
-CREATE DATABASE pg_gcm_verify TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';
-CREATE DATABASE pg_gcm_verify_euckr TEMPLATE template0 ENCODING 'EUC_KR' LC_COLLATE 'C' LC_CTYPE 'C';
+CREATE DATABASE pg_gcm_verify TEMPLATE template0 ENCODING 'UTF8' LOCALE_PROVIDER libc LC_COLLATE 'C' LC_CTYPE 'C';
+CREATE DATABASE pg_gcm_verify_euckr TEMPLATE template0 ENCODING 'EUC_KR' LOCALE_PROVIDER libc LC_COLLATE 'C' LC_CTYPE 'C';
 \c pg_gcm_verify
 
 -- Step 1: CREATE EXTENSION from the PGXS build.
@@ -76,6 +80,15 @@ SELECT 'S2', :'mode', 'deterministic: version 0x03, equal envelopes', get_byte(g
        CASE WHEN gcm_encrypt_det('홍길동', :k) = gcm_encrypt_det('홍길동', :k)
              AND get_byte(gcm_encrypt_det('홍길동', :k), 0) = 3 THEN 'ok' ELSE 'FAIL' END;
 
+SELECT 'S2', :'mode', 'aad: round trip, and the two-argument form is an empty aad',
+       gcm_decrypt(gcm_encrypt('홍길동', :k, 'patients.name'), :k, 'patients.name'),
+       CASE WHEN gcm_decrypt(gcm_encrypt('홍길동', :k, 'patients.name'), :k, 'patients.name') = '홍길동'
+             AND gcm_decrypt(gcm_encrypt('홍길동', :k), :k, '') = '홍길동'
+             AND gcm_encrypt_det('홍길동', :k) = gcm_encrypt_det('홍길동', :k, '') THEN 'ok' ELSE 'FAIL' END;
+SELECT 'S2', :'mode', 'aad: the deterministic nonce depends on it (O16)', '',
+       CASE WHEN substring(gcm_encrypt_det('홍길동', :k, 'patients.name') FROM 2 FOR 12)
+                 <> substring(gcm_encrypt_det('홍길동', :k) FROM 2 FOR 12) THEN 'ok' ELSE 'FAIL' END;
+
 -- Step 3: key length, and what pg_gcm.strict governs.
 SELECT 'S3', :'mode', 'gcm_encrypt refuses a ' || n || '-byte key', f,
        CASE WHEN f LIKE '22023: %' THEN 'ok' ELSE 'FAIL' END
@@ -85,6 +98,21 @@ SELECT 'S3', :'mode', 'gcm_decrypt refuses a 16-byte key', f,
        CASE WHEN f LIKE '22023: %' THEN 'ok' ELSE 'FAIL' END
 FROM pg_temp.failure_of(format('SELECT gcm_decrypt(%L::bytea, decode(repeat(''00'', 16), ''hex''))',
                                gcm_encrypt('x', :k))) AS f;
+
+SELECT 'S3', :'mode', 'pg_gcm.min_key_bytes is ' || current_setting('pg_gcm.min_key_bytes') || ' by default', '',
+       CASE WHEN current_setting('pg_gcm.min_key_bytes') = '32' THEN 'ok' ELSE 'FAIL' END;
+SET pg_gcm.min_key_bytes = 16;
+SELECT 'S3', :'mode', 'lowered to 16: the key length selects the suite (versions 4, 5, 6, 7)',
+       concat_ws(', ', get_byte(gcm_encrypt('x', :k16), 0), get_byte(gcm_encrypt_det('x', :k16), 0),
+                 get_byte(gcm_encrypt('x', :k24), 0), get_byte(gcm_encrypt_det('x', :k24), 0)),
+       CASE WHEN get_byte(gcm_encrypt('x', :k16), 0) = 4 AND get_byte(gcm_encrypt_det('x', :k16), 0) = 5
+             AND get_byte(gcm_encrypt('x', :k24), 0) = 6 AND get_byte(gcm_encrypt_det('x', :k24), 0) = 7
+             AND gcm_decrypt(gcm_encrypt('홍길동', :k16), :k16) = '홍길동'
+             AND gcm_decrypt(gcm_encrypt('홍길동', :k24), :k24) = '홍길동' THEN 'ok' ELSE 'FAIL' END;
+RESET pg_gcm.min_key_bytes;
+SELECT 'S3', :'mode', 'a wrong aad, pg_gcm.strict = on: an error', f,
+       CASE WHEN f LIKE 'XX001: %' THEN 'ok' ELSE 'FAIL' END
+FROM pg_temp.failure_of(format('SELECT gcm_decrypt(gcm_encrypt(''x'', %s, ''a''), %s, ''b'')', :'k', :'k')) AS f;
 
 SELECT gcm_encrypt('홍길동', :k) AS sealed \gset
 -- The same envelope with the last bit of its tag flipped.
@@ -112,14 +140,14 @@ SELECT 'S3', :'mode', 'a misspelt pg_gcm.* name is refused once the library is l
        CASE WHEN f <> 'no error' THEN 'ok' ELSE 'FAIL' END
 FROM pg_temp.failure_of('SET pg_gcm.strcit = off') AS f;
 
--- Step 6, as far as SQL can see it: an envelope this extension did not seal. NIST's GCM test
--- case 14 (key and IV all zero, sixteen zero bytes of plaintext) authenticates and then is not
--- text. The error carries no byte of the plaintext and strict does not hide it.
-\set nist14 '\'\\x02000000000000000000000000cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919\'::bytea'
+-- Step 6, as far as SQL can see it: an envelope this extension did not seal — the vector
+-- random-256-contains-nul, which authenticates and then is not text. The error carries no
+-- byte of the plaintext and strict does not hide it.
 SET pg_gcm.strict = off;
 SELECT 'S6', :'mode', 'authenticated plaintext that is not text (U+0000), strict off', f,
        CASE WHEN f = '22021: decrypted value is not valid UTF-8' THEN 'ok' ELSE 'FAIL' END
-FROM pg_temp.failure_of(format('SELECT gcm_decrypt(%s, decode(repeat(''00'', 32), ''hex''))', :'nist14')) AS f;
+FROM pg_temp.failure_of(format('SELECT gcm_decrypt(decode(%L, ''hex''), decode(%L, ''hex''))',
+                               :'not_text_envelope', :'not_text_key')) AS f;
 RESET pg_gcm.strict;
 
 -- Step 4: Korean LIKE on the decrypted value, in a UTF8 database...

@@ -41,6 +41,7 @@ const char *Name(Op op) {
 // A key, a plaintext and its envelope, with buffers for one more operation.
 struct Sealed {
   Bytes key = PatternKey();
+  Bytes aad = Utf8("patients.name");
   Bytes plaintext = Utf8("홍길동");
   Bytes envelope = EnvelopeBuffer(plaintext.size());      // sealed with a random nonce
   Bytes det_envelope = EnvelopeBuffer(plaintext.size());  // what the deterministic variant gives
@@ -50,10 +51,10 @@ struct Sealed {
   size_t out_len = 0;
 
   Sealed() {
-    (void)gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 0,
-                   envelope.data(), envelope.size());
-    (void)gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 1,
-                   det_envelope.data(), det_envelope.size());
+    (void)gcm_seal(key.data(), key.size(), aad.data(), aad.size(), plaintext.data(),
+                   plaintext.size(), 0, envelope.data(), envelope.size());
+    (void)gcm_seal(key.data(), key.size(), aad.data(), aad.size(), plaintext.data(),
+                   plaintext.size(), 1, det_envelope.data(), det_envelope.size());
   }
 
   // The out buffer as a successful open leaves it: the plaintext, then the untouched spare byte.
@@ -66,14 +67,14 @@ struct Sealed {
   gcm_error Run(Op op) {
     switch (op) {
       case Op::kSealRandom:
-        return gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 0,
-                        scratch.data(), scratch.size());
+        return gcm_seal(key.data(), key.size(), aad.data(), aad.size(), plaintext.data(),
+                        plaintext.size(), 0, scratch.data(), scratch.size());
       case Op::kSealDeterministic:
-        return gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 1,
-                        scratch.data(), scratch.size());
+        return gcm_seal(key.data(), key.size(), aad.data(), aad.size(), plaintext.data(),
+                        plaintext.size(), 1, scratch.data(), scratch.size());
       case Op::kOpen:
-        return gcm_open(key.data(), key.size(), envelope.data(), envelope.size(), out.data(),
-                        out.size(), &out_len);
+        return gcm_open(key.data(), key.size(), aad.data(), aad.size(), envelope.data(),
+                        envelope.size(), out.data(), out.size(), &out_len);
     }
     return GCM_BAD_LENGTH;
   }

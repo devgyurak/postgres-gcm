@@ -1,14 +1,23 @@
--- Given: an envelope this extension did not seal — test case 14 of the GCM specification
---        (key and IV all zero), whose plaintext is sixteen zero bytes
--- When: it is decrypted, with pg_gcm.strict on and then off
--- Then: it authenticates and is then refused as text, with no byte of it in the message;
+-- Given: two envelopes this extension did not seal, from spec/test-vectors.json: one whose
+--        plaintext is not UTF-8 and one whose plaintext holds U+0000
+-- When: each is decrypted, with pg_gcm.strict on and then off
+-- Then: each authenticates and is then refused as text, with no byte of it in the message;
 --       strict does not turn that into NULL
 \set VERBOSITY terse
-\set zero_key '\'\\x0000000000000000000000000000000000000000000000000000000000000000\'::bytea'
-\set tc14 '\'\\x02000000000000000000000000cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919\'::bytea'
+\set vectors `cat spec/test-vectors.json`
+SELECT v ->> 'envelope_hex' AS not_utf8, v ->> 'key_hex' AS not_utf8_key
+FROM jsonb_array_elements(:'vectors'::jsonb -> 'vectors') AS v
+WHERE v ->> 'id' = 'random-256-not-utf8' \gset
+SELECT v ->> 'envelope_hex' AS with_nul, v ->> 'key_hex' AS with_nul_key
+FROM jsonb_array_elements(:'vectors'::jsonb -> 'vectors') AS v
+WHERE v ->> 'id' = 'random-256-contains-nul' \gset
 SET pg_gcm.strict = on;
-SELECT gcm_decrypt(:tc14, :zero_key);
+SELECT gcm_decrypt(decode(:'not_utf8', 'hex'), decode(:'not_utf8_key', 'hex'));
+ERROR:  decrypted value is not valid UTF-8
+SELECT gcm_decrypt(decode(:'with_nul', 'hex'), decode(:'with_nul_key', 'hex'));
 ERROR:  decrypted value is not valid UTF-8
 SET pg_gcm.strict = off;
-SELECT gcm_decrypt(:tc14, :zero_key);
+SELECT gcm_decrypt(decode(:'not_utf8', 'hex'), decode(:'not_utf8_key', 'hex'));
+ERROR:  decrypted value is not valid UTF-8
+SELECT gcm_decrypt(decode(:'with_nul', 'hex'), decode(:'with_nul_key', 'hex'));
 ERROR:  decrypted value is not valid UTF-8

@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: PostgreSQL
+// gcm_nonce_derive on its own: the nonce of every deterministic vector of
+// spec/test-vectors.json whose nonce is derived, and what the function refuses.
+#include <algorithm>
+#include <string>
+
 #include <gtest/gtest.h>
 #include <openssl/evp.h>
 
-#include "test_util.h"
+#include "vectors.h"
 
 extern "C" {
 #include "nonce.h"
@@ -10,49 +15,50 @@ extern "C" {
 
 namespace {
 
-struct NonceVector {
-  const char *name;
-  const char *plaintext_hex;
-  const char *nonce_hex;
-};
+std::string Name(const ::testing::TestParamInfo<Vector> &info) {
+  std::string name = info.param.id;
+  std::replace(name.begin(), name.end(), '-', '_');
+  return name;
+}
 
-// Known answers from an implementation that is not the one under test — Python's hmac module:
-//   nonce_key = hmac.new(bytes(range(32)), b"pg_gcm/v1/det-nonce", sha256).digest()
-//   nonce     = hmac.new(nonce_key, plaintext, sha256).digest()[:12]
-// They move to spec/test-vectors.json in Phase 1.
-const NonceVector kVectors[] = {
-    {"Empty", "", "13bae553d5ada4dd1e8a959f"},
-    {"OneAsciiByte", "78", "a3eeccbe8faab5678f532939"},
-    {"KoreanName", "ed998deab8b8eb8f99", "f55369153b2a94fcbc9b633f"},
-};
+class DerivedNonce : public ::testing::TestWithParam<Vector> {};
 
-class DetNonce : public ::testing::TestWithParam<NonceVector> {
- protected:
-  static void SetUpTestSuite() { hmac_ = EVP_MAC_fetch(nullptr, "HMAC", nullptr); }
-  static void TearDownTestSuite() { EVP_MAC_free(hmac_); }
-  static EVP_MAC *hmac_;
-};
-EVP_MAC *DetNonce::hmac_ = nullptr;
-
-TEST_P(DetNonce, GivenPatternKeyAndPlaintext_WhenDerived_ThenNonceIsTheKnownAnswer) {
+// The version byte of the vector's envelope is the first byte of the associated data (spec 1.8).
+TEST_P(DerivedNonce, GivenVectorsKeyAadAndPlaintext_WhenNonceDerived_ThenItIsTheVectorsNonce) {
   // Given
-  const Bytes key = PatternKey();
-  const Bytes plaintext = Hex(GetParam().plaintext_hex);
+  const Vector &v = GetParam();
+  EVP_MAC *hmac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
   Bytes nonce(GCM_NONCE_LEN, 0);
 
   // When
-  const gcm_error rc = gcm_nonce_derive(hmac_, key.data(), key.size(), plaintext.data(),
-                                        plaintext.size(), nonce.data());
+  const gcm_error rc =
+      gcm_nonce_derive(hmac, v.key.data(), v.key.size(), v.envelope[0], v.aad.data(),
+                       v.aad.size(), v.plaintext.data(), v.plaintext.size(), nonce.data());
+  EVP_MAC_free(hmac);
 
   // Then
   EXPECT_EQ(rc, GCM_OK);
-  EXPECT_EQ(nonce, Hex(GetParam().nonce_hex));
+  EXPECT_EQ(nonce, v.nonce);
 }
 
-INSTANTIATE_TEST_SUITE_P(KnownAnswers, DetNonce, ::testing::ValuesIn(kVectors),
-                         [](const auto &info) { return std::string(info.param.name); });
+INSTANTIATE_TEST_SUITE_P(Spec, DerivedNonce, ::testing::ValuesIn(DerivedSealVectors()), Name);
 
-TEST(DetNonceHandle, GivenEmptyKey_WhenDerived_ThenOpenSslFailure) {
+TEST(DetNonce, GivenNoHmacHandle_WhenDerived_ThenOpenSslFailure) {
+  // Given
+  const Bytes key = PatternKey();
+  const Bytes plaintext = Utf8("x");
+  Bytes nonce(GCM_NONCE_LEN, 0);
+
+  // When
+  const gcm_error rc =
+      gcm_nonce_derive(nullptr, key.data(), key.size(), GCM_V_AES256_DET, nullptr, 0,
+                       plaintext.data(), plaintext.size(), nonce.data());
+
+  // Then
+  EXPECT_EQ(rc, GCM_OPENSSL_FAILURE);
+}
+
+TEST(DetNonce, GivenEmptyKey_WhenDerived_ThenOpenSslFailure) {
   // Given
   EVP_MAC *hmac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
   const Bytes key = PatternKey();
@@ -60,23 +66,9 @@ TEST(DetNonceHandle, GivenEmptyKey_WhenDerived_ThenOpenSslFailure) {
   Bytes nonce(GCM_NONCE_LEN, 0);
 
   // When
-  const gcm_error rc =
-      gcm_nonce_derive(hmac, key.data(), 0, plaintext.data(), plaintext.size(), nonce.data());
+  const gcm_error rc = gcm_nonce_derive(hmac, key.data(), 0, GCM_V_AES256_DET, nullptr, 0,
+                                        plaintext.data(), plaintext.size(), nonce.data());
   EVP_MAC_free(hmac);
-
-  // Then
-  EXPECT_EQ(rc, GCM_OPENSSL_FAILURE);
-}
-
-TEST(DetNonceHandle, GivenNoHmacHandle_WhenDerived_ThenOpenSslFailure) {
-  // Given
-  const Bytes key = PatternKey();
-  const Bytes plaintext = Utf8("x");
-  Bytes nonce(GCM_NONCE_LEN, 0);
-
-  // When
-  const gcm_error rc = gcm_nonce_derive(nullptr, key.data(), key.size(), plaintext.data(),
-                                        plaintext.size(), nonce.data());
 
   // Then
   EXPECT_EQ(rc, GCM_OPENSSL_FAILURE);

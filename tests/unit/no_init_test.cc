@@ -25,8 +25,8 @@ TEST(NoHandles, GivenFetchNeverRan_WhenSealedRandom_ThenOpenSslFailure) {
   Bytes envelope = EnvelopeBuffer(plaintext.size());
 
   // When
-  const gcm_error rc = gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 0,
-                                envelope.data(), envelope.size());
+  const gcm_error rc = gcm_seal(key.data(), key.size(), nullptr, 0, plaintext.data(),
+                                plaintext.size(), 0, envelope.data(), envelope.size());
 
   // Then
   EXPECT_EQ(rc, GCM_OPENSSL_FAILURE);
@@ -39,24 +39,24 @@ TEST(NoHandles, GivenFetchNeverRan_WhenSealedDeterministic_ThenOpenSslFailure) {
   Bytes envelope = EnvelopeBuffer(plaintext.size());
 
   // When
-  const gcm_error rc = gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 1,
-                                envelope.data(), envelope.size());
+  const gcm_error rc = gcm_seal(key.data(), key.size(), nullptr, 0, plaintext.data(),
+                                plaintext.size(), 1, envelope.data(), envelope.size());
 
   // Then
   EXPECT_EQ(rc, GCM_OPENSSL_FAILURE);
 }
 
 TEST(NoHandles, GivenFetchNeverRan_WhenOpened_ThenOpenSslFailureAndOutputCleansed) {
-  // Given: test case 14 of the GCM specification as an envelope
+  // Given: 45 bytes with a valid version byte; without handles nothing looks further
   const Bytes key = ZeroKey();
-  const Bytes envelope = Hex(
-      "02000000000000000000000000cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919");
+  Bytes envelope(45, 0);
+  envelope[0] = GCM_V_AES256_RANDOM;
   Bytes out = PlaintextBuffer(16);
   size_t out_len = 99;
 
   // When
-  const gcm_error rc = gcm_open(key.data(), key.size(), envelope.data(), envelope.size(),
-                                out.data(), out.size(), &out_len);
+  const gcm_error rc = gcm_open(key.data(), key.size(), nullptr, 0, envelope.data(),
+                                envelope.size(), out.data(), out.size(), &out_len);
 
   // Then
   EXPECT_EQ(rc, GCM_OPENSSL_FAILURE);
