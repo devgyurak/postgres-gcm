@@ -302,8 +302,10 @@ The plaintext of Part 1 is always UTF-8, whatever the database encoding.
 - **Opening.** After the tag has verified, the plaintext is verified as UTF-8 and converted to the
   database encoding. A UTF8 database and a SQL_ASCII database verify and convert nothing further.
 
-A database whose encoding has no default conversion to and from UTF-8 cannot use the functions at
-all: every call fails with `42883` before anything is sealed or opened.
+The conversion is the default one in `pg_catalog`; a conversion in another schema is not used,
+whatever `search_path` says. A database whose encoding has no default conversion to and from UTF-8
+there cannot use the functions at all: every call fails with `42883` before anything is sealed or
+opened.
 
 Three plaintexts authenticate and are then refused. The first two can only come from an envelope
 this extension did not seal:
@@ -329,7 +331,7 @@ Everything else is one of these:
 | Authenticated plaintext that is not UTF-8, or holds U+0000; SQL_ASCII text to seal that is not UTF-8 | `22021` | `character_not_in_repertoire` | always an error |
 | A character with no equivalent in the target encoding | `22P05` | `untranslatable_character` | always an error |
 | A value too long to seal or convert | `54000` | `program_limit_exceeded` | always an error |
-| The database encoding has no default conversion to or from UTF-8 | `42883` | `undefined_function` | always an error |
+| The database encoding has no default conversion to or from UTF-8 in `pg_catalog` | `42883` | `undefined_function` | always an error |
 | OpenSSL could not complete the operation, or its algorithms could not be fetched | `XX000` | `internal_error` | always an error |
 
 Each class of failure has a code of its own, so that a client can tell a forged envelope from a

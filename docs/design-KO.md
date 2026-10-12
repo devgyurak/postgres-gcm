@@ -368,9 +368,9 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 - `pg_do_encoding_conversion_buf(proc, src, dest, in, inlen, out, outlen, true)` 로 glue 가 할당한
   버퍼 (`inlen * MAX_CONVERSION_GROWTH + 1`, `MaxAllocSize` 에 대해 오버플로 검사) 에 변환한다. 검증에
   성공한 뒤에 반환한 개수가 `inlen` 보다 작으면 대상 인코딩이 담을 수 없는 문자가 있다는 뜻이다.
-- 변환 프로시저는 `FindDefaultConversionProc` 로 얻는다. 카탈로그 조회라서 오류를 올릴 수 있다
-  (메시지에 데이터는 없다). 비밀 사본이 생기기 전에 실행한다. 서버 자신의 클라이언트 인코딩 변환이
-  그렇듯 `search_path` 를 통해 찾는다 (§8 O14).
+- 변환 프로시저는 `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` 로 얻는다. 카탈로그 조회이고, 변환이
+  없으면 glue 가 두 인코딩의 이름을 담아 `42883` 을 올린다. 비밀 사본이 생기기 전에 실행한다.
+  `pg_catalog` 에서만 찾고 `search_path` 를 따라가지 않는다 (§8 O14).
 
 | DB 인코딩 | `gcm_encrypt*` | `gcm_decrypt` |
 |---|---|---|
@@ -619,7 +619,7 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 - **PostgreSQL, 15~18 소스에서.** `pg_do_encoding_conversion_buf` 는 소비한 원본 바이트 수를
   돌려주고, 출력을 NUL 로 끝내며, 대상 크기가 `srclen * MAX_CONVERSION_GROWTH + 1` 이면 입력 전체를
   변환에 넘긴다. 빈 입력에서는 0 이 모호하므로 glue 는 빈 입력을 변환하지 않는다.
-  `FindDefaultConversionProc` 는 `search_path` 를 따라간다 ("미확인" O14). `-Wextra` 는 서버 자신의
+  `FindDefaultConversionProc` 는 `search_path` 를 따라간다 (O14, Phase 2 에서 결정). `-Wextra` 는 서버 자신의
   헤더 (static inline 의 쓰지 않는 파라미터) 에서 실패하므로, `-Werror` 빌드는 그 헤더를 `-isystem`
   으로 받는다.
 - **`pg_regress` 와 `\c`, 17 에서 실행.** `PGCLIENTENCODING` 이 없는 상태에서 `EUC_KR` DB 로 `\c`
@@ -710,17 +710,32 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   을 기대할지 안다. 실패하는 벡터는 `derived_from` 으로 원본 벡터를 가리킨다. `nonce_derived: false`
   는 sealer 가 재현할 수 없는 결정적 벡터 하나를 표시한다.
 
+### Phase 2 에서 확인된 것 (2026-10-12)
+
+- **O14 — 변환은 `pg_catalog` 에서만 찾는다.** `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` 를 쓴다.
+  17.11 에서 관찰한 것: superuser 가 아니어도 스키마에 `CREATE` 권한이 있는 role 은 거기에 기본 변환을
+  만들 수 있고, `search_path` 를 따라가면 내장 변환보다 먼저 발견된다. 다만 이미 있는 함수만 묶을 수
+  있다. `CREATE CONVERSION` 은 내장 함수를 그 함수가 대상으로 하지 않는 인코딩 쌍에 묶는 것을
+  거부했고, 그 role 은 C 함수도 internal 함수도 만들 수 없었다. 따라서 노출은 superuser 가 설치한 변환
+  함수가 호출자의 `search_path` 에 따라 선택되는 경우였다. `pg_catalog` 에서 찾으면 결과가
+  `search_path` 와 무관해진다. 대가는, 사이트가 DB 인코딩에 대해 따로 둔 기본 변환을 이 함수들이 쓰지
+  않는다는 것이다.
+- **O15 — 호출마다 찾는 형태를 유지하고, 하한도 3.0.0 그대로다.** 17.11, OpenSSL 3.5.7 (arm64 노트북 한
+  대, 두 번 실행, 잘해야 2 배 이내의 정밀도) 에서 `gcm_encrypt_det` 는 호출당 약 1.1 µs,
+  `gcm_encrypt` 는 0.6 µs, `LIKE` 를 붙인 `gcm_decrypt` 는 0.3 µs 다. 앞의 둘 사이 0.5 µs 에는 digest 를
+  이름으로 찾는 비용뿐 아니라 HMAC-SHA256 두 번도 들어 있으므로, 미리 준비한 컨텍스트로 아낄 수 있는
+  양의 상한이다. 절감분 자체는 따로 재지 않았다. 그 반대편에는 3.0.0 에서 실패하는 컨텍스트가 있다.
+  결정적 변형은 조인 키와 정확 일치 조회용이지 대량 텍스트용이 아니므로, 이것 때문에 하한을 올리지
+  않는다. 다시 열 자리는 Phase 4 의 부하 게이트다.
+
 ### 미확인
 
-번호는 다시 쓰지 않는다. O2~O13 과 O16 은 위에서 답했고, 그중 O7, O13, O16 은 Phase 1 에서 답했다. O14
-와 O15 는 Phase S 리뷰에서 나왔고 Phase 2 의 몫이다.
+번호는 다시 쓰지 않는다. O2~O16 은 위에서 답했다. O7, O13, O16 은 Phase 1 에서, O14 와 O15 는 Phase 2
+에서 답했다.
 
 | # | 질문 | 확인 방법 |
 |---|---|---|
 | O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 스파이크는 이미 `19beta4` 에서 빌드되고 통과한다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
-| O14 | `FindDefaultConversionProc` 는 `search_path` 를 통해 찾는다. UTF-8 이 아닌 DB 에서는 평문이 먼저 발견되는 기본 변환에 넘어가며, 서버 자신의 클라이언트 인코딩 변환도 그렇다. 이를 받아들일 것인가, 아니면 `pg_catalog` 에서만 변환을 찾을 것인가? | Phase 2, 인코딩 코드와 함께: 누가 기본 변환을 만들 수 있는지 확인한 뒤 결정한다 |
-
-| O15 | `EVP_MAC` 는 fetch 한 digest 를 받지 않으므로, 결정적 호출은 `EVP_MAC_init` 안에서 SHA-256 을 이름으로 찾는다. 키 없는 `EVP_MAC_CTX` 를 한 번 만들어 호출마다 복제하면 이를 피할 수 있고, 여기서 3.0.22, 3.5.7, 3.6.4 로 통과했다. 그러나 업스트림 `hmac_prov.c` 를 보면 3.0.0 에서는 키 없는 HMAC 컨텍스트의 `EVP_MAC_CTX_dup` 이 실패하고 그때마다 digest 참조를 하나씩 잃는다 (3.0.1 과 3.0.4 에서 수정; 소스를 읽은 것이고 실행하지는 않았다). 그래서 스파이크는 호출마다 찾는 형태를 유지한다. 하한을 3.0.1 로 올리고 실행 시점에 버전을 검사할 것인가, 아니면 그대로 둘 것인가? | Phase 2, 결정적 변형의 측정된 비용과 견주어 |
 
 ## 9. 참고 자료
 
