@@ -31,6 +31,13 @@
 #define GCM_KEY_LEN_AES192 24
 #define GCM_KEY_LEN_AES256 32
 
+/*
+ * Nothing declared here is part of the library's dynamic interface. PGXS hides symbols by
+ * default from PostgreSQL 16; on 15 it does not, and an exported function can be interposed
+ * by a library loaded earlier. scripts/build-in-docker.sh checks what the build exports.
+ */
+#pragma GCC visibility push(hidden)
+
 /* Errors cross the core's boundary as values; the core never raises (design §5.2). */
 enum gcm_error
 {
@@ -64,5 +71,7 @@ enum gcm_error gcm_envelope_parse(const uint8_t *env, size_t env_len,
 
 /* Write the version byte and the nonce; the ciphertext and the tag are written by the caller. */
 void		gcm_envelope_write_header(uint8_t *env, uint8_t version, const uint8_t *nonce);
+
+#pragma GCC visibility pop
 
 #endif							/* PG_GCM_ENVELOPE_H */

@@ -41,6 +41,18 @@ docker run --rm \
     echo "pg_gcm libcrypto: $ours"
     [ -n "$server" ] && [ "$server" = "$ours" ] || { echo "error: libcrypto differs" >&2; exit 1; }
     case "$server" in *libcrypto.so.3) ;; *) echo "error: not OpenSSL 3" >&2; exit 1 ;; esac
+
+    # The dynamic symbols are exactly the SQL-callable functions, their fmgr records and the
+    # two entry points the server loads by name: an exported core function could be interposed
+    # by a library loaded earlier. The headers hide the rest; PGXS does so by itself only
+    # from 16. The linker adds a few names of its own on some platforms; they are set aside.
+    wanted="Pg_magic_func _PG_init gcm_decrypt gcm_encrypt gcm_encrypt_det pg_finfo_gcm_decrypt pg_finfo_gcm_encrypt pg_finfo_gcm_encrypt_det"
+    exported="$(nm -D --defined-only /out/pg_gcm.so | awk "{print \$3}" |
+      grep -vxE "_init|_fini|_edata|_end|__bss_start|__bss_start__|__bss_end__|__end__" | LC_ALL=C sort | xargs)"
+    [ "$exported" = "$wanted" ] || {
+      echo "error: pg_gcm.so exports [$exported], expected [$wanted]" >&2
+      exit 1
+    }
     pg_config --version
   '
 echo "$hash" >"$out/SOURCE_HASH"
