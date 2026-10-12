@@ -10,7 +10,8 @@ FROM ${BASE}
 # PG_MAJOR and PG_VERSION come from the official image's environment. Pinning the package to
 # PG_VERSION keeps the headers on the server's own minor: an unpinned install takes a newer one.
 # The server-dev package depends on the matching clang and llvm-dev (PGXS emits bitcode) and, through
-# libpq-dev, on libssl-dev. cmake and googletest are for the unit suite (scripts/unit-in-docker.sh).
+# libpq-dev, on libssl-dev. cmake, googletest and nlohmann-json are for the unit suite
+# (scripts/unit-in-docker.sh), which reads spec/test-vectors.json.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential \
@@ -18,4 +19,5 @@ RUN apt-get update \
       cmake \
       libgtest-dev \
       libgmock-dev \
+      nlohmann-json3-dev \
  && rm -rf /var/lib/apt/lists/*
