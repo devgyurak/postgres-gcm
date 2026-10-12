@@ -16,13 +16,16 @@ This file is a second implementation of spec/envelope.md, kept as small as the s
   table the whole field at its offset, and the suite and outcomes tables must have their
   rows. Shorter or spaced examples, and anything said in prose, are not seen by this check.
 
-Exit 0 when everything holds, 1 with one `id: message` line per problem.
+Exit 0 when everything holds, 1 with one `id: message` line per problem. `--self-test`
+breaks its inputs in memory in a fixed list of ways and fails unless each one is caught:
+it shows the gate notices those breaks, not every possible one.
 It only checks. Nothing here encrypts for anyone: there is no public API (stack-python.md).
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import hmac
 import json
@@ -394,14 +397,114 @@ def problems_of(document: Any, spec: str) -> list[str]:
     return problems or check_spec(spec, document["vectors"])
 
 
+def self_test(document: Any, spec: str) -> tuple[int, list[str]]:
+    """Break the inputs one way at a time. A break that is not caught is a hole in this gate."""
+
+    def vector(doc: Any, name: str) -> Vector:
+        found: Vector = next(v for v in doc["vectors"] if v["id"] == name)
+        return found
+
+    def last_digit(doc: Any, name: str, member: str) -> None:
+        value = vector(doc, name)[member]
+        vector(doc, name)[member] = value[:-1] + ("0" if value[-1] != "0" else "1")
+
+    def remove(doc: Any, name: str) -> None:
+        doc["vectors"] = [v for v in doc["vectors"] if v["id"] != name]
+
+    in_file: dict[str, Callable[[Any], None]] = {
+        "an envelope digit": lambda d: last_digit(d, "random-256-korean", "envelope_hex"),
+        "a nist tag digit": lambda d: last_digit(d, "nist-256-pt128-aad0", "tag_hex"),
+        "a nonce key": lambda d: vector(d, "det-256-korean").update(nonce_key_hex="00" * 32),
+        "a wrong expect": lambda d: vector(d, "version-02-as-03").update(expect="ok"),
+        "a nist vector expecting failure": lambda d: vector(d, "nist-128-pt0-aad0").update(
+            expect="bad_tag"
+        ),
+        "a wrong plaintext_class": lambda d: vector(d, "random-256-not-utf8").update(
+            plaintext_class="text"
+        ),
+        "a wrong kind": lambda d: vector(d, "version-03-as-02").update(kind="random"),
+        "a dangling derived_from": lambda d: vector(d, "aad-missing").update(derived_from="none"),
+        "a foreign nonce passed off as derived": lambda d: vector(
+            d, "det-256-nonce-not-derived"
+        ).pop("nonce_derived"),
+        "one version-flip vector removed": lambda d: remove(d, "version-04-as-05"),
+        "a precedence vector removed": lambda d: remove(
+            d, "precedence-short-envelope-before-suite"
+        ),
+        "a suite's only ok vector removed": lambda d: remove(d, "det-192-korean"),
+        "a nist vector removed": lambda d: remove(d, "nist-192-pt0-aad0"),
+        "a vector without an id": lambda d: d["vectors"][0].pop("id"),
+        "a boolean version": lambda d: d.update(version=True),
+        "another nonce label": lambda d: d.update(det_nonce_label="pg_gcm/v2/det-nonce"),
+        "no nist checksum": lambda d: d.update(nist_source={}),
+        "a relabelled vector under another key": lambda d: vector(d, "version-02-as-03").update(
+            key_hex="00" * 32
+        ),
+        "a precedence vector with one fault": lambda d: vector(
+            d, "precedence-short-envelope-before-suite"
+        ).update(key_hex=vector(d, "random-256-korean")["key_hex"]),
+        "a truncation of the wrong length": lambda d: vector(d, "envelope-28-bytes").update(
+            envelope_hex=vector(d, "envelope-28-bytes")["envelope_hex"][:4]
+        ),
+        "a hex member with a trailing newline": lambda d: vector(d, "random-256-korean").update(
+            aad_hex="\n"
+        ),
+    }
+    korean = vector(document, "random-256-korean")
+    other = vector(document, "random-192-korean")
+    tail = korean["envelope_hex"][-8:]
+    tag = korean["envelope_hex"][-2 * TAG_LEN :]
+    in_spec: dict[str, tuple[str, str]] = {
+        "a wrong digit in an example": (tail, tail[:-1] + ("0" if tail[-1] != "0" else "1")),
+        "another vector's nonce": (f"`{korean['nonce_hex']}`", f"`{other['nonce_hex']}`"),
+        "an upper-case example": (korean["nonce_hex"], korean["nonce_hex"].upper()),
+        "a wrong offset": ("| tag | 22 |", "| tag | 23 |"),
+        "a wrong outcome": (
+            "| `version-02-as-03` | `bad_tag` |",
+            "| `version-02-as-03` | `bad_envelope` |",
+        ),
+        "a vector that does not exist": ("(vector `det-256-korean`)", "(vector `det-256-x`)"),
+        "a wrong A": ("A         = 03", "A         = 02"),
+        "swapped suites": ("| `0x04` | AES-128-GCM | 16 b", "| `0x04` | AES-192-GCM | 24 b"),
+        "another label": (LABEL.decode("ascii"), "pg_gcm/v2/det-nonce"),
+        "an envelope one byte short": (
+            f"`{korean['envelope_hex']}`",
+            f"`{korean['envelope_hex'][:-2]}`",
+        ),
+        "a tag row of eight bytes": (f"| tag | 22 | `{tag}`", f"| tag | 22 | `{tag[:16]}`"),
+        "swapped field names": ("| nonce | 1 |", "| tag | 1 |"),
+        "a suite row deleted": ("| `0x07` | AES-192-GCM | 24 bytes | deterministic nonce |\n", ""),
+        "a wrong outcome behind a trailing space": (
+            "| `tag-last-bit-flipped` | `bad_tag` |",
+            "| `tag-last-bit-flipped` | `bad_envelope` | ",
+        ),
+    }
+
+    missed: list[str] = []
+    for name, break_file in in_file.items():
+        broken = copy.deepcopy(document)
+        break_file(broken)
+        if not problems_of(broken, spec):
+            missed.append(f"self-test: not caught — {name}")
+    for name, (old, new) in in_spec.items():
+        if old not in spec or not problems_of(document, spec.replace(old, new)):
+            missed.append(f"self-test: not caught — {name}")
+    return len(in_file) + len(in_spec), missed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--vectors", type=Path, default=ROOT / "spec" / "test-vectors.json")
     parser.add_argument("--spec", type=Path, default=ROOT / "spec" / "envelope.md")
+    parser.add_argument("--self-test", action="store_true", help="check that breaks are caught")
     args = parser.parse_args()
 
     document = json.loads(args.vectors.read_text(encoding="utf-8"))
-    problems = problems_of(document, args.spec.read_text(encoding="utf-8"))
+    spec = args.spec.read_text(encoding="utf-8")
+    problems = problems_of(document, spec)
+    breaks = 0
+    if args.self_test and not problems:
+        breaks, problems = self_test(document, spec)
 
     for problem in problems:
         print(problem)
@@ -410,8 +513,9 @@ def main() -> int:
         return 1
     kinds = ("nist", "random", "det")
     count = {k: sum(1 for v in document["vectors"] if v["kind"] == k) for k in kinds}
+    done = f"self-test ok, each of {breaks} breaks was caught" if args.self_test else "ok"
     print(
-        f"check-vectors: ok ({len(document['vectors'])} vectors: "
+        f"check-vectors: {done} ({len(document['vectors'])} vectors: "
         f"{count['nist']} nist, {count['random']} random, {count['det']} det)"
     )
     return 0

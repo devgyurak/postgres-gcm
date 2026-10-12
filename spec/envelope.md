@@ -262,3 +262,123 @@ supplied for a `random` vector, and derived for a `det` vector unless `nonce_der
 The vectors exercise the format, which seals bytes: a binding that seals only text (Part 2) meets the
 sealing half through whatever lets its tests seal bytes, and says what it does with the rest.
 
+---
+
+## Part 2 — The PostgreSQL binding
+
+This part says how the `pg_gcm` extension presents Part 1 in SQL. It is normative for the extension
+and irrelevant to any other reader or writer of the format.
+
+### 2.1 Functions
+
+| SQL | Part 1 |
+|---|---|
+| `gcm_encrypt(plaintext text, key bytea [, aad bytea]) → bytea` | 1.6, random variant |
+| `gcm_encrypt_det(plaintext text, key bytea [, aad bytea]) → bytea` | 1.6, deterministic variant |
+| `gcm_decrypt(ciphertext bytea, key bytea [, aad bytea]) → text` | 1.7 |
+
+`[, aad bytea]` is two declarations of each function, never a default. The two-argument form is the
+three-argument form with an empty `aad`: `gcm_encrypt_det(t, k)` and `gcm_encrypt_det(t, k, '')`
+give the same envelope.
+
+### 2.2 Keys
+
+`key` is the `bytea` given, used as it is. Its length selects the suite (1.2). The two encryption
+functions also refuse a key shorter than `pg_gcm.min_key_bytes` (default 32), so that a truncated key
+cannot silently select a weaker suite. `gcm_decrypt` does not consult that setting.
+
+### 2.3 NULL
+
+Every function is `STRICT`: a NULL in any argument gives NULL, and nothing in Part 1 runs. NULL is
+not an outcome of 1.7 and is not an `aad`; an empty `aad` is `''`.
+
+### 2.4 Text
+
+The plaintext of Part 1 is always UTF-8, whatever the database encoding.
+
+- **Sealing.** The `text` argument is converted from the database encoding to UTF-8. A UTF8 database
+  converts nothing. A SQL_ASCII database has no encoding to convert from, so the bytes are verified
+  as UTF-8 and refused if they are not.
+- **Opening.** After the tag has verified, the plaintext is verified as UTF-8 and converted to the
+  database encoding. A UTF8 database and a SQL_ASCII database verify and convert nothing further.
+
+A database whose encoding has no default conversion to and from UTF-8 cannot use the functions at
+all: every call fails with `42883` before anything is sealed or opened.
+
+Three plaintexts authenticate and are then refused. The first two can only come from an envelope
+this extension did not seal:
+
+| `plaintext_class` | The plaintext | Result of `gcm_decrypt` |
+|---|---|---|
+| `not_utf8` | is not valid UTF-8 | error, `22021` |
+| `contains_nul` | holds U+0000, which `text` cannot | error, `22021` |
+| `text` | holds a character the database encoding does not have | error, `22P05` |
+
+None of these is a tag failure and `pg_gcm.strict` does not turn any of them into NULL.
+
+### 2.5 Outcomes
+
+When the outcome is `ok` and the plaintext is text the database can hold, the `text` is returned.
+Everything else is one of these:
+
+| What happened | SQLSTATE | Condition name | `pg_gcm.strict` |
+|---|---|---|---|
+| `bad_tag` | `XX001` | `data_corrupted` | **governs it**: an error when on (the default), NULL when off |
+| `bad_envelope` | `22P03` | `invalid_binary_representation` | always an error |
+| `bad_key_length`, or a key below `pg_gcm.min_key_bytes` | `22023` | `invalid_parameter_value` | always an error |
+| Authenticated plaintext that is not UTF-8, or holds U+0000; SQL_ASCII text to seal that is not UTF-8 | `22021` | `character_not_in_repertoire` | always an error |
+| A character with no equivalent in the target encoding | `22P05` | `untranslatable_character` | always an error |
+| A value too long to seal or convert | `54000` | `program_limit_exceeded` | always an error |
+| The database encoding has no default conversion to or from UTF-8 | `42883` | `undefined_function` | always an error |
+| OpenSSL could not complete the operation, or its algorithms could not be fetched | `XX000` | `internal_error` | always an error |
+
+Each class of failure has a code of its own, so that a client can tell a forged envelope from a
+mistyped key length. A class may cover more than one cause — `22021` has three — and no code is the
+extension's alone: `42883` is also what an unknown function gives, and `XX001` is discussed below.
+`pg_gcm.strict` governs `bad_tag` and nothing else; there is no third state. In particular a key of
+the wrong suite for an envelope is `bad_key_length`, an error with `pg_gcm.strict` off too.
+
+Why `bad_tag` is `XX001`, with what was observed on PostgreSQL 15 to 18
+(`scripts/spike/sqlstate-handlers.sql`):
+
+- An existing code was preferred to one of the extension's own, and among the existing ones a
+  class-level code of class 22 would not do: in PL/pgSQL a handler for `SQLSTATE '22000'` or
+  `data_exception` catches every class-22 error, a wrong key length included.
+- `data_corrupted` is specific. A handler for it catches `XX001` and neither `XX000` nor `XX002`.
+  The converse does not hold: a handler for `internal_error` catches the whole class, `XX001` too.
+- It is not unique to this extension. The server raises `XX001` itself when it finds corrupted
+  storage, so a client that must tell the two apart also reads the message.
+- It sits in the internal-error class although the commonest cause is a wrong key, because Part 1
+  cannot distinguish a wrong key from a modified envelope.
+
+### 2.6 Messages
+
+No error message, detail, hint or context carries a byte of a key, a plaintext, a nonce, a tag or a
+ciphertext. Lengths, the version byte and the names of encodings are as far as a message goes.
+
+### 2.7 Version byte `0x01`
+
+Not implemented in 0.1. An envelope that begins with `0x01` is `bad_envelope`, whatever follows.
+
+### 2.8 The vectors through SQL
+
+| Vector | What SQL can check |
+|---|---|
+| `nist` | Nothing: there is no SQL function over the bare primitive and none takes a nonce. The unit suite runs them |
+| `ok`, class `text` | `gcm_decrypt(envelope, key, aad)` is the text of `plaintext_hex` |
+| `ok`, class `not_utf8` or `contains_nul` | `gcm_decrypt` raises `22021`, with `pg_gcm.strict` on or off |
+| `ok`, `kind` `det`, class `text`, nonce derived | also: `gcm_encrypt_det(text, key, aad)` is `envelope_hex`, byte for byte |
+| `ok`, `kind` `random` | sealing cannot be compared — the nonce is drawn inside — so `gcm_encrypt` is checked by property: length, version byte, two calls differ, round trip |
+| `bad_tag` | an error `XX001` with `pg_gcm.strict` on, NULL with it off |
+| `bad_envelope`, `bad_key_length` | the error of 2.5, with `pg_gcm.strict` on or off |
+
+A vector's `aad_hex` is passed as the third argument; where it is empty, the two-argument form must
+give the same result. Sealing a vector whose key is 24 or 16 bytes needs `pg_gcm.min_key_bytes` at or
+below that length for the statement; opening one needs nothing.
+
+### 2.9 A deterministic column
+
+`gcm_decrypt` opens either variant (1.8). A deterministic column whose uniqueness matters therefore
+carries a check on the version byte — for AES-256, `CHECK (get_byte(col, 0) = 3)` — so that a
+random-nonce envelope of a value already present cannot be stored beside it by someone who can write
+to the table but holds no key. The extension does not add or enforce that constraint.
