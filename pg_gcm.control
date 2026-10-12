@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: PostgreSQL
+comment = 'AES-GCM authenticated encryption functions, with LIKE on the decrypted value'
+default_version = '0.1.0'
+module_pathname = '$libdir/pg_gcm'
+relocatable = true
