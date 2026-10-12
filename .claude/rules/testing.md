@@ -58,7 +58,11 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
 - Error-path resource test: every core error path releases every OpenSSL object (counting allocator
   through `CRYPTO_set_mem_functions`, called first in `main`, **with its return value asserted to be
   1** — it returns 0, and counts nothing, once OpenSSL has allocated). This is the project's only leak
-  gate: neither it nor valgrind can run inside a stock backend (design §8, O8).
+  gate: neither it nor valgrind can run inside a stock backend (design §8, O8). It executes the paths
+  a tag mismatch or a refused allocation reaches — each allocation of each call refused in turn — and
+  no other failure of an EVP call; those exits are held by the one-exit-label structure that
+  `scripts/check-architecture.py` enforces. Do not describe it as covering more.
+- A second executable never calls `gcm_init`, for the state a failed fetch leaves (design §5.8).
 
 ## Regression (`test/sql`, `test/expected`)
 - Runs with `make installcheck` against a server in the build image, per supported major.

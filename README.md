@@ -2,9 +2,10 @@
 
 **AES-GCM for PostgreSQL, with `LIKE` on the decrypted value.**
 
-> **Planning stage.** Nothing is implemented or published yet. The plan, decisions and open questions
-> are in [`docs/design.md`](docs/design.md); the working rules for people and coding agents are in
-> [`AGENTS.md`](AGENTS.md).
+> **Spike stage — not for use.** A minimal extension (AES-256 only, no AAD) exists to answer the
+> design's open questions; nothing is released, and the envelope format is not yet specified. The plan,
+> decisions and open questions are in [`docs/design.md`](docs/design.md); the working rules for people
+> and coding agents are in [`AGENTS.md`](AGENTS.md).
 
 Planned SQL surface:
 

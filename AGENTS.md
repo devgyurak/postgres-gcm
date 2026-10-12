@@ -45,7 +45,7 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
 - Envelope (normative definition: `spec/envelope.md`, written in Phase 1):
 
 ```
-0x01  legacy AES-256-CBC (dual-read only; never produced) — semantics to confirm in Phase S
+0x01  legacy AES-256-CBC — reserved; never produced and not opened in 0.1 (design §8 O6)
 0x02  AES-256-GCM random        : 0x02 || nonce(12) || ciphertext || tag(16)
 0x03  AES-256-GCM deterministic : 0x03 || nonce(12) || ciphertext || tag(16)
 0x04  AES-128-GCM random        : same layout
@@ -74,9 +74,9 @@ docs/ops-constraints.md        Operational constraints — also duplicated on th
 spec/envelope.md               The envelope and failure semantics (Phase 1)
 spec/test-vectors.json         NIST CAVP GCM KAT plus the project's own vectors (Phase 1)
 src/                           The extension (C11)
-  pg_gcm.c                     _PG_init, GUC registration, the fetched-handle cache
+  pg_gcm.{h,c}                 _PG_init, GUC registration, what the glue files share
   fn_encrypt.c fn_decrypt.c    The SQL-callable glue — argument checks, encoding, error translation only
-  gcm.{h,c}                    The OpenSSL EVP wrapper (no PostgreSQL header → unit testable)
+  gcm.{h,c}                    The OpenSSL EVP wrapper and the fetched handles (no PostgreSQL header → unit testable)
   envelope.{h,c}               Envelope encoding and decoding (no OpenSSL either)
   nonce.{h,c}                  The synthetic nonce and the nonce_key derivation (EVP_MAC HMAC-SHA256)
 pg_gcm.control                 Extension control file
@@ -87,7 +87,9 @@ tests/unit/                    GoogleTest — gcm/envelope/nonce, linking libcry
 tests/e2e/                     compose: primary + streaming replica + a Python SQL runner
 tests/load/                    Load: decrypt + LIKE over 10k/100k/300k rows, gated against pgcrypto
 tests/bench/                   Core micro-benchmarks (Google Benchmark) — ratios against bare EVP
-scripts/                       dev-up.sh, build-in-docker.sh, verify.sh, agents-sync.sh, check-architecture.py
+scripts/                       dev-up.sh, build-in-docker.sh, verify.sh (+ verify.sql), unit-in-docker.sh,
+                               agents-sync.sh, check-architecture.py, check-action-pins.py, lib.sh
+scripts/spike/                 The Phase S measurements (measure.sh, ldd.sh, a never-shipped probe module)
 docker/                        build.Dockerfile (postgres:<major> + server-dev headers) + versions.json
 .github/workflows/             CI — added per phase (ci-release skill)
 ```
@@ -98,8 +100,8 @@ docker/                        build.Dockerfile (postgres:<major> + server-dev h
 |---|---|---|
 | Start a development server | `scripts/dev-up.sh 17` | `dev-container` |
 | Build the extension | `scripts/build-in-docker.sh 17` | `pg-extension` |
-| Unit tests | `cmake -S tests/unit -B build/unit && cmake --build build/unit && ctest --test-dir build/unit` | `unit-tests` |
-| Regression tests | `scripts/verify.sh 17` (installs into a container, runs `make installcheck`) | `regress-tests` |
+| Unit tests | `cmake -S tests/unit -B build/unit && cmake --build build/unit && ctest --test-dir build/unit` (in the Linux build image: `scripts/unit-in-docker.sh 17`) | `unit-tests` |
+| Regression tests | `scripts/verify.sh 17` (after the two rows above: installs the build into the dev container, runs `make installcheck`, then `scripts/verify.sql`) | `regress-tests` |
 | E2E | `docker compose -f tests/e2e/compose.yml up --exit-code-from runner` | `e2e-load-tests` |
 | Load | `python tests/load/run.py --rows 300000 --baseline pgcrypto` | `e2e-load-tests` |
 | Architecture boundaries | `python3 scripts/check-architecture.py` | `.agents/rules/architecture.md` |
@@ -160,8 +162,9 @@ different build method on your own.
 
 ## 6. Current phase and roadmap
 
-Current: **Phase 0 — planning.** The agent workflow and `docs/design.md` exist; no code yet. Next is
-Phase S.
+Current: **Phase S — the spike, done (2026-10-12).** A minimal extension (AES-256, no AAD) builds and
+passes `scripts/verify.sh` on 15–18; the answers are in `docs/design.md` §8. Nothing is released and
+the envelope specification is not written. Next is Phase 1.
 
 | Phase | Deliverable | Done when |
 |---|---|---|

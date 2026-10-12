@@ -18,9 +18,9 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
 
 | Module | Responsibility | Project dependencies allowed |
 |---|---|---|
-| `pg_gcm.c` | `PG_MODULE_MAGIC`, `_PG_init` (fetch, then GUC registration), the fetched-handle cache | `gcm` init, PostgreSQL headers |
-| `fn_encrypt.c`, `fn_decrypt.c` | SQL arguments, encoding conversion, GUC reads, error translation (NULL never reaches them: the functions are `STRICT`) | `gcm`, the shared byte and error types, PostgreSQL headers |
-| `gcm.{h,c}` | The encryption and decryption construction, the authentication result | `envelope`, `nonce`, OpenSSL |
+| `pg_gcm.{h,c}` | `PG_MODULE_MAGIC`, `_PG_init` (the core's fetch, then GUC registration), what the glue files share: the GUC variable, argument release, error translation | `gcm` init, PostgreSQL headers |
+| `fn_encrypt.c`, `fn_decrypt.c` | SQL arguments, encoding conversion, GUC reads, error translation (NULL never reaches them: the functions are `STRICT`) | `gcm`, `pg_gcm.h`, the shared byte and error types, PostgreSQL headers |
+| `gcm.{h,c}` | The encryption and decryption construction, the authentication result, the fetched handles (`gcm_init`), `gcm_cleanse` | `envelope`, `nonce`, OpenSSL |
 | `nonce.{h,c}` | Domain separation and nonce derivation | The shared types, OpenSSL |
 | `envelope.{h,c}` | Version, length, offset and field parsing; the shared types | The C standard library |
 
@@ -29,7 +29,9 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
   tests without a server.
 - `envelope` does not depend on OpenSSL either. Do not duplicate envelope byte interpretation into the
   glue.
-- `scripts/check-architecture.py` (Phase S) enforces the include boundary per line.
+- The glue includes no OpenSSL header: it reaches OpenSSL through `gcm.h` alone, `gcm_cleanse`
+  included.
+- `scripts/check-architecture.py` enforces the include boundary per line.
 
 ## 2. Errors cross the boundary as values
 

@@ -4,10 +4,12 @@
 
 > 이 문서는 `docs/design.md` 의 번역이다. 두 문서가 다르면 영어 문서가 맞고, 이 번역을 고친다.
 
-상태: **Phase 0, 기획** (2026-10-10). 여기 적힌 것은 아직 하나도 구현되지 않았다. 설계가 기대는
-PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 "확인됨" 에 기록되어 있거나,
-Phase S 에서 확인할 §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식
-이미지와 대조했고, 거기서 확인된 것을 §8 에 적었다.
+상태: **Phase S 완료** (2026-10-12). 최소 extension — AES-256, AAD 없음, `pg_gcm.strict` — 이
+PostgreSQL 15~18 에서 빌드되고 점검을 통과한다 (§4, §8). 릴리스된 것은 없고, 봉투 명세는 아직 쓰지
+않았으며 (Phase 1), 스파이크를 넘는 부분은 여전히 계획이다. 설계가 기대는 PostgreSQL 동작에 관한
+주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 에 기록되어 있거나, §8 "미확인" 목록에 있다. 이
+계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식 이미지와 대조했고 스파이크는 2026-10-12 에 돌렸으며,
+각각에서 확인된 것을 §8 에 적었다.
 
 ## 0. 목표와 범위
 
@@ -92,9 +94,10 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 - `STRICT` 의 귀결 하나를 함수를 문서화하는 모든 곳에 적는다. **키가 빠지면 오류가 아니라 NULL 이다.**
   평문이 NULL 일 수 없는 암호화 컬럼에는 `NOT NULL` 을 선언해, 바인딩하지 않은 키 파라미터가 NULL 을
   저장하는 대신 문장을 실패시키게 한다 (§6, 11 번).
-- 함수마다 `COST` 를 명시하고, 값은 Phase S 에서 잰 호출당 비용으로 정한다. C 함수의 기본 비용은 1 이고
-  플래너는 한 스캔의 조건을 비용 순으로 배열하므로, 명시하지 않으면 `gcm_decrypt(...) LIKE ...` 가
-  §6 4 번이 기대는 값싼 조건들 뒤에 놓이지 않는다.
+- 함수마다 `COST` 를 명시한다: `gcm_decrypt` 50, `gcm_encrypt` 100, `gcm_encrypt_det` 200 으로, Phase S
+  측정에서 나온 둥근 값이다 (§8). C 함수의 기본 비용은 1 이고 플래너는 한 스캔의 조건을 비용 순으로
+  배열하므로, 명시하지 않으면 `gcm_decrypt(...) LIKE ...` 가 §6 4 번이 기대는 값싼 조건들 뒤에 놓이지
+  않는다.
 - 이진 평문(`bytea` 입력, `bytea` 출력)은 0.1 에 일부러 넣지 않는다. 첫 인자에서 `text` 와 `bytea` 를
   오버로드하면 타입 없는 리터럴이 모호해진다. 필요하면 개정을 거쳐 별도 이름(`gcm_encrypt_bytes`,
   `gcm_decrypt_bytes`)으로 넣는다.
@@ -121,10 +124,12 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 3. UTF-8 이 아닌 DB 에서, DB 인코딩이 담을 수 없는 문자.
 
 `0x01` 은 인증이 없는 레거시 AES-256-CBC dual-read 봉투 (`0x01 || iv(16) || CBC ciphertext`) 용으로
-예약되어 있고 §8 O6 으로 남는다. 결과는 둘 중 하나이고, Phase S 가 호환성과 보안 정책이라는 두 근거로
-고른다. `pgcrypto` 에서 32 바이트 키로 만든 `'\x01' || iv || encrypt_iv(data, key, iv, 'aes-cbc')` 가
-제대로 열리면 구현하고, 그러면 기존 pgcrypto 컬럼에 재암호화 없는 이관 경로가 생긴다. 아니면
-구현하지 않으며, 그 경우 할당됐지만 구현하지 않은 version 바이트로서 `bad_envelope` 로 실패한다.
+예약되어 있다. **0.1 은 이를 구현하지 않는다** (§8 O6, Phase S 에서 결정): 바이트는 할당된 채로 남고,
+이 바이트를 가진 봉투는 잘못된 봉투로 실패한다. 걸림돌은 호환성이 아니다. `pgcrypto` 에서 32 바이트
+키로 쓴 `encrypt_iv(data, key, iv, 'aes-cbc')` 는 PKCS#7 패딩의 AES-256-CBC 그대로라서,
+`'\x01' || iv || …` 는 기존 pgcrypto 컬럼에 재암호화 없는 이관 경로를 줄 수 있다. 걸림돌은 보안
+정책이다. 인증이 목적인 함수 뒤에 인증 없는 형식을 두게 된다. 나중에 구현하는 것은 이 문서의
+개정이며, 이미 쓰인 어떤 봉투도 바꾸지 않는다.
 
 구현한다면 두 조건이 따라오고, `0x01` 을 드러내는 모든 곳에 적는다.
 
@@ -213,6 +218,14 @@ preload 하지 않으면 라이브러리는 backend 에서 함수를 처음 부�
 
 모든 답을 그것을 만든 명령과 함께 §8 에 기록한다.
 
+2026-10-12 에 15~18, 19beta4, 그리고 서버가 OpenSSL 3.0 을 링크하는 이미지에서 마쳤고, 답은 §8
+"Phase S 에서 확인됨" 에 있다. 위에 적힌 단계와 다르게 한 것이 셋 있고, 이유는 §8 에 있다.
+스파이크에 `gcm_encrypt_det` 가 들어 있다. 그 nonce 가 SQL 에서 HMAC 결과를 볼 수 있는 유일한
+곳이기 때문이다 (5 단계). `CRYPTO_set_mem_functions` probe 와 `PG_TRY` 시간 측정은 extension 의
+`_PG_init` 이 아니라 측정 전용 모듈에 있다 (6, 7 단계). 그리고 6 단계의 할당 카운터가 닿는 것은
+할당 실패와 tag 불일치가 지나는 경로이지, EVP 호출이 겪을 수 있는 모든 실패가 아니다. 나머지는
+구조로 보였다.
+
 ### Phase 1 — spec
 
 `spec/envelope.md` 를 쓰고 `spec/test-vectors.json` 을 만든다. NIST CAVP GCM known-answer 테스트에 이
@@ -271,8 +284,10 @@ PostgreSQL 메모리 컨텍스트가 추적하지 않으므로, 그것이 살아
   0 이 되거나 테이블 페이지가 망가진다. 사본인지는 `PG_FREE_IF_COPY` 가 쓰는 방법
   (`PG_GETARG_POINTER` 와 포인터가 다른지)으로 판별한다.
 - 결과 `text`, 호출자의 datum, 그리고 플래너가 `STABLE` 호출을 평가하며 만드는 사본 (§5.3) 은
-  extension 의 손이 닿지 않는다. 지우기는 우리 버퍼에 대한 심층 방어이지, backend 메모리에 키 사본이
-  남지 않는다는 보장이 아니다.
+  extension 의 손이 닿지 않는다. 서버가 우리를 위해 값을 detoast 할 때 쓰는 중간 버퍼 — 가져온
+  조각들과 압축된 형태 — 도 마찬가지이고, 서버는 호출이 성공해도 이것들을 0 으로 지우지 않고
+  해제한다. 지우기는 우리 버퍼에 대한 심층 방어이지, backend 메모리에 키 사본이 남지 않는다는
+  보장이 아니다.
 - 우리 자신의 비밀 사본을 쥔 채 아직 오류를 올릴 수 있는 glue 구간 — 이를테면 메모리 부족 때의
   `palloc` — 은 `PG_TRY` / `PG_FINALLY` 로 감싸서, 오류 경로에서도 사본이 지워지게 한다. 그런 블록
   안에는 살아 있는 OpenSSL 컨텍스트가 없다.
@@ -336,7 +351,8 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
   버퍼 (`inlen * MAX_CONVERSION_GROWTH + 1`, `MaxAllocSize` 에 대해 오버플로 검사) 에 변환한다. 검증에
   성공한 뒤에 반환한 개수가 `inlen` 보다 작으면 대상 인코딩이 담을 수 없는 문자가 있다는 뜻이다.
 - 변환 프로시저는 `FindDefaultConversionProc` 로 얻는다. 카탈로그 조회라서 오류를 올릴 수 있다
-  (메시지에 데이터는 없다). 비밀 사본이 생기기 전에 실행한다.
+  (메시지에 데이터는 없다). 비밀 사본이 생기기 전에 실행한다. 서버 자신의 클라이언트 인코딩 변환이
+  그렇듯 `search_path` 를 통해 찾는다 (§8 O14).
 
 | DB 인코딩 | `gcm_encrypt*` | `gcm_decrypt` |
 |---|---|---|
@@ -354,6 +370,10 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 에게 치명적이라 서버가 뜨지 않는다. lazy 로딩에서는 `_PG_init` 이 돌아올 때까지 라이브러리가 로드된
 것으로 표시되지 않으므로, `DefineCustom*Variable` 뒤의 `ERROR` 는 이후 모든 호출이 `_PG_init` 을 다시
 돌려 "attempt to redefine parameter" 로 실패하게 만들고 진짜 원인을 가린다.
+
+핸들은 코어 (`gcm.c`) 안의 static 이고 `gcm_init()` 이 fetch 한다. `_PG_init` 이 이를 부르고, 단위
+테스트는 `main` 에서 부른다. 호출마다 여전히 찾는 것이 하나 있다. `EVP_MAC` 는 digest 를 이름으로
+받으므로, 결정적 호출은 매번 `EVP_MAC_init` 에 SHA-256 이라는 이름을 넘긴다 (§8 O15).
 
 핸들은 프로세스의 수명 동안 살고 해제하지 않는다. preload 중에 등록한 `on_proc_exit` 콜백은 backend
 에서 실행되지 않고 — 자식이 postmaster 의 콜백을 버린다 — 어차피 프로세스가 끝나는 중이다.
@@ -373,7 +393,9 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
    정책은 카탈로그에 저장되고 `pg_dump` 에 찍힌다. 인덱스를 걸려고 이 함수들을 `IMMUTABLE` 로 선언한
    함수로 감싸지 않는다 (§5.3).
 3. **복호화한 값이 디스크에 닿을 수 있다.** `gcm_decrypt(...)` 에 대한 정렬이나 해시가 `work_mem` 을
-   넘으면 평문을 임시 파일에 쓴다 (언제 그런지는 Phase S 에서 잰다). `temp_tablespaces` 가 있는
+   넘으면 평문을 임시 파일에 쓴다. Phase S 에서 기본 `work_mem` 4MB 로 확인했다: 10~15 바이트
+   이름의 정렬은 메이저에 따라 30,000 행과 300,000 행 사이 어딘가에서 메모리를 벗어났고, 임시
+   파일에는 이름이 평문으로 있었지만 테이블 파일에는 없었다 (§8). `temp_tablespaces` 가 있는
    볼륨을 암호화한다.
 4. **함수는 플래너에게 불투명하다.** `WHERE gcm_decrypt(col, $1) LIKE ...` 는 후보 집합을 스캔한다.
    선택도는 다른 조건에서 나와야 한다. 복호화한 값에 대한 인덱스는 설계상 없다 (§5.3).
@@ -498,21 +520,115 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
   "Leakproof?" 를 더한다 (`describe.c`). volatility 테스트는 대신 `pg_proc` 을 읽는다. (소스.)
 - **`pg_regress` 와 `\c`.** `pg_regress` 는 `--encoding` 을 주지 않으면 `PGCLIENTENCODING` 을 지우고,
   psql 은 `\c` 뒤에 새 DB 의 인코딩을 클라이언트 인코딩으로 삼는다. `--load-extension` 은
-  `pg_regress` 가 만드는 DB 에만 적용된다. (소스: `pg_regress.c`, `psql/command.c`; 실행하지는
-  않았다.)
+  `pg_regress` 가 만드는 DB 에만 적용된다. (소스: `pg_regress.c`, `psql/command.c`; Phase S 에서 17 로
+  실행했다, 아래.)
 
-### 미확인 (Phase S 에서 답한다)
+### Phase S 에서 확인됨 (2026-10-12)
 
-번호는 다시 쓰지 않는다. O2, O3, O5, O8, O9, O10 은 위의 "확인됨"으로 옮겼다.
+여기서 "실행"은 linux/arm64 에서 이 저장소의 스크립트를 `docker/versions.json` 의 digest 고정
+이미지에 돌린 것이다: `postgres:15`~`18` (15.19, 16.15, 17.11, 18.6; OpenSSL 3.5.7),
+`postgres:19beta4`, `postgres:17-bookworm` (17.11; OpenSSL 3.0.22). 따로 적지 않으면 여섯 이미지에서
+결과가 같았다. 이미지 `M` 마다 명령은 `scripts/build-in-docker.sh M`, `scripts/unit-in-docker.sh M`,
+`scripts/dev-up.sh M`, `scripts/verify.sh M` (1~6 단계), `scripts/spike/measure.sh M` (7 단계, O6,
+O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
+
+- **1~4 단계 통과.** PGXS 빌드는 `-Wall -Wextra -Werror` 에서 경고가 없고, `ldd` 로 보면 서버와
+  `pg_gcm.so` 가 같은 `libcrypto.so.3` 을 쓴다. `CREATE EXTENSION` 은 0.1.0 을 설치한다.
+  `pg_regress` 파일 14 개가 통과하고, `scripts/verify.sql` 의 점검 35 개도 라이브러리를 지연
+  로드했을 때와 preload 했을 때 각각 통과한다. 32 바이트가 아닌 키는 오류다. 위조된 tag 는
+  `pg_gcm.strict` 가 on 이면 오류, off 면 NULL 이고, 잘린 봉투, 구현하지 않은 version 바이트, 인증은
+  되지만 텍스트가 아닌 평문 (GCM 명세의 테스트 케이스 14: 0 바이트 16 개) 은 off 에서도 오류다.
+  복호화한 값에 대한 `LIKE '%길%'` 은 UTF8 DB 와 `EUC_KR` DB 에서 모두 참이다. `EUC_KR` DB 는 6
+  바이트 텍스트를 UTF-8 9 바이트로 봉인하고 같은 결정적 nonce 를 유도하며, 두 DB 는 서로가 봉인한
+  것을 열고, `EUC_KR` 이 담을 수 없는 문자는 그 바이트가 메시지에 없는 오류다. SQL_ASCII DB 는 UTF-8
+  이 아닌 바이트의 봉인을 거부한다. `pg_gcm.strict = off` 인 병렬 스캔은 모든 워커에서 NULL 을
+  돌려준다 (O9, 이제 실제 변수로 확인).
+- **O4 — fork 뒤의 핸들.** 동작한다. `shared_preload_libraries = 'pg_gcm'` 이면 backend 의 첫 호출
+  전부터 `pg_gcm.strict` 가 실제 변수이고 (라이브러리를 postmaster 가 로드했다), 두 backend 각각에서
+  AES-256-GCM 왕복이 성공하며 `00..1f` 키로 `'홍길동'` 의 결정적 nonce 가 Python `hmac` 이 내는 값
+  `f55369153b2a94fcbc9b633f` 이다. backend 가 상속하는 것은 fetch 한 `EVP_CIPHER` 와 `EVP_MAC` 이다.
+  backend 가 직접 라이브러리를 로드할 때도 같다.
+- **O3, 실행.** preload 여부와 관계없이 모든 실행에서 두 backend 의 첫 랜덤 nonce 가 달랐다.
+- **O6 — `0x01`.** 호환성: 맞는다. `pgcrypto` 의 `encrypt_iv(convert_to('홍길동','UTF8'), key32, iv,
+  'aes-cbc')` 는 16 바이트를 내고, `openssl enc -d -aes-256-cbc -K … -iv …` 가 그것을 `홍길동` 으로
+  연다. PKCS#7 패딩을 쓴 AES-256-CBC 그대로다. (extension 의 CBC 경로가 아니라 OpenSSL 자체 명령으로
+  열었다.) 결정: 0.1 에서는 구현하지 않고 바이트는 예약으로 둔다 (§2.2). 이를 뒤집는 것은 설계
+  개정이며 어떤 봉투도 깨지 않는다.
+- **O7 — SQLSTATE, 스파이크가 정한 데까지.** 스파이크는 키 길이에 `22023`, 잘못된 봉투에 `22P03`,
+  tag 불일치에 `XX001`, UTF-8 이 아닌 텍스트에 `22021`, 변환할 수 없는 문자에 `22P05`, 너무 긴 값에
+  `54000`, OpenSSL 실패에 `XX000` 을 올린다. 모두 15~18 의 `errcodes.txt` 에 있고, 회귀 테스트가
+  그중 넷을 되읽는다. 하나는 정해지지 않아 "미확인"에 남는다: `XX001` 은 가장 흔한 운영 실패인 틀린
+  키를 내부 오류 분류에 넣는다.
+- **O8, 실행.** `CRYPTO_set_mem_functions` 는 preload 하는 postmaster 에서도, 첫 호출에 로드하는
+  backend 에서도 0 을 돌려줬다 (probe 모듈의 `_PG_init`; 로그에 남고 SQL 로 읽을 수 있다). 단위
+  테스트에서는 `main` 에서 가장 먼저 불러 1 을 돌려준다. 한 번의 호출은 봉인에 2 번, 열기에 2 번,
+  결정적 봉인에 13 번 (3.0.22 에서는 19 번) OpenSSL 할당을 한다. 테스트는 처음 32 번의 할당을 하나씩
+  거부한다: 모든 호출이 가져간 것을 전부 돌려주고, 그 실패를 tag 불일치로 보고하지 않으며, 올바른
+  출력이나 지워진 버퍼만 남긴다. **이것이 실행하지 못하는 것:** 컨텍스트가 살아 있는 동안 다른
+  이유로 실패하는 EVP 호출. 그 출구들은 구조에 기댄다 — 함수마다 `done:` 레이블 하나, 컨텍스트
+  획득과 그 레이블 사이에 `return` 없음 — 이것은 `scripts/check-architecture.py` 가 강제한다. 6
+  단계는 거기까지만 보인 것이다.
+- **O11 — amd64.** amd64 에서도 15~18 과 19beta4 의 `postgres` 는
+  `/lib/x86_64-linux-gnu/libcrypto.so.3` 을 링크하고 `openssl version` 은 3.5.7 로 arm64 와 같다.
+  `17-bookworm` 은 양쪽 모두 3.0.22 다.
+- **O12 — `PG_TRY`.** `PG_TRY` / `PG_FINALLY` 블록 하나는 호출당 수 ns 다. 열 번의 실행 대부분에서
+  2~7 ns 였고 (블록이 있는 함수와 블록이 없는 같은 함수를 300만 번씩 호출), 한 번은 0 보다 작게
+  읽혔다 — 차이가 잡음 수준이다. 복호화 + `LIKE` 한 행의 많아야 2% 정도다. 부하 게이트를 바꾸지
+  않는다.
+- **7 단계 — 비용.** 10~15 바이트 한글 이름 30만 행, backend 하나, JIT 끔: `gcm_decrypt(...) LIKE
+  '%길%'` 은 맨 스캔 위에 행당 0.30~0.41 µs, `gcm_encrypt` 는 0.64~1.00 µs, `gcm_encrypt_det` 는
+  0.99~1.18 µs, `pgcrypto` 의 `convert_from(decrypt_iv(..., 'aes-cbc'), 'UTF8') LIKE` 는 0.58~0.68
+  µs 다. GCM 쿼리는 CBC 쿼리의 0.49~0.63 배가 든다. 비용 1 짜리 연산자 단위로는 답이 거칠다.
+  `int4ge` 조건 하나는 수 ns 로 이 실행들의 잡음 수준이라 (1~11 ns 로 읽혔다) 비율은 2~3 배까지만
+  믿을 수 있다 — 잣대가 버틴 네 번의 실행에서 복호화 37~65, 암호화 64~111, 결정적 변형 88~190.
+  그래서 선언한 `COST` 는 둥근 값이다: 50, 100, 200. 이 값이 있으면 `gcm_decrypt(...) LIKE '%길%'
+  AND id % 2 = 0` 으로 쓴 쿼리가 `id % 2 = 0` 을 먼저 평가하도록 계획된다.
+- **7 단계 — 임시 파일.** `work_mem` 이 기본값 4MB 일 때, 복호화한 이름으로 `ORDER BY` 하면 30,000
+  행에서는 모든 메이저에서 메모리에 남고, 15 는 60,000 행, 16 은 100,000 행, 17~19 는 300,000 행에서
+  external merge 가 된다. `GROUP BY` 는 15~17 에서 100,000 행, 18~19 에서 300,000 행에 디스크로
+  넘친다. 정렬된 30만 행에 커서를 열어 둔 동안 `base/pgsql_tmp` 에는 약 7 MB 파일 하나가 있고 그
+  안에 `길동` 조각이 약 37,500 번 나온다. 테이블 파일에는 한 번도 없다.
+- **OpenSSL, 3.0 과 3.5 소스에서.** `EVP_*Init_ex2` 에 넘긴 `ivlen` 파라미터는 3.0.12 / 3.1.4 전까지
+  IV 를 복사한 뒤에 적용됐다 (CVE-2023-5363). 12 는 AES-GCM 의 기본값이므로 코어는 파라미터를 넘기지
+  않고 `EVP_CIPHER_CTX_get_iv_length` 를 검사한다. `EVP_DecryptFinal_ex` 의 tag 불일치는 오류 큐에
+  아무것도 넣지 않고, 그 경로에서 키, IV, tag 가 빠진 경우도 마찬가지다. `ERR_clear_error` 는 항목의
+  데이터 버퍼를 재사용하려고 남겨 두고, OpenSSL 은 DRBG 와 스레드의 오류 상태를 프로세스 수명 동안
+  유지하므로, 단위 테스트는 기준선을 잡기 전에 모든 경로를 한 번씩 돌린다.
+- **PostgreSQL, 15~18 소스에서.** `pg_do_encoding_conversion_buf` 는 소비한 원본 바이트 수를
+  돌려주고, 출력을 NUL 로 끝내며, 대상 크기가 `srclen * MAX_CONVERSION_GROWTH + 1` 이면 입력 전체를
+  변환에 넘긴다. 빈 입력에서는 0 이 모호하므로 glue 는 빈 입력을 변환하지 않는다.
+  `FindDefaultConversionProc` 는 `search_path` 를 따라간다 ("미확인" O14). `-Wextra` 는 서버 자신의
+  헤더 (static inline 의 쓰지 않는 파라미터) 에서 실패하므로, `-Werror` 빌드는 그 헤더를 `-isystem`
+  으로 받는다.
+- **`pg_regress` 와 `\c`, 17 에서 실행.** `PGCLIENTENCODING` 이 없는 상태에서 `EUC_KR` DB 로 `\c`
+  하면 `SHOW client_encoding` 이 `EUC_KR` 이고 UTF-8 리터럴은 `invalid byte sequence for encoding
+  "EUC_KR"` 로 실패한다. `SET client_encoding = 'UTF8'` 로 해결된다. `pg_regress` 는 expected 파일이
+  없는 첫 테스트에서 멈춘다.
+- **공식 이미지, 실행.** 초기화 중의 임시 서버는 진짜 서버가 뜨기 전에 소켓으로 `pg_isready` 에
+  응답한다. TCP 로 검사하면 그렇지 않다. preload 하는 서버는 시작 전에 라이브러리가 디스크에 있어야
+  한다 (`docker create`, `docker cp`, `docker start`).
+- **O1, 지금까지.** 스파이크는 `postgres:19beta4` 에서 `postgresql-server-dev-19` 로 빌드되고 위의
+  모든 것을 통과한다. 19 는 릴리스 이미지가 나올 때까지 지원 목록 밖에 둔다.
+- **무엇이 어디에 있나** (만들면서 정했다; `AGENTS.md` §3 과 `architecture.md` 도 같게 적었다).
+  fetch 한 핸들은 코어 안의 static 이고 `gcm_init()` 뒤에 있다. 단위 테스트가 서버 없이 핸들을 써야
+  하기 때문이다. glue 는 OpenSSL 헤더를 include 하지 않고 `gcm_cleanse` 로 지운다. 스파이크에는 2
+  인자 `gcm_encrypt_det` 가 들어 있다. 그 nonce 가 SQL 에서 HMAC 결과를 볼 수 있는 유일한 곳이기
+  때문이다 (5 단계). `CRYPTO_set_mem_functions` probe 와 `PG_TRY` 시간 측정은 extension 이 아니라
+  측정 전용 모듈 `scripts/spike/pg_gcm_probe` 에 있다.
+
+### 미확인
+
+번호는 다시 쓰지 않는다. O2~O6 과 O8~O12 는 위에서 답했다. O7 은 질문 하나로 좁혀졌고, O13, O14,
+O15 는 Phase S 리뷰에서 나왔다.
 
 | # | 질문 | 확인 방법 |
 |---|---|---|
-| O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28) | 릴리스 이미지가 나오면 `docker/versions.json` 에 추가; 그때까지는 `19beta4` 로 스파이크를 빌드 |
-| O4 | postmaster 에서 fetch 한 `EVP_MAC` 핸들이 fork 된 backend 에서 동작하나? `EVP_CIPHER` 는 선례가 있다 — postmaster 의 `SSL_CTX` 가 fork 전에 cipher 를 fetch 한다 — 하지만 어느 쪽도 문서화되어 있지 않다 | Phase S 5 단계: preload 한 뒤 두 backend 에서 HMAC known-answer |
-| O6 | `0x01`(AES-256-CBC, PKCS#7, IV 앞붙임)을 구현하나, 한다면 어떤 조건으로 (§2.2)? 호환성: 32 바이트 키를 쓴 `pgcrypto` 의 `encrypt_iv(..., 'aes-cbc')` 와 맞나? 보안 정책: 인증이 없고 `pg_gcm.strict` 가 변조를 볼 수 없으므로, 채택한다는 것은 그 예외를 명시하고 이관 뒤 `0x01` 을 어떻게 거부할지 정한다는 뜻이다 | pgcrypto 로 암호화하고 스파이크로 열기; 그다음 호환성만이 아니라 두 부분을 함께 결정 |
-| O7 | 실패 종류(틀린 키 길이, 잘못된 봉투, 잘못된 tag, 잘못된 UTF-8, 변환할 수 없는 문자, OpenSSL 실패)마다 어떤 SQLSTATE 가 맞나? 다른 곳에서 쓰이는 후보: `22023`, `XX001`, `22021`, `22P05`. `pgcrypto` 는 전부 `39000` 으로 올린다 | `errcodes.txt`; 사용자 정의보다 기존 분류 우선, 그리고 클라이언트가 위조된 tag 와 틀린 키 길이를 구분할 수 있게 실패마다 분류 하나 |
-| O11 | amd64 이미지가 O2 에서 확인한 arm64 이미지와 같은 OpenSSL 을 링크하나? | amd64 에서 `ldd` 와 `openssl version` |
-| O12 | 호출마다 `PG_TRY` 블록을 두면 30만 행에서 얼마가 들고, 부하 게이트가 달라지나? | Phase S 7 단계, 블록이 있을 때와 없을 때 |
+| O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 스파이크는 이미 `19beta4` 에서 빌드되고 통과한다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
+| O7 | 가장 흔한 원인이 틀린 키인데, tag 불일치의 SQLSTATE 로 `XX001` (`data_corrupted`, 내부 오류 분류) 이 맞나? 스파이크가 쓰는 나머지 분류 (위) 는 명세가 이유를 찾지 않는 한 그대로 둔다 | Phase 1: `spec/envelope.md` 가 표를 확정한다. 기존 분류를 우선하고, 클라이언트가 위조된 tag 와 틀린 키 길이를 구분할 수 있게 실패마다 분류 하나를 유지한다 |
+| O13 | version 바이트는 인증되지 않는다. `0x03` 을 `0x02` 로 (또는 반대로) 바꾸면 같은 평문으로 열리는 다른 봉투가 되므로, 키 없이 결정적 컬럼에 쓸 수만 있는 사람이 UNIQUE 제약을 지나 같은 값의 두 번째 사본을 넣을 수 있다. version 바이트를 AAD 로 tag 에 묶을 것인가, 아니면 받아들인다고 기록할 것인가? | Phase 1, 테스트 밖에 봉투가 생기기 전에: 구성을 바꾸는 일이므로 먼저 이 문서를 개정한다 |
+| O14 | `FindDefaultConversionProc` 는 `search_path` 를 통해 찾는다. UTF-8 이 아닌 DB 에서는 평문이 먼저 발견되는 기본 변환에 넘어가며, 서버 자신의 클라이언트 인코딩 변환도 그렇다. 이를 받아들일 것인가, 아니면 `pg_catalog` 에서만 변환을 찾을 것인가? | Phase 2, 인코딩 코드와 함께: 누가 기본 변환을 만들 수 있는지 확인한 뒤 결정한다 |
+
+| O15 | `EVP_MAC` 는 fetch 한 digest 를 받지 않으므로, 결정적 호출은 `EVP_MAC_init` 안에서 SHA-256 을 이름으로 찾는다. 키 없는 `EVP_MAC_CTX` 를 한 번 만들어 호출마다 복제하면 이를 피할 수 있고, 여기서 3.0.22, 3.5.7, 3.6.4 로 통과했다. 그러나 업스트림 `hmac_prov.c` 를 보면 3.0.0 에서는 키 없는 HMAC 컨텍스트의 `EVP_MAC_CTX_dup` 이 실패하고 그때마다 digest 참조를 하나씩 잃는다 (3.0.1 과 3.0.4 에서 수정; 소스를 읽은 것이고 실행하지는 않았다). 그래서 스파이크는 호출마다 찾는 형태를 유지한다. 하한을 3.0.1 로 올리고 실행 시점에 버전을 검사할 것인가, 아니면 그대로 둘 것인가? | Phase 2, 결정적 변형의 측정된 비용과 견주어 |
 
 ## 9. 참고 자료
 
