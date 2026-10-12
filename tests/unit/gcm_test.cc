@@ -184,4 +184,223 @@ TEST(GcmSeal, GivenOutputBufferOfTheWrongSize_WhenSealed_ThenBadLength) {
   EXPECT_EQ(rc, GCM_BAD_LENGTH);
 }
 
+// ---- Key length ------------------------------------------------------------------------------
+
+// Phase S implements AES-256 only, so 16 and 24 are refused here; Phase 2 moves them to the
+// accepted set and this list shrinks to the lengths that name no suite.
+class RefusedKeyLength : public ::testing::TestWithParam<size_t> {};
+
+TEST_P(RefusedKeyLength, GivenKeyOfUnsupportedLength_WhenSealed_ThenBadKeyLen) {
+  // Given
+  const Bytes key = KeyOfLength(GetParam());
+  const Bytes plaintext = Utf8("x");
+  Bytes envelope = EnvelopeBuffer(plaintext.size());
+
+  // When
+  const gcm_error rc = gcm_seal(key.data(), GetParam(), plaintext.data(), plaintext.size(), 0,
+                                envelope.data(), envelope.size());
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_KEY_LEN);
+}
+
+TEST_P(RefusedKeyLength, GivenKeyOfUnsupportedLength_WhenOpened_ThenBadKeyLen) {
+  // Given
+  const Bytes good_key = PatternKey();
+  const Bytes plaintext = Utf8("x");
+  Bytes envelope = EnvelopeBuffer(plaintext.size());
+  ASSERT_EQ(gcm_seal(good_key.data(), good_key.size(), plaintext.data(), plaintext.size(), 0,
+                     envelope.data(), envelope.size()),
+            GCM_OK);
+  const Bytes key = KeyOfLength(GetParam());
+  Bytes out = PlaintextBuffer(plaintext.size());
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(key.data(), GetParam(), envelope.data(), envelope.size(),
+                                out.data(), out.size(), &out_len);
+
+  // Then: every failure cleanses the caller's buffer, this early one included
+  EXPECT_EQ(rc, GCM_BAD_KEY_LEN);
+  EXPECT_EQ(out_len, 0u);
+  EXPECT_EQ(out, Bytes(out.size(), 0));
+}
+
+INSTANTIATE_TEST_SUITE_P(Lengths, RefusedKeyLength,
+                         ::testing::Values(0u, 15u, 16u, 24u, 31u, 33u));
+
+TEST(GcmKeyLength, Given32Bytes_WhenAsked_ThenSupported) {
+  // Given
+  const size_t key_len = 32;
+
+  // When
+  const int supported = gcm_key_len_supported(key_len);
+
+  // Then
+  EXPECT_EQ(supported, 1);
+}
+
+// ---- Authentication --------------------------------------------------------------------------
+
+// Flip one bit at an offset of a 38-byte envelope: nonce (1), ciphertext (13, 21), tag (22, 37).
+class OneBitFlip : public ::testing::TestWithParam<size_t> {};
+
+TEST_P(OneBitFlip, GivenEnvelopeWithOneBitFlipped_WhenOpened_ThenBadTagAndOutputCleansed) {
+  // Given
+  const Bytes key = PatternKey();
+  const Bytes plaintext = Utf8("홍길동");
+  Bytes envelope = EnvelopeBuffer(plaintext.size());
+  ASSERT_EQ(gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 0,
+                     envelope.data(), envelope.size()),
+            GCM_OK);
+  envelope[GetParam()] ^= 0x01;
+  Bytes out = PlaintextBuffer(plaintext.size());
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(key.data(), key.size(), envelope.data(), envelope.size(),
+                                out.data(), out.size(), &out_len);
+
+  // Then: no unauthenticated plaintext is left in the caller's buffer
+  EXPECT_EQ(rc, GCM_BAD_TAG);
+  EXPECT_EQ(out_len, 0u);
+  EXPECT_EQ(out, Bytes(out.size(), 0));
+}
+
+INSTANTIATE_TEST_SUITE_P(Offsets, OneBitFlip, ::testing::Values(1u, 12u, 13u, 21u, 22u, 37u));
+
+TEST(GcmOpen, GivenEnvelopeSealedUnderAnotherKey_WhenOpened_ThenBadTag) {
+  // Given
+  const Bytes key = PatternKey();
+  const Bytes other_key = ZeroKey();
+  const Bytes plaintext = Utf8("홍길동");
+  Bytes envelope = EnvelopeBuffer(plaintext.size());
+  ASSERT_EQ(gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 0,
+                     envelope.data(), envelope.size()),
+            GCM_OK);
+  Bytes out = PlaintextBuffer(plaintext.size());
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(other_key.data(), other_key.size(), envelope.data(),
+                                envelope.size(), out.data(), out.size(), &out_len);
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_TAG);
+}
+
+// gcm.h promises that every failure cleanses the whole of the caller's buffer, the failures
+// that happen before any OpenSSL call included. The buffers below start as 0xAA.
+TEST(GcmOpen, GivenTruncatedEnvelope_WhenOpened_ThenBadEnvelopeAndOutputCleansed) {
+  // Given
+  const Bytes key = PatternKey();
+  const Bytes envelope(28, 0x02);
+  Bytes out = PlaintextBuffer(8);
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(key.data(), key.size(), envelope.data(), envelope.size(),
+                                out.data(), out.size(), &out_len);
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_ENVELOPE);
+  EXPECT_EQ(out_len, 0u);
+  EXPECT_EQ(out, Bytes(out.size(), 0));
+}
+
+// A null buffer is refused for itself, not because its stated capacity is too small: the
+// capacity given here would hold the plaintext.
+class NullOutputBuffer : public ::testing::TestWithParam<std::string> {};
+
+TEST_P(NullOutputBuffer, GivenNullBufferOfSufficientStatedCapacity_WhenOpened_ThenBadLength) {
+  // Given
+  const Bytes key = PatternKey();
+  const Bytes plaintext = Utf8(GetParam());
+  Bytes envelope = EnvelopeBuffer(plaintext.size());
+  ASSERT_EQ(gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 0,
+                     envelope.data(), envelope.size()),
+            GCM_OK);
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(key.data(), key.size(), envelope.data(), envelope.size(),
+                                nullptr, plaintext.size(), &out_len);
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_LENGTH);
+  EXPECT_EQ(out_len, 0u);
+}
+
+INSTANTIATE_TEST_SUITE_P(Plaintexts, NullOutputBuffer, ::testing::Values("", "홍길동"),
+                         [](const auto &info) {
+                           return info.param.empty() ? std::string("Empty") : std::string("Korean");
+                         });
+
+TEST(GcmOpen, GivenNowhereToReportTheLength_WhenOpened_ThenBadLength) {
+  // Given
+  const Bytes key = PatternKey();
+  const Bytes plaintext = Utf8("홍길동");
+  Bytes envelope = EnvelopeBuffer(plaintext.size());
+  ASSERT_EQ(gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 0,
+                     envelope.data(), envelope.size()),
+            GCM_OK);
+  Bytes out = PlaintextBuffer(plaintext.size());
+
+  // When
+  const gcm_error rc = gcm_open(key.data(), key.size(), envelope.data(), envelope.size(),
+                                out.data(), out.size(), nullptr);
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_LENGTH);
+  EXPECT_EQ(out, Bytes(out.size(), 0));
+}
+
+TEST(GcmSealWithNonce, GivenVersionByteOfAnotherSuite_WhenSealed_ThenBadKeyLen) {
+  // Given: a 32-byte key with the AES-128 version byte, which this build does not implement
+  const Bytes key = PatternKey();
+  const Bytes nonce(GCM_NONCE_LEN, 0);
+  const Bytes plaintext = Utf8("x");
+  Bytes envelope = EnvelopeBuffer(plaintext.size());
+
+  // When
+  const gcm_error rc =
+      gcm_seal_with_nonce(key.data(), key.size(), nonce.data(), GCM_V_AES128_RANDOM,
+                          plaintext.data(), plaintext.size(), envelope.data(), envelope.size());
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_KEY_LEN);
+}
+
+TEST(GcmCleanse, GivenBufferOfNonZeroBytes_WhenCleansed_ThenEveryByteIsZero) {
+  // Given
+  Bytes secret(64, 0xA5);
+
+  // When
+  gcm_cleanse(secret.data(), secret.size());
+
+  // Then
+  EXPECT_EQ(secret, Bytes(64, 0));
+}
+
+TEST(GcmOpen, GivenOutputBufferSmallerThanThePlaintext_WhenOpened_ThenBadLength) {
+  // Given
+  const Bytes key = PatternKey();
+  const Bytes plaintext = Utf8("홍길동");
+  Bytes envelope = EnvelopeBuffer(plaintext.size());
+  ASSERT_EQ(gcm_seal(key.data(), key.size(), plaintext.data(), plaintext.size(), 0,
+                     envelope.data(), envelope.size()),
+            GCM_OK);
+  Bytes out(plaintext.size() - 1, 0xAA);
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(key.data(), key.size(), envelope.data(), envelope.size(),
+                                out.data(), out.size(), &out_len);
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_LENGTH);
+  EXPECT_EQ(out_len, 0u);
+  EXPECT_EQ(out, Bytes(out.size(), 0));
+}
+
 }  // namespace
