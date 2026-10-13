@@ -48,7 +48,7 @@ This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing belo
 - No key bytes in a repository file, `postgresql.conf`, a GUC, an environment variable, a test fixture
   or any DDL. The only exception is the public vector keys in `spec/test-vectors.json`.
 - That a key in a SQL statement can reach the server log is a **known operational constraint**
-  (design §6). Do not write log-filtering code (`emit_log_hook`) — that is out of scope.
+  (docs/ops-constraints.md). Do not write log-filtering code (`emit_log_hook`) — that is out of scope.
 
 ## Failure semantics
 - Tag mismatch: with `pg_gcm.strict` on (the default) an error with the SQLSTATE `spec/envelope.md`
@@ -76,11 +76,11 @@ This whole project is "make AEAD safe inside a PostgreSQL backend". Nothing belo
 - For joins, UNIQUE constraints and exact-match lookups only. Keep the warning against free text in the
   documentation and the function comments.
 - `gcm_decrypt` opens either variant. A deterministic column whose uniqueness matters needs a check on
-  the version byte, or a key or AAD no random-nonce column shares (design §6 item 5). The extension
+  the version byte, or a key or AAD no random-nonce column shares (docs/ops-constraints.md item 5). The extension
   does not enforce this and must not be described as enforcing it.
 
 ## Operational responsibility
-- Design §6 item 9 is the rule: a usage budget summing every use of a key, rotation criteria,
+- docs/ops-constraints.md item 9 is the rule: a usage budget summing every use of a key, rotation criteria,
   independent full-length keys per suite and security domain, and recovery that never resets usage
   accounting. The extension counts nothing, rotates nothing and detects no repeated nonce, and no
   document may state a universal safe limit or describe the extension as enforcing any of this.

@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: PostgreSQL
 """Print a GitHub Actions matrix axis from docker/versions.json, the one list of images.
 
-    ci-matrix.py all    every image: the supported majors, a pre-release, the OpenSSL floor
-    ci-matrix.py unit   one image per libcrypto the unit suite must meet: the newest supported
-                        major, and each image of the openssl-floor group
+    ci-matrix.py all        every image: the supported majors, a pre-release, the OpenSSL floor
+    ci-matrix.py supported  the supported majors only (the server images to build)
+    ci-matrix.py unit       one image per libcrypto the unit suite must meet: the newest supported
+                            major, and each image of the openssl-floor group
 
 The output is a JSON list of {"image": ..., "label": ...}. `image` is what the scripts take;
 `label` goes in the job name, and says so when the image is a pre-release — that job is the
@@ -35,6 +36,8 @@ def entries(which: str) -> list[dict[str, str]]:
     if which == "unit":
         names = [supported[-1], *versions.get("openssl-floor", {})]
         return [{"image": name, "label": name} for name in names]
+    if which == "supported":
+        return [{"image": name, "label": name} for name in supported]
     out = [{"image": name, "label": name} for name in supported]
     out += [
         {"image": name, "label": f"{name}, pre-release"} for name in versions.get("prerelease", {})
@@ -44,8 +47,8 @@ def entries(which: str) -> list[dict[str, str]]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in ("all", "unit"):
-        print("usage: ci-matrix.py all|unit", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] not in ("all", "unit", "supported"):
+        print("usage: ci-matrix.py all|unit|supported", file=sys.stderr)
         return 2
     print(json.dumps(entries(sys.argv[1])))
     return 0

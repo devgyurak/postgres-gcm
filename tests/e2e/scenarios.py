@@ -7,7 +7,7 @@ replica before any test runs; a scenario that holds on both nodes is written onc
 mixin, and run by a class for each node.
 
 Nothing here encrypts or decrypts: the runner only issues SQL, and keys travel as bind
-parameters, never in the statement text (docs/design.md section 6, item 1).
+parameters, never in the statement text (docs/ops-constraints.md item 1).
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ class Replication(Scenario):
         # When
         installed = self.rows("SELECT extversion FROM pg_extension WHERE extname = 'pg_gcm'")
 
-        # Then: the catalog entry arrived through WAL (design section 6, item 7)
+        # Then: the catalog entry arrived through WAL (docs/ops-constraints.md item 7)
         self.assertEqual(installed, [("0.1.0",)])
 
 

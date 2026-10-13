@@ -28,7 +28,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install the pinned tools
-        run: python3 -m pip install --quiet -r scripts/requirements-lint.txt -r tests/e2e/requirements.txt
+        run: |
+          python3 -m pip install --quiet \
+            -r scripts/requirements-lint.txt \
+            -r tests/e2e/requirements.txt \
+            -r tests/load/requirements.txt
       - name: Agent adapters are in sync with their sources
         run: scripts/agents-sync.sh --check
       - name: Actions are pinned by commit
@@ -41,6 +45,12 @@ jobs:
         run: python3 scripts/check-vectors.py --self-test
       - name: The end-to-end gate refuses what it must
         run: python3 tests/e2e/run.py --self-test
+      - name: The load gate refuses what it must
+        run: python3 tests/load/run.py --self-test
+      - name: The release guard refuses what it must
+        run: python3 scripts/release-guard.py --self-test
+      - name: The SBOM is the shape it must be
+        run: python3 scripts/sbom.py --self-test
       - name: shellcheck
         run: shellcheck -x scripts/*.sh scripts/spike/*.sh .claude/hooks/*.sh tests/e2e/*.sh
       - name: ruff
@@ -48,6 +58,9 @@ jobs:
           ruff check .
           ruff format --check .
       - name: mypy
-        run: mypy --strict scripts/*.py .claude/hooks/*.py tests/e2e/*.py
+        run: |
+          # tests/e2e and tests/load each hold a run.py; two invocations keep the module names apart.
+          mypy --strict scripts/*.py .claude/hooks/*.py tests/e2e/*.py
+          mypy --strict tests/load/*.py
       - name: actionlint
         run: actionlint

@@ -21,8 +21,8 @@ paths:
   that established it.
 - A fact about PostgreSQL behaviour cites the documentation for the major it was checked on, or the
   spike command that showed it. "PostgreSQL does X" without a version is not a fact.
-- README first-screen order: one-line summary → operational constraints (all of design §6) → support
-  matrix → install → function table.
+- README first-screen order: one-line summary → operational constraints (all of
+  `docs/ops-constraints.md`) → support matrix → install → function table.
 - `spec/envelope.md` is implementation-neutral in its format part: a byte-offset table, the nonce
   derivation, worked hex examples and the vector schema, from which another implementation could be
   built. The PostgreSQL binding (SQLSTATEs, the encoding rule and the plaintexts it rejects, what SQL

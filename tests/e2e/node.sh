@@ -16,7 +16,7 @@ case "$role" in
     ;;
 esac
 
-# design section 6, item 7: the catalog entries reach a replica through WAL; the library and
+# docs/ops-constraints.md item 7: the catalog entries reach a replica through WAL; the library and
 # the extension's files have to be on each node's disk.
 install -m 755 /pg_gcm-build/pg_gcm.so "$(pg_config --pkglibdir)/pg_gcm.so"
 install -m 644 /pg_gcm-build/pg_gcm.control /pg_gcm-build/sql/*.sql "$(pg_config --sharedir)/extension/"
@@ -32,5 +32,5 @@ if [ "$role" = replica ]; then
     --wal-method stream --write-recovery-conf --checkpoint fast
 fi
 
-# design section 6, item 1: bind values stay out of the statement log.
+# docs/ops-constraints.md item 1: bind values stay out of the statement log.
 exec docker-entrypoint.sh postgres -c log_parameter_max_length=0

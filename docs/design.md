@@ -2,17 +2,24 @@
 
 English | [한국어](design-KO.md)
 
-Status: **Phase 3 done** (2026-10-13). The extension implements the specification — `spec/envelope.md`,
+Status: **Phase 4 — distribution: implemented and green on a pull request, its completion criterion
+still open** (2026-10-13). The extension implements the specification — `spec/envelope.md`,
 with `spec/test-vectors.json` — for the three key sizes, with and without AAD, with `pg_gcm.strict` and
 `pg_gcm.min_key_bytes`. Its core runs every vector in the unit suite, its SQL functions every envelope
 vector in the regression suite, and an end-to-end suite runs them on a primary and on a streaming
-replica that only replayed what the primary sealed, on PostgreSQL 15–18 (§4, §8). **Nothing is released
-and it is not for use yet**: the load gate, the operational constraints document and distribution are
-Phase 4. Every claim about PostgreSQL behaviour that the design leans on is either cited in §9,
-recorded with its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL
-15–18 sources and the official images on 2026-10-10; the spike ran, the specification was written and
-the implementation was brought to it on 2026-10-12; the end-to-end suite ran on 2026-10-13; §8 records
-what each established.
+replica that only replayed what the primary sealed, on PostgreSQL 15–18 (§4, §8). A load gate watches
+the decrypt-and-`LIKE` scan against `pgcrypto`, and core micro-benchmarks watch the seal and the open
+against bare OpenSSL EVP ([`docs/perf.md`](perf.md)). The operational constraints are their own
+document, [`docs/ops-constraints.md`](ops-constraints.md), and a release pipeline builds the tarballs,
+their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. **Both
+performance gates are still placeholders that have never run on a GitHub runner** (§8 O17), so the
+completion criterion is not met. **Nothing is released and it is not for use yet**: no tag has been cut
+and the format may change until 0.1.0.
+Every claim about PostgreSQL behaviour that the design leans on is either cited in §9, recorded with
+its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources
+and the official images on 2026-10-10; the spike ran, the specification was written and the
+implementation was brought to it on 2026-10-12; the end-to-end suite ran and distribution followed on
+2026-10-13; §8 records what each established.
 
 ## 0. Goal and scope
 
@@ -103,11 +110,11 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
   expression to explain.
 - A consequence of `STRICT` to state wherever the functions are documented: **a missing key yields
   NULL, not an error.** Declare an encrypted column `NOT NULL` when its plaintext is never NULL, so an
-  unset key parameter fails the statement instead of storing NULL (§6, item 11).
+  unset key parameter fails the statement instead of storing NULL (docs/ops-constraints.md item 11).
 - Each function is declared with an explicit `COST`: 50 for `gcm_decrypt`, 100 for `gcm_encrypt` and
   200 for `gcm_encrypt_det`, round values from the Phase S measurement (§8). A C function defaults to
   cost 1, and the planner orders the quals of one scan by cost, so without it
-  `gcm_decrypt(...) LIKE ...` is not placed after the cheap predicates that §6 item 4 relies on.
+  `gcm_decrypt(...) LIKE ...` is not placed after the cheap predicates that docs/ops-constraints.md item 4 relies on.
 - Binary plaintext (`bytea` in, `bytea` out) is deliberately not in 0.1: overloading `text` and `bytea`
   on the first argument makes an untyped literal ambiguous. If wanted, it gets distinct names
   (`gcm_encrypt_bytes`, `gcm_decrypt_bytes`) through an amendment.
@@ -283,9 +290,18 @@ replication (the replica reads ciphertext it never encrypted), and NULL argument
 
 ### Phase 4 — distribution
 
-Build matrix per major and architecture, tarballs with checksums and an SBOM, a `postgres:<major>`
-image with the extension preinstalled, README and `docs/ops-constraints.md`, and the load baseline in
-`docs/perf.md`.
+The build matrix per major and architecture is `build.yml` (§4, Phase 2); this phase adds
+packaging, the distribution image and the two performance gates. `scripts/package.sh` writes
+`pg_gcm-<version>-pg<major>-<arch>.tar.gz` and its checksum, `scripts/sbom.py` a CycloneDX SBOM,
+and `release.yml` guards the tag (SemVer, on `main`, matching `pg_gcm.control`, with a
+`## <version>` section in the changelog) and then publishes the tarballs, `SHA256SUMS`, its
+keyless signature and the SBOM; a `workflow_dispatch` run is a dry run. `docker/server.Dockerfile`
+layers the built extension onto `postgres:<major>` and runs `CREATE EXTENSION pg_gcm` in an init
+script; `scripts/server-image.sh` builds it and `scripts/smoke-image.sh` checks the Korean `LIKE`
+round trip against the image's own init before anything is pushed. The operational constraints
+are `docs/ops-constraints.md`, and the load baseline and both performance gates are
+`docs/perf.md`. §8 "Established in Phase 4" records what the gates and the image were observed to
+do, and what is left to record.
 
 ### Phase 5 — ecosystem (optional)
 
@@ -342,20 +358,20 @@ Three things follow from `STABLE`, each confirmed on 15–18 (§8):
   selectivity. A `gcm_decrypt` error can therefore surface from a plain `EXPLAIN` or at Bind, and the
   planner holds its own copy of the arguments at that moment.
 - It is not a barrier. PostgreSQL trusts the volatility label of a wrapper, so a user who writes an
-  `IMMUTABLE` SQL function around `gcm_decrypt` can index it. That is an operational constraint (§6,
+  `IMMUTABLE` SQL function around `gcm_decrypt` can index it. That is an operational constraint (docs/ops-constraints.md
   item 2), not something the extension can prevent.
 
 ### 5.4 The key is a SQL argument, never configuration
 
 No key in `postgresql.conf`, a GUC, a table or an environment variable.
-The cost — the key is visible wherever the statement is — is an operational constraint (§6), and the
+The cost — the key is visible wherever the statement is — is an operational constraint (docs/ops-constraints.md), and the
 mitigation is bind parameters, not code in the extension.
 
 Encrypting inside the server draws a trust boundary that the extension cannot move, the one `pgcrypto`
 documents for itself ("Security Limitations", §9): the key and the plaintext cross the client
 connection, and they exist in the memory of a server its administrators control. The design protects
 stored columns, backups and replicas that hold only ciphertext. It does not protect against an
-unprotected connection, the database superuser or the server's operating-system administrator (§6,
+unprotected connection, the database superuser or the server's operating-system administrator (docs/ops-constraints.md
 item 12).
 
 ### 5.5 A tag mismatch is not degraded to NULL by default
@@ -422,64 +438,14 @@ The handles live for the life of the process and are not released. An `on_proc_e
 registered while preloading would never run in a backend — the child discards the postmaster's
 callbacks — and the process is exiting anyway.
 
-## 6. Operational constraints (draft — Phase 4 moves them to `docs/ops-constraints.md` and the README)
+## 6. Operational constraints
 
-1. **Keys and plaintext can appear in logs and statistics.** `log_statement`, `auto_explain`,
-   `pg_stat_activity.query` and — because `log_min_error_statement` defaults to `error` — the log line
-   of any statement that fails, including a forged-tag error. Send the key as a **bind parameter**, so
-   the statement text holds `$1` — **and set `log_parameter_max_length = 0`**. Its default of -1 logs
-   every bind value in full on the lines that `log_statement`, `log_min_duration_statement` and the
-   sampling settings write, so a bind parameter alone does not keep a key out of the slow-statement
-   log. Leave `log_parameter_max_length_on_error` at its default of 0. Do not run `auto_explain` on a
-   database that takes key-bearing statements: from 16 it logs "Query Parameters", and on every major
-   a custom plan's text contains the parameter values. `LIKE` patterns are plaintext fragments too.
-2. **Never put a key literal in DDL.** Views, column defaults, check constraints, rules, triggers,
-   function bodies and policies are stored in the catalog and dumped by `pg_dump`. Do not wrap these
-   functions in a function declared `IMMUTABLE` to index them (§5.3).
-3. **Decrypted values can reach disk.** A sort or hash over `gcm_decrypt(...)` that exceeds `work_mem`
-   writes plaintext to temporary files. Phase S saw it at the default `work_mem` of 4MB: a sort of
-   10–15-byte names left memory somewhere between 30,000 and 300,000 rows depending on the major, and
-   the temporary file held the names in the clear while the table file held none (§8). Encrypt the
-   volume that holds `temp_tablespaces`.
-4. **The functions are opaque to the planner.** `WHERE gcm_decrypt(col, $1) LIKE ...` scans the
-   candidate set; selectivity must come from other predicates. There is no index on decrypted values,
-   by design (§5.3).
-5. **`gcm_encrypt_det` reveals equality, frequency and length, and costs more than the random
-   variant** (two HMAC-SHA256 passes for the nonce). Use it only for join keys, UNIQUE constraints
-   and exact-match lookups, never for free text. The AAD is an input to its nonce (§8 O16), so it
-   may differ from call to call; values sealed with different AADs do not compare equal, which is
-   the point of binding a value to a row and the end of joining on it. **`gcm_decrypt` opens either
-   variant**, so where the uniqueness of a deterministic column matters, give the column a check on
-   the version byte — `CHECK (get_byte(col, 0) = 3)` for AES-256 — or, more weakly, a key or AAD
-   that no random-nonce column shares. Otherwise a random-nonce envelope of the same value can be
-   stored beside it. Every distinct pair of AAD and value is a nonce of its own, so a per-row AAD
-   spends the key's usage budget (item 9) once per row.
-6. **Self-managed PostgreSQL only.** Managed services do not load this extension.
-7. **Install on every node that decrypts.** Streaming replicas get the extension's catalog entries
-   through WAL but need the shared library installed on disk; a logical subscriber needs both.
-8. **`pg_gcm.min_key_bytes` guards against a truncated key.** The key length picks the suite, so a
-   32-byte key cut to 24 or 16 bytes is a valid key for a weaker suite and would seal without
-   complaint. The default of 32 refuses that; lower it only to use a smaller suite on purpose.
-   Decryption never consults it, so raising it again cannot lock out data written while it was lower.
-9. **Usage budgets, rotation and recovery are the operator's responsibility.** Before deployment, set
-   a usage budget that sums every use of a key across servers, columns and applications, and the
-   criteria for rotating it. The extension counts nothing, rotates nothing and detects no repeated
-   nonce, and this project states no universal safe limit. Use independent, full-length random keys
-   per suite and security domain. Rotation changes deterministic ciphertext, so plan the migration of
-   joined and UNIQUE columns and keep old keys for old data and backups. Restoring a backup does not
-   reset usage; if the usage history or the random-number state of any writer is uncertain, stop
-   writing under that key and resume with a new one (NIST SP 800-38D §8).
-10. **The server must link OpenSSL 3.0 or later.** The official `postgres` images do. The PGDG packages
-    for RHEL/Rocky 8 link 1.1.1 and are not supported. OpenSSL 3.0 itself left upstream support on
-    2026-09-07; prefer a platform on 3.5.
-11. **A NULL argument gives NULL, silently.** A key parameter that was never bound stores NULL instead
-    of failing. Put `NOT NULL` on an encrypted column whose plaintext is never NULL.
-12. **Protect the connection, and trust the server's administrators.** Every key and plaintext travels
-    from the client to the server. Connect over a protected local socket, or over TLS **with the
-    server's certificate verified** (`sslmode=verify-full`); without that, bind parameters and the log
-    settings in item 1 leave them readable on the network, or deliverable to an impostor server. The
-    database superuser and the operating-system administrator of every node that decrypts can observe
-    them and must be trusted — the same limitation `pgcrypto` documents.
+The constraints an operator must hold were settled here and are maintained in
+[`docs/ops-constraints.md`](ops-constraints.md); every one of them is also on the first screen of
+[`README.md`](../README.md). They belong to the deployment rather than to this code: what the
+extension can and cannot protect is fixed by the trust boundary in §5.4, and nothing in
+`postgresql.conf` moves it. Read that document before deploying, and keep it accurate — it is as much
+a part of the deliverable as the SQL functions are.
 
 ## 7. License — the PostgreSQL License (settled 2026-10-10)
 
@@ -681,7 +647,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   second, different one that opens to the same plaintext — and closing it costs one byte of
   associated data and nothing on the wire. What it does not close is transplanting: `gcm_decrypt`
   opens either variant, so a random-nonce envelope of the same value under the same key and AAD is
-  still a second envelope, and §6 item 5 says what a deterministic column does about that. One
+  still a second envelope, and docs/ops-constraints.md item 5 says what a deterministic column does about that. One
   consequence for this phase: a NIST vector is no longer an envelope (its associated data is
   NIST's), so the NIST known answers are vectors of the primitive and SQL never sees them.
 - **O16 — the deterministic nonce is derived from the associated data too.** Raised by the Phase 1
@@ -771,7 +737,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
 - **The nonce collision test.** A million distinct plaintexts sealed deterministically under one
   key and AAD give a million distinct nonces (100,000 on a pull request). That is a check of the
   derivation's wiring — a truncation to too few bytes or a constant input would fail it — and says
-  nothing about the birthday bound of a 96-bit nonce, which no test can reach. §6 item 9 stays the
+  nothing about the birthday bound of a 96-bit nonce, which no test can reach. docs/ops-constraints.md item 9 stays the
   rule.
 - **O14 — the conversion is looked up in `pg_catalog` alone**, with
   `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)`. Observed on 17.11: a role that is not a
@@ -866,7 +832,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   expected failure, an unexpected success and an empty run, and two classes whose scenarios
   differ or are none. The wait before the first scenario also covers the WAL receiver's state,
   so the scenario that asserts `streaming` does not meet a receiver that has only just connected.
-- **Item 7 of §6, observed.** With the library left out of the replica's disk (a run of the
+- **docs/ops-constraints.md item 7, observed.** With the library left out of the replica's disk (a run of the
   twenty-one scenarios made by hand on 17.11), the catalog entry was still there and the join on
   envelopes still worked, and the seven scenarios that call a function there failed with `could
   not access file "$libdir/pg_gcm"`: 14 of 21 passed and the gate was closed. The NULL scenario
@@ -874,12 +840,69 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   library is never loaded for it.
 - **What it does not show.** The suite's network carries keys and plaintext unencrypted between
   the runner and the servers; that is a test network with public test keys, not a deployment
-  (§6 item 12). It does not test a logical subscriber, a promoted replica, a base backup restored
+  (docs/ops-constraints.md item 12). It does not test a logical subscriber, a promoted replica, a base backup restored
   later, or replication between different majors or different builds of the extension. It runs
   on amd64 in CI and on arm64 on the development machine.
 - **CI.** `e2e.yml` runs the suite for every image of `docker/versions.json` on a push to `main`
   or `develop`, and on a pull request that changes the extension, the suite or what builds them. It is not a required
   check; `regress.yml` holds those.
+
+### Established in Phase 4 (2026-10-13)
+
+"Run" here is this repository's scripts on the development machine, and the workflow that would
+take a gate; nothing was tagged and nothing was released.
+
+- **The load gate.** `tests/load/run.py` loads N rows of Korean names sealed twice in one table
+  — `gcm_encrypt` and `pgcrypto` `encrypt_iv(..., 'aes-cbc')` under the same key — and times,
+  interleaved across `sessions` so that neither query owns the machine, the
+  `gcm_decrypt(...) LIKE '%김%'` scan against the CBC one, reporting the p95 of each and their
+  ratio. As in Phase S, JIT and parallel workers are off so both plans have the same shape, the
+  table is `VACUUM (ANALYZE, FREEZE)`d, one warm-up scan of each query is discarded, and each cell
+  collects about `samples` scans per query so the p95 is a percentile even at one session. The
+  gate is the worst ratio over the gated cells — `gated_sessions` in the baseline, the
+  low-concurrency ones — against `tests/load/baseline.json`, never a number of milliseconds, so it
+  is portable; a high-session cell at 10k rows is scheduling-bound rather than crypto-bound and is
+  recorded but not gated. `run.py --self-test` checks the verdict, the gated-cell rule and the
+  ratio's direction over cases whose answer is known and runs in the lint workflow. Phase S's four
+  runs are the expectation (the GCM query took 0.49–0.63 of the CBC one, step 7 above); the ceiling
+  is 1.0, the design's requirement that GCM not be slower.
+- **The micro-benchmarks.** `tests/bench/benchmark.cc` (Google Benchmark) measures the core's
+  `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP AES-256-GCM of
+  the same shape at 16, 256, 4096 and 65536 bytes, and gates three ratios from
+  `tests/bench/baseline.json` — the random seal and the open over bare EVP, and the
+  deterministic seal over the random one, which is where the two HMAC-SHA256 passes show. Each
+  benchmark runs five times in a random order and the gate reads the median, so one noisy
+  repetition cannot move a ratio. The baseline's nonce is random, as the core's random seal is, so
+  the seal ratio measures the core's own envelope and checks rather than a draw only one side pays;
+  the ceilings are per size, because the core's fixed per-call cost is a larger share of a small
+  message. The binary's `--self-test` checks the verdict, the ratio's direction and the gate over
+  fixed measurements; no server and no PostgreSQL header is involved.
+- **The distribution image.** `docker/server.Dockerfile` is the official `postgres:<major>`
+  (base pinned by digest) with the built `pg_gcm.so`, `pg_gcm.control` and SQL installed into
+  the directories that image's own `pg_config` names, and `docker/initdb.d/00-pg_gcm.sql` in
+  `/docker-entrypoint-initdb.d`, so `CREATE EXTENSION pg_gcm` runs on first init.
+  `scripts/smoke-image.sh` starts the image, waits on its `HEALTHCHECK`, and — with no
+  `CREATE EXTENSION` of its own — seals and opens `홍길동` and checks `LIKE '%길%'`: a failure or
+  a missing extension is a non-zero exit.
+- **The release pipeline.** `scripts/package.sh` lays a build out as `pg_gcm-<version>/…` and
+  writes `pg_gcm-<version>-pg<major>-<arch>.tar.gz` with its checksum;
+  `scripts/release-guard.py` refuses a tag that is not `vMAJOR.MINOR.PATCH`, that disagrees with
+  `pg_gcm.control`'s `default_version`, that is not an ancestor of `main`, or without a
+  `## <version>` changelog section; `scripts/sbom.py` writes a CycloneDX 1.5 document naming the
+  extension, its PostgreSQL and libcrypto dependencies and every artifact's SHA-256 — the
+  extension only in `metadata.component`, so no `bom-ref` repeats. `release.yml` packages the
+  supported majors on amd64 and arm64; `scripts/smoke-tarball.sh` layers each tarball onto the
+  official image and runs the round trip, so the shipped bytes are loaded on every architecture;
+  the `server` job builds and smokes the distribution image and only then pushes and signs it
+  keyless with cosign, after every tarball has passed and only on a tag; the `publish` job writes
+  the SBOM and `SHA256SUMS` (the SBOM's own file included), signs the checksums and creates the
+  GitHub release. A `workflow_dispatch` run exercises everything except the pushes, the signature
+  and the release. Both helper scripts' `--self-test`s run in the lint workflow.
+- **What is not yet recorded.** No gate has run on a CI runner, so the ceilings in
+  `tests/load/baseline.json` and `tests/bench/baseline.json` are the Phase S expectation and the
+  placeholder of §8 Open O17, not a measurement of that runner; `docs/perf.md` says so. No tag
+  has been cut and no release published, so the pipeline is exercised but not yet observed end
+  to end, and the distribution image is smoke-tested only.
 
 ### Open
 
@@ -889,6 +912,7 @@ Phase 2.
 | # | Question | How to settle it |
 |---|---|---|
 | O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the extension builds and passes every suite on `19beta4`, in a CI job labelled pre-release that is not meant to be a required check | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
+| O17 | What are the load and micro-benchmark ratios on the CI runner, and how tight may the ceilings be? The ceilings in `tests/load/baseline.json` (1.0) and `tests/bench/baseline.json` (per size: seal and open 1.3–1.5, det 3.0–4.5) are a placeholder, not a measurement of that runner | Record the worst ratio and the runner's CPU from three runs of each of `load.yml` and `bench.yml` in `docs/perf.md`, and lower each ceiling toward the observed worst only when it holds across all three |
 
 ## 9. References
 

@@ -1,6 +1,6 @@
 ---
 name: e2e-load-tests
-description: The compose-based end-to-end suite (primary, streaming replica and a Python SQL runner) and the load harness that gates decrypt + LIKE p95 against pgcrypto. Use it for replication and performance gates.
+description: The compose-based end-to-end suite (primary, streaming replica and a Python SQL runner), the load harness that gates decrypt + LIKE p95 against pgcrypto, and the core micro-benchmarks gated against bare OpenSSL EVP. Use it for replication and performance gates.
 ---
 
 # e2e-load-tests
@@ -17,7 +17,7 @@ Rules: `testing.md`, `stack-python.md`.
   hands over to the image's own entrypoint. The replica first takes a `pg_basebackup` of the primary
   (`--write-recovery-conf`); `primary-init.sh` creates the role it connects as and the `pg_hba.conf`
   line. `runner` is `runner.Dockerfile` (Python, `psycopg`), built from `tests/e2e/` alone.
-- Both servers run with `log_parameter_max_length=0` (design §6 item 1), on a tmpfs, with health
+- Both servers run with `log_parameter_max_length=0` (docs/ops-constraints.md item 1), on a tmpfs, with health
   checks. `scripts/e2e.sh` removes the containers, the network and the runner image at the end. The
   replication password is in the replica's `postgresql.auto.conf` on that tmpfs while the run lasts.
 - `run.py` (argparse; JSON on stdout, one line per scenario on stderr, the gate in the exit status:
@@ -46,5 +46,32 @@ Rules: `testing.md`, `stack-python.md`.
 - `run.py --rows N --baseline pgcrypto`: loads N rows of Korean names sealed by `gcm_encrypt` and by
   `pgcrypto` `encrypt_iv(..., 'aes-cbc')`, then measures p95 of `gcm_decrypt(...) LIKE '%김%'` against
   `convert_from(decrypt_iv(...), 'UTF8') LIKE '%김%'` at 1/8/32 sessions in an interleaved order.
+  `--rows`, `--sessions` and `--samples` (scans per query per cell) default to
+  `tests/load/baseline.json`; the whole rows × sessions matrix of those defaults runs, and the gate is
+  the worst ratio over the `gated_sessions` cells. A cell at many sessions on few rows is
+  scheduling-bound, not crypto-bound, and is recorded but not gated (see the baseline's `note`).
+- The two plans must have the same shape: `connect()` sets `SET jit = off` and `SET
+  max_parallel_workers_per_gather = 0` (as Phase S does), `load_rows` follows the load with `VACUUM
+  (ANALYZE, FREEZE)`, and one warm-up scan of each query is discarded before the timed rounds.
+  Without the parallel setting, `gcm_decrypt`'s `COST 50` earns it a gather that `decrypt_iv`'s
+  `COST 1` does not, and the ratio flatters GCM.
 - The gate is a ratio, never milliseconds, written to `tests/load/baseline.json` from three CI runs and
   recorded in `docs/perf.md` with the runner's CPU.
+
+## Bench (`tests/bench`)
+- `scripts/bench.sh <major>` builds `benchmark.cc` (Google Benchmark) in the build image and runs it:
+  the core's `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP
+  AES-256-GCM of the same shape, per plaintext size. Each benchmark runs five times
+  (`->Repetitions(5)`) in a random order (`--benchmark_enable_random_interleaving`, set by
+  `bench.sh`) and the gate reads the median, so both sides of a ratio meet the same load and one
+  noisy repetition cannot move it. The exit status is the gate — 0 only when every ratio is at or
+  under its ceiling in `tests/bench/baseline.json`; the binary's `--self-test` checks the verdict,
+  the ratio's direction and the gate over a fixed measurement map (each of the three ratio pairs
+  gets a failing case), with no crypto.
+- The bare baseline draws a random nonce, exactly as the core's random seal does, so the `seal` ratio
+  charges the core for its own envelope and checks, not for a draw only one side pays; the ceilings
+  are per size (`seal`, `open`, `det`), because the core's fixed per-call cost is a larger share of a
+  small message. The gate is a ratio, never nanoseconds; the ceilings are a placeholder
+  (`docs/design.md` §8 O17). Lower one toward the observed worst only when it holds across three
+  `bench` runs and both libcryptos, and record it in `docs/perf.md`. No server and no PostgreSQL
+  header is involved.
