@@ -1,11 +1,13 @@
 {
-  "metric": "CPU time of the core (src/gcm.c and its envelope) relative to bare OpenSSL EVP AES-256-GCM",
-  "gate": "the worst per-size ratio must be at most the matching ceiling; seal and open are GCM over bare EVP, det is the deterministic seal over the random one",
-  "max_seal_ratio": 4.0,
-  "max_open_ratio": 3.0,
-  "max_det_ratio": 5.0,
-  "sizes": [16, 256, 4096, 65536],
+  "metric": "CPU time of the core (src/gcm.c and its envelope) relative to bare OpenSSL EVP AES-256-GCM, which draws a random nonce as the core's random seal does",
+  "gate": "for each size, the seal and open ratios (GCM over bare EVP) and the det ratio (the deterministic seal over the random one) must be at most the matching ceiling",
+  "ceilings": {
+    "16": {"seal": 1.5, "open": 1.5, "det": 3.0},
+    "256": {"seal": 1.5, "open": 1.5, "det": 3.0},
+    "4096": {"seal": 1.5, "open": 1.5, "det": 3.5},
+    "65536": {"seal": 1.3, "open": 1.3, "det": 4.5}
+  },
   "recorded_ratios": null,
   "runner_cpu": "to be recorded from the bench workflow",
-  "note": "A ratio, never nanoseconds, so it is portable across runners. The seal ratio includes drawing the random nonce (RAND_bytes), which the fixed-nonce baseline does not pay, so it is largest at the smallest sizes and noisy there; 4.0 is a placeholder with headroom over the observed worst (about 3.6 on one arm64 laptop). Refresh recorded_ratios and lower a ceiling toward the observed worst only when it holds across runs and both libcryptos."
+  "note": "A ratio, never nanoseconds, so it is portable across runners. The ceilings are per size because the core's fixed per-call cost is a larger share of a small message; sizes live in tests/bench/benchmark.cc (kSizes). Refresh recorded_ratios and tighten a ceiling toward the observed worst only when it holds across runs and both libcryptos."
 }

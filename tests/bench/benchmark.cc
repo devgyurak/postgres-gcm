@@ -11,6 +11,7 @@
 #include <benchmark/benchmark.h>
 
 #include <openssl/evp.h>
+#include <openssl/rand.h>
 
 extern "C" {
 #include "gcm.h"
@@ -24,6 +25,7 @@ extern "C" {
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <string>
 #include <tuple>
@@ -37,8 +39,6 @@ const std::array<uint8_t, GCM_KEY_LEN_AES256> kKey = {
     0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
     0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
 };
-// The bare baseline seals under a fixed nonce; the extension draws a random one.
-const std::array<uint8_t, GCM_NONCE_LEN> kNonce{};
 constexpr uint8_t kVersion = GCM_V_AES256_RANDOM;
 
 // The plaintext sizes; larger than one AES block so the ratio is not all per-call overhead.
@@ -56,15 +56,18 @@ void Require(bool ok, const std::string &why) {
   if (!ok) Fail(why);
 }
 
-// A raw AES-256-GCM seal through EVP alone: fetch a context, one byte of associated data,
-// the plaintext, the tag. This is what "bare EVP" means for the seal ratio.
+// A raw AES-256-GCM seal through EVP alone: a random nonce, a context, one byte of associated
+// data, the plaintext, the tag. The nonce is random so the seal ratio charges the core for its
+// own envelope and checks, not for RAND_bytes — the extension draws a random nonce and the
+// baseline now draws one too, so the two sides pay it alike. This is "bare EVP" for the seal.
 void EvpSeal(const EVP_CIPHER *cipher, const uint8_t *pt, size_t pt_len, uint8_t *ct,
-             uint8_t *tag) {
+             uint8_t *tag, uint8_t *nonce) {
+  Require(RAND_bytes(nonce, GCM_NONCE_LEN) == 1, "RAND_bytes failed");
   EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
   Require(ctx != nullptr, "EVP_CIPHER_CTX_new failed");
   int n = 0;
   int fin = 0;
-  Require(EVP_EncryptInit_ex2(ctx, cipher, kKey.data(), kNonce.data(), nullptr) == 1, "init");
+  Require(EVP_EncryptInit_ex2(ctx, cipher, kKey.data(), nonce, nullptr) == 1, "init");
   Require(EVP_EncryptUpdate(ctx, nullptr, &n, &kVersion, 1) == 1, "associated data");
   n = 0;
   Require(EVP_EncryptUpdate(ctx, ct, &n, pt, static_cast<int>(pt_len)) == 1, "update");
@@ -74,12 +77,12 @@ void EvpSeal(const EVP_CIPHER *cipher, const uint8_t *pt, size_t pt_len, uint8_t
 }
 
 void EvpOpen(const EVP_CIPHER *cipher, const uint8_t *ct, size_t ct_len, uint8_t *tag,
-             uint8_t *out) {
+             const uint8_t *nonce, uint8_t *out) {
   EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
   Require(ctx != nullptr, "EVP_CIPHER_CTX_new failed");
   int n = 0;
   int fin = 0;
-  Require(EVP_DecryptInit_ex2(ctx, cipher, kKey.data(), kNonce.data(), nullptr) == 1, "init");
+  Require(EVP_DecryptInit_ex2(ctx, cipher, kKey.data(), nonce, nullptr) == 1, "init");
   Require(EVP_DecryptUpdate(ctx, nullptr, &n, &kVersion, 1) == 1, "associated data");
   n = 0;
   Require(EVP_DecryptUpdate(ctx, out, &n, ct, static_cast<int>(ct_len)) == 1, "update");
@@ -139,8 +142,9 @@ void BM_EvpSeal(benchmark::State &state) {
   std::vector<uint8_t> pt(n, 0xAA);
   std::vector<uint8_t> ct(n);
   std::array<uint8_t, GCM_TAG_LEN> tag{};
+  std::array<uint8_t, GCM_NONCE_LEN> nonce{};
   for (auto _ : state) {
-    EvpSeal(g_bare, pt.data(), pt.size(), ct.data(), tag.data());
+    EvpSeal(g_bare, pt.data(), pt.size(), ct.data(), tag.data(), nonce.data());
     benchmark::DoNotOptimize(ct.data());
   }
   state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(n));
@@ -151,10 +155,11 @@ void BM_EvpOpen(benchmark::State &state) {
   std::vector<uint8_t> pt(n, 0xAA);
   std::vector<uint8_t> ct(n);
   std::array<uint8_t, GCM_TAG_LEN> tag{};
-  EvpSeal(g_bare, pt.data(), pt.size(), ct.data(), tag.data());
+  std::array<uint8_t, GCM_NONCE_LEN> nonce{};
+  EvpSeal(g_bare, pt.data(), pt.size(), ct.data(), tag.data(), nonce.data());
   std::vector<uint8_t> out(n);
   for (auto _ : state) {
-    EvpOpen(g_bare, ct.data(), ct.size(), tag.data(), out.data());
+    EvpOpen(g_bare, ct.data(), ct.size(), tag.data(), nonce.data(), out.data());
     benchmark::DoNotOptimize(out.data());
   }
   state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(n));
@@ -162,14 +167,23 @@ void BM_EvpOpen(benchmark::State &state) {
 
 // ---- The gate ----------------------------------------------------------------------------------
 
+// One ceiling per ratio, per size. A single ceiling cannot gate large and small sizes alike: the
+// core's fixed per-call cost (the envelope header, the key checks) is a larger share of a small
+// message than of a large one, so a large input needs its own, tighter ceiling.
 struct Ceilings {
   double seal;
   double open;
   double det;
 };
 
-// The verdict: each ratio is at or under its ceiling. A ratio of infinity (a zero denominator
-// the caller refused earlier) fails; a gate is never passed by a measurement that did not run.
+// A ratio and the direction it must go: the core (or, for det, the deterministic seal) is the
+// numerator, so a regression raises it. Pure, so the self-test pins the direction the gate
+// depends on; a zero denominator is infinity (a failure), never a silent pass.
+double RatioOf(double numerator, double denominator) {
+  return denominator > 0.0 ? numerator / denominator : std::numeric_limits<double>::infinity();
+}
+
+// The verdict: each ratio is at or under its ceiling.
 bool Passes(double seal, double open, double det, const Ceilings &ceiling) {
   return seal <= ceiling.seal && open <= ceiling.open && det <= ceiling.det;
 }
@@ -200,24 +214,27 @@ double Measure(const Collector &collector, const std::string &name) {
 
 double Ratio(const Collector &collector, const std::string &numerator,
              const std::string &denominator) {
-  const double below = Measure(collector, denominator);
-  Require(below > 0.0, "zero time for " + denominator);
-  return Measure(collector, numerator) / below;
+  return RatioOf(Measure(collector, numerator), Measure(collector, denominator));
 }
 
-Ceilings LoadCeilings() {
+std::map<int64_t, Ceilings> LoadCeilings() {
   std::ifstream file(PG_GCM_BENCH_BASELINE);
   Require(file.good(), std::string("cannot open ") + PG_GCM_BENCH_BASELINE);
   const nlohmann::json document = nlohmann::json::parse(file);
-  return Ceilings{document.at("max_seal_ratio").get<double>(),
-                  document.at("max_open_ratio").get<double>(),
-                  document.at("max_det_ratio").get<double>()};
+  std::map<int64_t, Ceilings> ceilings;
+  for (const auto &item : document.at("ceilings").items()) {
+    const nlohmann::json &value = item.value();
+    ceilings.emplace(std::stoll(item.key()),
+                     Ceilings{value.at("seal").get<double>(), value.at("open").get<double>(),
+                              value.at("det").get<double>()});
+  }
+  return ceilings;
 }
 
 int SelfTest() {
   const Ceilings ceiling{3.0, 3.0, 5.0};
   // name, the verdict Passes gives, and the verdict it must give.
-  const std::vector<std::tuple<std::string, bool, bool>> cases = {
+  const std::vector<std::tuple<std::string, bool, bool>> verdicts = {
       {"ratios below the ceilings", Passes(0.5, 0.5, 0.5, ceiling), true},
       {"a ratio at its ceiling", Passes(3.0, 3.0, 5.0, ceiling), true},
       {"the seal ratio above its ceiling", Passes(3.1, 0.5, 0.5, ceiling), false},
@@ -225,20 +242,38 @@ int SelfTest() {
       {"the det ratio above its ceiling", Passes(0.5, 0.5, 5.1, ceiling), false},
       {"every ratio above its ceiling", Passes(9.0, 9.0, 9.0, ceiling), false},
   };
-  const auto wrong = std::count_if(
-      cases.begin(), cases.end(), [](const std::tuple<std::string, bool, bool> &one) {
+  // name, the ratio RatioOf gives, and the ratio it must give. Swapping the gate's numerator and
+  // denominator would turn 2.0 into 0.5 and let a regression pass, so the direction is pinned.
+  const std::vector<std::tuple<std::string, double, double>> ratios = {
+      {"the two sides equal", RatioOf(1.0, 1.0), 1.0},
+      {"the core twice the baseline", RatioOf(2.0, 1.0), 2.0},
+      {"the core half the baseline", RatioOf(1.0, 2.0), 0.5},
+      {"a zero denominator is infinite", RatioOf(1.0, 0.0),
+       std::numeric_limits<double>::infinity()},
+  };
+  const auto wrong_verdicts = std::count_if(
+      verdicts.begin(), verdicts.end(), [](const std::tuple<std::string, bool, bool> &one) {
         return std::get<1>(one) != std::get<2>(one);
       });
-  std::cerr << "bench self-test: " << (cases.size() - static_cast<size_t>(wrong)) << " of "
-            << cases.size() << " verdicts as expected\n";
+  const auto wrong_ratios = std::count_if(
+      ratios.begin(), ratios.end(), [](const std::tuple<std::string, double, double> &one) {
+        return std::get<1>(one) != std::get<2>(one);
+      });
+  const auto wrong = wrong_verdicts + wrong_ratios;
+  const auto total = verdicts.size() + ratios.size();
+  std::cerr << "bench self-test: " << (total - static_cast<size_t>(wrong)) << " of " << total
+            << " verdicts as expected\n";
   return wrong == 0 ? 0 : 1;
 }
 
 void Gate(const Collector &collector) {
-  const Ceilings ceiling = LoadCeilings();
+  const std::map<int64_t, Ceilings> ceilings = LoadCeilings();
   bool passed = true;
   for (const int64_t size : kSizes) {
     const std::string at = "/" + std::to_string(size);
+    const auto found = ceilings.find(size);
+    Require(found != ceilings.end(), "no ceiling for " + std::to_string(size) + " bytes");
+    const Ceilings &ceiling = found->second;
     const double seal = Ratio(collector, "gcm_seal_random" + at, "evp_seal" + at);
     const double open = Ratio(collector, "gcm_open" + at, "evp_open" + at);
     const double det = Ratio(collector, "gcm_seal_det" + at, "gcm_seal_random" + at);
