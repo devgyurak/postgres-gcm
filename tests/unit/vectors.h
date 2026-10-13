@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <gtest/gtest.h>
+
 #include "test_util.h"
 
 struct Vector {
@@ -22,6 +24,9 @@ struct Vector {
 
 // gtest prints a parameter when a test fails; the id is what a reader needs.
 std::ostream &operator<<(std::ostream &os, const Vector &v);
+
+// The name of a suite's case for a vector: its id, as gtest allows a name to be spelt.
+std::string VectorName(const ::testing::TestParamInfo<Vector> &info);
 
 // Every vector of the file, in file order.
 const std::vector<Vector> &AllVectors();

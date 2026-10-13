@@ -43,8 +43,13 @@ gcm_nonce_derive(EVP_MAC *hmac,
 	for (i = 0; i < 8; i++)
 		a_len_be[i] = (uint8_t) (a_len >> (56 - 8 * i));
 
-	/* A key is always given: the caller has checked its length, and HMAC is never left unkeyed. */
-	if (hmac == NULL || key == NULL || key_len == 0)
+	/* HMAC is never left unkeyed. The caller has checked the length; this is the backstop. */
+	if (key_len == 0)
+	{
+		rc = GCM_BAD_KEY_LEN;
+		goto done;
+	}
+	if (hmac == NULL || key == NULL)
 		goto done;
 	ctx = EVP_MAC_CTX_new(hmac);
 	if (ctx == NULL)

@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: PostgreSQL
 // gcm_nonce_derive on its own: the nonce of every deterministic vector of
 // spec/test-vectors.json whose nonce is derived, and what the function refuses.
-#include <algorithm>
-#include <string>
-
 #include <gtest/gtest.h>
 #include <openssl/evp.h>
 
@@ -14,12 +11,6 @@ extern "C" {
 }
 
 namespace {
-
-std::string Name(const ::testing::TestParamInfo<Vector> &info) {
-  std::string name = info.param.id;
-  std::replace(name.begin(), name.end(), '-', '_');
-  return name;
-}
 
 class DerivedNonce : public ::testing::TestWithParam<Vector> {};
 
@@ -41,7 +32,7 @@ TEST_P(DerivedNonce, GivenVectorsKeyAadAndPlaintext_WhenNonceDerived_ThenItIsThe
   EXPECT_EQ(nonce, v.nonce);
 }
 
-INSTANTIATE_TEST_SUITE_P(Spec, DerivedNonce, ::testing::ValuesIn(DerivedSealVectors()), Name);
+INSTANTIATE_TEST_SUITE_P(Spec, DerivedNonce, ::testing::ValuesIn(DerivedSealVectors()), VectorName);
 
 TEST(DetNonce, GivenNoHmacHandle_WhenDerived_ThenOpenSslFailure) {
   // Given
@@ -58,7 +49,7 @@ TEST(DetNonce, GivenNoHmacHandle_WhenDerived_ThenOpenSslFailure) {
   EXPECT_EQ(rc, GCM_OPENSSL_FAILURE);
 }
 
-TEST(DetNonce, GivenEmptyKey_WhenDerived_ThenOpenSslFailure) {
+TEST(DetNonce, GivenEmptyKey_WhenDerived_ThenBadKeyLen) {
   // Given
   EVP_MAC *hmac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
   const Bytes key = PatternKey();
@@ -70,8 +61,8 @@ TEST(DetNonce, GivenEmptyKey_WhenDerived_ThenOpenSslFailure) {
                                         plaintext.data(), plaintext.size(), nonce.data());
   EVP_MAC_free(hmac);
 
-  // Then
-  EXPECT_EQ(rc, GCM_OPENSSL_FAILURE);
+  // Then: no key is a key-length error, whether or not there is a handle to use it with
+  EXPECT_EQ(rc, GCM_BAD_KEY_LEN);
 }
 
 }  // namespace

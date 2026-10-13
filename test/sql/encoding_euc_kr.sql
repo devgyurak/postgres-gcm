@@ -36,8 +36,9 @@ SELECT gcm_encrypt_det(convert_from('\xc9a1'::bytea, 'EUC_KR'), :k, 'patients.na
 SELECT gcm_encrypt(convert_from('\xc9a1'::bytea, 'EUC_KR'), :k);
 -- One byte more than a conversion buffer may be asked to hold: refused (54000) before the
 -- buffer is allocated. Once only — the argument is 256 MB — so the message that shows the
--- refusal is the extension's is read back from psql.
-SELECT gcm_encrypt(repeat('x', 268435456), :k);
+-- refusal is the extension's is read back from psql. The length comes from a set-returning
+-- function so that the planner does not fold repeat() into a constant and keep a second copy.
+SELECT gcm_encrypt(repeat('x', n), :k) FROM generate_series(268435456, 268435456) AS n;
 \echo :LAST_ERROR_MESSAGE
 
 \c :home

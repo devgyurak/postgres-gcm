@@ -368,6 +368,11 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 - `pg_do_encoding_conversion_buf(proc, src, dest, in, inlen, out, outlen, true)` 로 glue 가 할당한
   버퍼 (`inlen * MAX_CONVERSION_GROWTH + 1`, `MaxAllocSize` 에 대해 오버플로 검사) 에 변환한다. 검증에
   성공한 뒤에 반환한 개수가 `inlen` 보다 작으면 대상 인코딩이 담을 수 없는 문자가 있다는 뜻이다.
+  봉인할 때는 앞서는 검증이 없으므로 — `text` 는 서버가 이미 검증했다 — 변환을 멈춘 원인이 무엇이든
+  짧은 개수는 변환할 수 없는 문자로 보고한다 (명세 §2.4). 변환된 텍스트의 길이는 `strlen` 으로
+  구한다. 서버 자신의 `convert` 함수들처럼 glue 도 변환 프로시저가 출력을 NUL 로 끝낸다는 데
+  기댄다. 조회가 `pg_catalog` 로 한정되어 있으므로, 이를 깰 수 있는 것은 superuser 가 거기에 넣은
+  프로시저뿐이다.
 - 변환 프로시저는 `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` 로 얻는다. 카탈로그 조회이고, 변환이
   없으면 glue 가 두 인코딩의 이름을 담아 `42883` 을 올린다. 비밀 사본이 생기기 전에 실행한다.
   `pg_catalog` 에서만 찾고 `search_path` 를 따라가지 않는다 (§8 O14).

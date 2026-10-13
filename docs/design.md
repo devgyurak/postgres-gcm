@@ -383,6 +383,11 @@ The glue therefore uses the forms that report by return value, present on every 
 - `pg_do_encoding_conversion_buf(proc, src, dest, in, inlen, out, outlen, true)` into a buffer the
   glue allocated (`inlen * MAX_CONVERSION_GROWTH + 1`, overflow-checked against `MaxAllocSize`). A
   count shorter than `inlen` after a successful verification means a character the target cannot hold.
+  On sealing there is no verification to precede it — the server validated the `text` — so a short
+  count is reported as an untranslatable character whatever stopped the conversion (spec §2.4).
+  The length of the converted text is its `strlen`: the glue relies, as the server's own `convert`
+  functions do, on the conversion procedure terminating its output. With the lookup confined to
+  `pg_catalog`, only a procedure a superuser put there could break that.
 - The conversion procedure comes from `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)`, a catalog
   lookup; when there is none the glue raises `42883`, naming the two encodings. It runs before any
   secret copy exists. It looks in `pg_catalog` alone and does not follow `search_path` (§8 O14).
