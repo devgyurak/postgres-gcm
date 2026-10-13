@@ -877,9 +877,10 @@ take a gate; nothing was tagged and nothing was released.
   `pg_gcm.control`'s `default_version`, that is not an ancestor of `main`, or without a
   `## <version>` changelog section; `scripts/sbom.py` writes a CycloneDX 1.5 document naming the
   extension, its PostgreSQL and libcrypto dependencies and every artifact's SHA-256.
-  `release.yml` runs all of it, signs `SHA256SUMS` keyless with cosign and creates the GitHub
-  release; a `workflow_dispatch` run exercises the pipeline and publishes nothing. Both helper
-  scripts' `--self-test`s run in the lint workflow.
+  `release.yml` packages the supported majors on amd64 and arm64, runs all of it, signs
+  `SHA256SUMS` keyless with cosign and creates the GitHub release; a `workflow_dispatch` run
+  exercises the pipeline and publishes nothing. Both helper scripts' `--self-test`s run in the
+  lint workflow.
 - **What is not yet recorded.** No gate has run on a CI runner, so the ceilings in
   `tests/load/baseline.json` and `tests/bench/baseline.json` are the Phase S expectation and the
   placeholder of §8 Open O17, not a measurement of that runner; `docs/perf.md` says so. No tag

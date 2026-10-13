@@ -38,7 +38,6 @@ import psycopg
 Row = tuple[Any, ...]
 Connection = psycopg.Connection[Row]
 
-ROOT = Path(__file__).resolve().parent.parent.parent
 BASELINE = Path(__file__).resolve().parent / "baseline.json"
 
 # The public 00..1f pattern key (.agents/rules/testing.md). Never a real key.
@@ -102,12 +101,15 @@ def load_rows(conn: Connection, table: str, rows: int) -> None:
     )
 
 
-def run_once(conn: Connection, table: str, which: str, pattern: str) -> float:
-    """One scan; returns its latency in seconds. GCM or pgcrypto, by `which`."""
+def run_once(conn: Connection, table: str, which: str, pattern: str) -> tuple[float, int]:
+    """One scan; returns its latency in seconds and the count it matched. GCM or pgcrypto."""
     sql = (GCM_SQL if which == "gcm" else CBC_SQL).format(table=table)
     started = time.perf_counter()
-    conn.execute(sql, {"key": KEY, "pattern": pattern, "iv": IV})
-    return time.perf_counter() - started
+    row = conn.execute(sql, {"key": KEY, "pattern": pattern, "iv": IV}).fetchone()
+    seconds = time.perf_counter() - started
+    if row is None:
+        raise RuntimeError("load: a scan returned no row")
+    return seconds, int(row[0])
 
 
 def measure_cell(rows: int, sessions: int, rounds: int, pattern: str) -> dict[str, Any]:
@@ -125,6 +127,7 @@ def measure_cell(rows: int, sessions: int, rounds: int, pattern: str) -> dict[st
         admin.close()
     conns = [connect() for _ in range(sessions)]
     samples: dict[str, list[float]] = {"gcm": [], "pgcrypto": []}
+    counts: dict[str, list[int]] = {"gcm": [], "pgcrypto": []}
     try:
         with ThreadPoolExecutor(max_workers=sessions) as pool:
             for round_index in range(rounds):
@@ -135,7 +138,9 @@ def measure_cell(rows: int, sessions: int, rounds: int, pattern: str) -> dict[st
                         (which, pool.submit(run_once, conns[session], table, which, pattern))
                     )
                 for which, future in futures:
-                    samples[which].append(future.result())
+                    seconds, count = future.result()
+                    samples[which].append(seconds)
+                    counts[which].append(count)
     finally:
         for conn in conns:
             conn.close()
@@ -144,6 +149,14 @@ def measure_cell(rows: int, sessions: int, rounds: int, pattern: str) -> dict[st
             cleanup.execute(f"DROP TABLE IF EXISTS {table}")
         finally:
             cleanup.close()
+
+    # Both scans must match the same, non-zero rows every round. The gate is latency, not truth:
+    # a gcm_decrypt that returned NULL for every row (e.g. pg_gcm.strict off) would make the GCM
+    # scan cheaper and pass the ratio without decrypting anything.
+    gcm_counts = set(counts["gcm"])
+    cbc_counts = set(counts["pgcrypto"])
+    if len(gcm_counts) != 1 or gcm_counts != cbc_counts or 0 in gcm_counts:
+        raise RuntimeError("load: the two scans did not match the same non-zero rows each round")
 
     gcm_p95 = p95(samples["gcm"])
     cbc_p95 = p95(samples["pgcrypto"])

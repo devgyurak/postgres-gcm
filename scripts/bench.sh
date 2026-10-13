@@ -13,8 +13,9 @@ major="$1"
 
 ensure_build_image "$major"
 
-# --benchmark_min_time is left at its default: a ratio gate is only as steady as the sample,
-# and these are the numbers the ceiling was set from. PG_GCM_BENCH_MIN_TIME overrides it.
+# --benchmark_min_time is left at its default: a ratio gate is only as steady as the sample, and
+# these are the numbers the ceiling was set from. PG_GCM_BENCH_MIN_TIME overrides it; its form is
+# the benchmark library's — a bare number on 1.7 (the floor image), a suffixed one ("10s") on 1.9.
 docker run --rm \
   --env PG_GCM_BENCH_MIN_TIME="${PG_GCM_BENCH_MIN_TIME:-}" \
   --volume "$ROOT:/src:ro" \

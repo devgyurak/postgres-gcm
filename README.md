@@ -70,7 +70,21 @@ psql -c 'CREATE EXTENSION pg_gcm'
 
 A `postgres:<major>` image with the extension preinstalled and `CREATE EXTENSION pg_gcm` in its init
 script is built from [`docker/server.Dockerfile`](docker/server.Dockerfile) (see the `release`
-workflow). PGXN and distribution packages are Phase 5.
+workflow).
+
+From a release tarball (`pg_gcm-<version>-pg<major>-<arch>.tar.gz`, from the `release` workflow),
+which holds the built `pg_gcm.so`, the control file and the SQL scripts. Install it into the
+server's own directories, then create the extension:
+
+```sh
+tar -xzf pg_gcm-<version>-pg<major>-<arch>.tar.gz
+cd pg_gcm-<version>
+sudo install -m 0644 pg_gcm.so "$(pg_config --pkglibdir)/"
+sudo install -m 0644 pg_gcm.control sql/*.sql "$(pg_config --sharedir)/extension/"
+psql -c 'CREATE EXTENSION pg_gcm'
+```
+
+PGXN and distribution packages are Phase 5.
 
 ## SQL surface
 

@@ -818,8 +818,8 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   `vMAJOR.MINOR.PATCH` 가 아닌 tag, `pg_gcm.control` 의 `default_version` 과 다른 tag, `main` 의
   조상이 아닌 tag, `## <version>` CHANGELOG 절이 없는 tag 를 거부한다. `scripts/sbom.py` 는
   extension, 그 PostgreSQL 과 libcrypto 의존성, 모든 산출물의 SHA-256 을 담은 CycloneDX 1.5 문서를
-  쓴다. `release.yml` 이 그 모두를 돌리고 `SHA256SUMS` 를 cosign 으로 keyless 서명하고 GitHub
-  release 를 만든다. `workflow_dispatch` 실행은 파이프라인을 연습하고 아무것도 게시하지 않는다. 두
+  쓴다. `release.yml` 은 지원 major 를 amd64 와 arm64 로 패키징하고, 그 모두를 돌리고,
+  `SHA256SUMS` 를 cosign 으로 keyless 서명하고 GitHub release 를 만든다. `workflow_dispatch` 실행은 파이프라인을 연습하고 아무것도 게시하지 않는다. 두
   헬퍼 스크립트의 `--self-test` 는 lint 워크플로에서 실행된다.
 - **아직 기록되지 않은 것.** 게이트가 CI 러너에서 실행된 적이 없으므로
   `tests/load/baseline.json` 과 `tests/bench/baseline.json` 의 상한은 Phase S 의 기대값이고 §8

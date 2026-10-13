@@ -34,10 +34,12 @@ echo "== load harness (PostgreSQL $major)"
 docker build --quiet --file "$ROOT/tests/load/runner.Dockerfile" --tag "$image" "$ROOT/tests/load" \
   >/dev/null
 
-# The password is read from the container, never written to the repository or a command line.
-docker run --rm \
+# The password is read from the container and reaches docker through the environment, not the
+# command line (a value after --env would land in docker run's argv).
+PGPASSWORD="$(docker exec "$name" printenv POSTGRES_PASSWORD)" \
+  docker run --rm \
   --network "$DEV_NETWORK" \
   --env PGHOST="$name" --env PGPORT=5432 --env PGUSER=postgres --env PGDATABASE=postgres \
-  --env PGPASSWORD="$(docker exec "$name" printenv POSTGRES_PASSWORD)" \
+  --env PGPASSWORD \
   "$image" "$@"
 echo "== PostgreSQL $major: the load gate passed"

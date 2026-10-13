@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: PostgreSQL
-# The release pipeline: guard the tag, build and package every image on both architectures,
-# build and smoke the distribution server image, then checksum, SBOM, sign and publish. A
+# The release pipeline: guard the tag, build and package the supported majors on both
+# architectures, build and smoke the distribution server image, then checksum, SBOM, sign and
+# publish. A
 # workflow_dispatch run is a dry run — it exercises all of that and publishes nothing
 # (.agents/skills/ci-release.md). Tags are SemVer vMAJOR.MINOR.PATCH on main.
 name: release
@@ -11,9 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # create the GitHub release
-  packages: write # push the server image to ghcr.io
-  id-token: write # cosign keyless signing
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -46,16 +45,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      all: ${{ steps.list.outputs.all }}
       supported: ${{ steps.list.outputs.supported }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - id: list
-        run: |
-          echo "all=$(python3 scripts/ci-matrix.py all)" >>"$GITHUB_OUTPUT"
-          echo "supported=$(python3 scripts/ci-matrix.py supported)" >>"$GITHUB_OUTPUT"
+        # Only the supported majors ship: the pre-release is not a release, and the OpenSSL floor
+        # (17-bookworm) is a build-time check of the oldest libcrypto, not a second pg17 artifact.
+        run: echo "supported=$(python3 scripts/ci-matrix.py supported)" >>"$GITHUB_OUTPUT"
 
   package:
     needs: [guard, images]
@@ -65,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        entry: ${{ fromJSON(needs.images.outputs.all) }}
+        entry: ${{ fromJSON(needs.images.outputs.supported) }}
         arch: [amd64, arm64]
     env:
       IMAGE: ${{ matrix.entry.image }}
@@ -87,6 +85,10 @@ jobs:
 
   server:
     needs: [guard, images]
+    # Only this job pushes to ghcr.io, so only it needs packages: write.
+    permissions:
+      contents: read
+      packages: write
     name: server (${{ matrix.entry.label }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -118,6 +120,9 @@ jobs:
   publish:
     needs: [guard, package, server]
     if: github.event_name == 'push'
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # cosign keyless signing
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
