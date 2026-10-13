@@ -4,7 +4,8 @@
 
 > 이 문서는 `docs/design.md` 의 번역이다. 두 문서가 다르면 영어 문서가 맞고, 이 번역을 고친다.
 
-상태: **Phase 4 완료** (2026-10-13). 확장이 명세 — `spec/envelope.md` 와 `spec/test-vectors.json` — 를
+상태: **Phase 4 — 배포: 구현되어 pull request 에서 green 이고, 완료 기준은 아직 미충족** (2026-10-13).
+확장이 명세 — `spec/envelope.md` 와 `spec/test-vectors.json` — 를
 구현한다. 세 가지 키 길이, AAD 가 있는 형태와 없는 형태, `pg_gcm.strict` 와 `pg_gcm.min_key_bytes` 까지다.
 코어는 단위 테스트에서 모든 벡터를, SQL 함수는 회귀 테스트에서 모든 봉투 벡터를 실행하고, E2E 스위트는
 primary 와, primary 가 봉인한 것을 재생만 한 스트리밍 replica 에서 그 함수들을 실행한다. PostgreSQL
@@ -12,7 +13,9 @@ primary 와, primary 가 봉인한 것을 재생만 한 스트리밍 replica 에
 마이크로 벤치마크는 봉인과 열기를 bare OpenSSL EVP 와 비교해 감시한다 ([`docs/perf.md`](perf.md)).
 운영 제약은 별도 문서 [`docs/ops-constraints.md`](ops-constraints.md) 에 있고, 릴리스 파이프라인이
 tarball 과 그 체크섬, SBOM, 그리고 extension 을 미리 설치한 `postgres:<major>` 이미지를 만든다.
-**릴리스된 것은 없고 아직 쓸 수 있는 단계가 아니다**: tag 를 자르지 않았고 0.1.0 까지 형식이 바뀔 수
+**두 성능 게이트는 아직 placeholder 이고 GitHub 러너에서 한 번도 돌지 않았다** (§8 O17). 따라서 완료
+기준은 충족되지 않았다. **릴리스된 것은 없고 아직 쓸 수 있는 단계가 아니다**: tag 를 자르지 않았고
+0.1.0 까지 형식이 바뀔 수
 있다. 설계가 기대는 PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 에
 기록되어 있거나, §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식 이미지와
 대조했고, 스파이크 실행, 명세 작성, 구현을 명세에 맞추는 일은 2026-10-12 에, E2E 스위트 실행과 배포는
@@ -801,17 +804,21 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   시간 재어 각각의 p95 와 그 비율을 보고한다. Phase S 와 같이 JIT 와 병렬 워커를 끄어 두 플랜의
   모양을 같게 하고, 테이블을 `VACUUM (ANALYZE, FREEZE)` 하며, 쿼리별 워밍업 한 번을 버리고, 각
   셀이 쿼리당 `samples` 번의 스캔을 모아 한 세션에서도 p95 가 백분위수가 되게 한다. 게이트는
-  `tests/load/baseline.json` 에 대한 셀별 최악의 비율이고 밀리초가 아니라서 이식 가능하다.
-  `run.py --self-test` 는 답이 알려진 케이스에 대해 판정과 비율의 방향을 확인하고 lint 워크플로에서
-  실행된다. Phase S 의 네 번의 실행이 기대값이고 (GCM 쿼리가 CBC 쿼리의 0.49~0.63 을 차지했다, 위
-  step 7), 상한은 1.0 — GCM 이 더 느리지 않다는 설계의 요구다.
+  `tests/load/baseline.json` 에 대한 게이트 대상 셀 — baseline 의 `gated_sessions`, 즉 낮은 동시성
+  셀 — 의 최악의 비율이고 밀리초가 아니라서 이식 가능하다. 10k 행의 높은 세션 셀은 암호가 아니라
+  스케줄링에 묶여 기록만 하고 게이트하지 않는다. `run.py --self-test` 는 답이 알려진 케이스에 대해
+  판정과 게이트 대상 규칙, 비율의 방향을 확인하고 lint 워크플로에서 실행된다. Phase S 의 네 번의
+  실행이 기대값이고 (GCM 쿼리가 CBC 쿼리의 0.49~0.63 을 차지했다, 위 step 7), 상한은 1.0 — GCM 이 더
+  느리지 않다는 설계의 요구다.
 - **마이크로 벤치마크.** `tests/bench/benchmark.cc` (Google Benchmark) 는 코어의 `gcm_seal` (무작위와
   결정적) 과 `gcm_open` 을 같은 모양의 직접 짠 EVP AES-256-GCM 과 16, 256, 4096, 65536 바이트에서
   재고, `tests/bench/baseline.json` 의 세 비율을 게이트로 삼는다 — bare EVP 에 대한 무작위 봉인과
-  열기, 그리고 무작위 봉인에 대한 결정적 봉인인데, 여기서 두 번의 HMAC-SHA256 이 드러난다. 기준선의
+  열기, 그리고 무작위 봉인에 대한 결정적 봉인인데, 여기서 두 번의 HMAC-SHA256 이 드러난다. 각 벤치마크는
+  다섯 번 돌고 게이트는 중앙값을 읽어, 시끄러운 한 번의 반복이 비율을 움직이지 못한다. 기준선의
   nonce 는 코어의 무작위 봉인과 같이 무작위라, 봉인 비율이 한쪽만 내는 비용이 아니라 코어 자체의 봉투와
   점검을 재게 되고, 상한은 크기별이다 — 코어의 고정된 호출 비용은 작은 메시지에서 더 큰 몫이다.
-  바이너리의 `--self-test` 가 판정과 비율의 방향을 확인한다. 서버도 PostgreSQL 헤더도 관여하지 않는다.
+  바이너리의 `--self-test` 가 판정과 비율의 방향, 고정 측정값에 대한 게이트를 확인한다. 서버도
+  PostgreSQL 헤더도 관여하지 않는다.
 - **배포 이미지.** `docker/server.Dockerfile` 은 공식 `postgres:<major>` (base 는 digest 로 고정) 이고,
   빌드한 `pg_gcm.so`, `pg_gcm.control`, SQL 을 그 이미지 자체의 `pg_config` 가 이르는 디렉터리에
   설치하며, `docker/initdb.d/00-pg_gcm.sql` 이 `/docker-entrypoint-initdb.d` 에 있어 처음 init 때

@@ -5,7 +5,7 @@
 #
 # Both servers are the official image; node.sh installs the build into it when the container
 # starts. Keys are the public test pattern and travel as bind parameters on the suite's own
-# network, which is not a model for a deployment (docs/design.md section 6, item 12).
+# network, which is not a model for a deployment (docs/ops-constraints.md item 12).
 
 x-node: &node
   image: ${PG_GCM_E2E_IMAGE:?run scripts/e2e.sh <major>, which sets this}

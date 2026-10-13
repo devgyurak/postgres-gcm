@@ -7,21 +7,29 @@ Notable changes per release. Envelope changes get their own entry with a compati
 ### Phase 4 — distribution (2026-10-13)
 - The load gate (`tests/load`, `scripts/load.sh`, the `load` workflow): rows of Korean names
   sealed by `gcm_encrypt` and by `pgcrypto` AES-CBC, and the p95 of `gcm_decrypt(...) LIKE
-  '%김%'` against the pgcrypto scan at 10k/100k/300k rows and 1/8/32 sessions, interleaved. The
-  gate is the worst ratio against `tests/load/baseline.json`, never milliseconds; nightly and
-  on demand, never on a pull request.
+  '%김%'` against the pgcrypto scan at 10k/100k/300k rows and 1/8/32 sessions, interleaved, with
+  the Phase S plan shape (no parallel workers, `VACUUM`, a discarded warm-up). The gate is the
+  worst ratio over the gated (low-concurrency) cells against `tests/load/baseline.json`, never
+  milliseconds; the 32-session cells are recorded, not gated, because at 10k rows they are
+  scheduling-bound. Nightly and on demand, never on a pull request.
 - Core micro-benchmarks (`tests/bench`, `scripts/bench.sh`, the `bench` workflow): the core's
-  seal and open over bare OpenSSL EVP, gated as ratios in `tests/bench/baseline.json`; on a
-  merge and nightly, one image per libcrypto.
+  seal and open over bare OpenSSL EVP, the median of five repetitions per size, gated as per-size
+  ratios in `tests/bench/baseline.json`; on a merge and nightly, one image per libcrypto.
 - `docs/perf.md`: the load baseline and how both gates are measured.
 - Distribution: `docker/server.Dockerfile` layers the built extension onto `postgres:<major>`
   and runs `CREATE EXTENSION pg_gcm` in an init script; `scripts/server-image.sh` builds it and
   `scripts/smoke-image.sh` checks the Korean `LIKE` round trip before anything is pushed.
 - Release: `scripts/package.sh` writes `pg_gcm-<version>-pg<major>-<arch>.tar.gz` with its
-  checksum, `scripts/sbom.py` a CycloneDX SBOM, `scripts/release-guard.py` guards the tag
-  (SemVer, on `main`, matching `pg_gcm.control`, with a `## <version>` CHANGELOG section), and
-  `release.yml` publishes the tarballs, `SHA256SUMS`, its keyless signature and the SBOM. A
-  `workflow_dispatch` run is a dry run that publishes nothing.
+  checksum (refusing a build whose ELF machine disagrees with the arch label),
+  `scripts/smoke-tarball.sh` layers each tarball onto the official image and runs the Korean
+  `LIKE` round trip there, `scripts/sbom.py` a CycloneDX SBOM, `scripts/release-guard.py` guards
+  the tag (SemVer, on `main`, matching `pg_gcm.control`, with a `## <version>` CHANGELOG
+  section), and `release.yml` packages both architectures, builds and smokes the server image,
+  pushes and keyless-signs it only after every tarball passed, then publishes the tarballs, the
+  SBOM, `SHA256SUMS` (the SBOM included) and its keyless signature. A `workflow_dispatch` run
+  exercises everything except the pushes, the signature and the release.
+- The release's `server` and `publish` jobs run in a `release` environment; give it required
+  reviewers and protect `v*` tags, because a tag push runs the workflow from the tagged commit.
 - The operational constraints moved into `docs/ops-constraints.md`; the README gained the
   summary, the support matrix, the function table and the install and documentation sections.
 

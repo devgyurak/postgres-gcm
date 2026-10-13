@@ -93,7 +93,7 @@ tests/e2e/                     compose: primary + streaming replica + a Python S
 tests/load/                    Load: decrypt + LIKE over 10k/100k/300k rows, gated against pgcrypto
 tests/bench/                   Core micro-benchmarks (Google Benchmark) — ratios against bare EVP
 scripts/                       dev-up.sh, build-in-docker.sh, verify.sh (+ verify.sql), unit-in-docker.sh, e2e.sh, load.sh,
-                               bench.sh, server-image.sh, smoke-image.sh, package.sh (+ sbom.py, release-guard.py),
+                               bench.sh, server-image.sh, smoke-image.sh, smoke-tarball.sh, package.sh (+ sbom.py, release-guard.py),
                                agents-sync.sh, check-architecture.py, check-action-pins.py, check-vectors.py, ci-matrix.py, lib.sh
 scripts/spike/                 The Phase S measurements (measure.sh, ldd.sh, a never-shipped probe module)
 docker/                        build.Dockerfile, server.Dockerfile, initdb.d/, versions.json
@@ -112,7 +112,7 @@ docker/                        build.Dockerfile, server.Dockerfile, initdb.d/, v
 | Load | `scripts/load.sh 17` (after the build: the dev server, then the rows × sessions matrix of `tests/load/run.py` in a runner; the worst gcm/pgcrypto ratio is the gate) | `e2e-load-tests` |
 | Core benchmarks | `scripts/bench.sh 17` (after the build image: the core's seal and open against bare OpenSSL EVP, gated as ratios) | `e2e-load-tests` |
 | Distribution image | `scripts/server-image.sh 17 [tag]` then `scripts/smoke-image.sh <tag>` (before anything is pushed) | `ci-release` |
-| Release artifacts | `scripts/package.sh 17 arm64 [outdir]`, `python3 scripts/sbom.py …`, `python3 scripts/release-guard.py …` | `ci-release` |
+| Release artifacts | `scripts/package.sh 17 arm64 [outdir]`, `scripts/smoke-tarball.sh 17 <tarball>`, `python3 scripts/sbom.py …`, `python3 scripts/release-guard.py …` | `ci-release` |
 | Spec vectors | `python3 scripts/check-vectors.py`, and `--self-test` (needs `pip install -r scripts/requirements-lint.txt`) | `unit-tests` |
 | Architecture boundaries | `python3 scripts/check-architecture.py` | `.agents/rules/architecture.md` |
 | Agent adapters | `scripts/agents-sync.sh [--check]` | this file, §7 |

@@ -2,7 +2,8 @@
 
 English | [한국어](design-KO.md)
 
-Status: **Phase 4 done** (2026-10-13). The extension implements the specification — `spec/envelope.md`,
+Status: **Phase 4 — distribution: implemented and green on a pull request, its completion criterion
+still open** (2026-10-13). The extension implements the specification — `spec/envelope.md`,
 with `spec/test-vectors.json` — for the three key sizes, with and without AAD, with `pg_gcm.strict` and
 `pg_gcm.min_key_bytes`. Its core runs every vector in the unit suite, its SQL functions every envelope
 vector in the regression suite, and an end-to-end suite runs them on a primary and on a streaming
@@ -10,8 +11,10 @@ replica that only replayed what the primary sealed, on PostgreSQL 15–18 (§4, 
 the decrypt-and-`LIKE` scan against `pgcrypto`, and core micro-benchmarks watch the seal and the open
 against bare OpenSSL EVP ([`docs/perf.md`](perf.md)). The operational constraints are their own
 document, [`docs/ops-constraints.md`](ops-constraints.md), and a release pipeline builds the tarballs,
-their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. **Nothing
-is released and it is not for use yet**: no tag has been cut and the format may change until 0.1.0.
+their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. **Both
+performance gates are still placeholders that have never run on a GitHub runner** (§8 O17), so the
+completion criterion is not met. **Nothing is released and it is not for use yet**: no tag has been cut
+and the format may change until 0.1.0.
 Every claim about PostgreSQL behaviour that the design leans on is either cited in §9, recorded with
 its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources
 and the official images on 2026-10-10; the spike ran, the specification was written and the
@@ -856,21 +859,24 @@ take a gate; nothing was tagged and nothing was released.
   ratio. As in Phase S, JIT and parallel workers are off so both plans have the same shape, the
   table is `VACUUM (ANALYZE, FREEZE)`d, one warm-up scan of each query is discarded, and each cell
   collects about `samples` scans per query so the p95 is a percentile even at one session. The
-  gate is the worst per-cell ratio against `tests/load/baseline.json`, never a number of
-  milliseconds, so it is portable; `run.py --self-test` checks the verdict and the ratio's
-  direction over cases whose answer is known and runs in the lint workflow. Phase S's four runs
-  are the expectation (the GCM query took 0.49–0.63 of the CBC one, step 7 above); the ceiling is
-  1.0, the design's requirement that GCM not be slower.
+  gate is the worst ratio over the gated cells — `gated_sessions` in the baseline, the
+  low-concurrency ones — against `tests/load/baseline.json`, never a number of milliseconds, so it
+  is portable; a high-session cell at 10k rows is scheduling-bound rather than crypto-bound and is
+  recorded but not gated. `run.py --self-test` checks the verdict, the gated-cell rule and the
+  ratio's direction over cases whose answer is known and runs in the lint workflow. Phase S's four
+  runs are the expectation (the GCM query took 0.49–0.63 of the CBC one, step 7 above); the ceiling
+  is 1.0, the design's requirement that GCM not be slower.
 - **The micro-benchmarks.** `tests/bench/benchmark.cc` (Google Benchmark) measures the core's
   `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP AES-256-GCM of
   the same shape at 16, 256, 4096 and 65536 bytes, and gates three ratios from
   `tests/bench/baseline.json` — the random seal and the open over bare EVP, and the
-  deterministic seal over the random one, which is where the two HMAC-SHA256 passes show. The
-  baseline's nonce is random, as the core's random seal is, so the seal ratio measures the core's
-  own envelope and checks rather than a draw only one side pays; the ceilings are per size,
-  because the core's fixed per-call cost is a larger share of a small message. The binary's
-  `--self-test` checks the verdict and the ratio's direction; no server and no PostgreSQL header
-  is involved.
+  deterministic seal over the random one, which is where the two HMAC-SHA256 passes show. Each
+  benchmark runs five times and the gate reads the median, so one noisy repetition cannot move a
+  ratio. The baseline's nonce is random, as the core's random seal is, so the seal ratio measures
+  the core's own envelope and checks rather than a draw only one side pays; the ceilings are per
+  size, because the core's fixed per-call cost is a larger share of a small message. The binary's
+  `--self-test` checks the verdict, the ratio's direction and the gate over fixed measurements; no
+  server and no PostgreSQL header is involved.
 - **The distribution image.** `docker/server.Dockerfile` is the official `postgres:<major>`
   (base pinned by digest) with the built `pg_gcm.so`, `pg_gcm.control` and SQL installed into
   the directories that image's own `pg_config` names, and `docker/initdb.d/00-pg_gcm.sql` in

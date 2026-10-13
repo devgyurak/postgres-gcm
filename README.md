@@ -84,10 +84,11 @@ sudo install -m 0644 pg_gcm.control sql/*.sql "$(pg_config --sharedir)/extension
 psql -c 'CREATE EXTENSION pg_gcm'
 ```
 
-The tarball is a Debian/glibc build; its `pg_gcm.so` requires only `GLIBC_2.17` and
-`OPENSSL_3.0.0`, so it also loads on another glibc distribution that links OpenSSL 3.0 or later.
-On musl (Alpine), build from source instead. Each release is also smoke-tested by running the
-round trip against the official `postgres` image on both architectures before it is published.
+The tarball is a Debian/glibc build. Its arm64 `pg_gcm.so` needs `GLIBC_2.17` and its amd64 build
+no more than `GLIBC_2.4`; both need `OPENSSL_3.0.0`, so either also loads on another glibc
+distribution that links OpenSSL 3.0 or later. On musl (Alpine), build from source instead. Each
+release is also smoke-tested by running the round trip against the official `postgres` image on
+both architectures before it is published.
 
 Verify the artifacts before installing — every file is in `SHA256SUMS`, the SBOM included, and
 the checksums are signed keyless with cosign:

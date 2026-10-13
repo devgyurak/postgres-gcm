@@ -47,7 +47,9 @@ Rules: `testing.md`, `stack-python.md`.
   `pgcrypto` `encrypt_iv(..., 'aes-cbc')`, then measures p95 of `gcm_decrypt(...) LIKE '%김%'` against
   `convert_from(decrypt_iv(...), 'UTF8') LIKE '%김%'` at 1/8/32 sessions in an interleaved order.
   `--rows`, `--sessions` and `--samples` (scans per query per cell) default to
-  `tests/load/baseline.json`; the rows × sessions matrix of those defaults is the gate.
+  `tests/load/baseline.json`; the whole rows × sessions matrix of those defaults runs, and the gate is
+  the worst ratio over the `gated_sessions` cells. A cell at many sessions on few rows is
+  scheduling-bound, not crypto-bound, and is recorded but not gated (see the baseline's `note`).
 - The two plans must have the same shape: `connect()` sets `SET jit = off` and `SET
   max_parallel_workers_per_gather = 0` (as Phase S does), `load_rows` follows the load with `VACUUM
   (ANALYZE, FREEZE)`, and one warm-up scan of each query is discarded before the timed rounds.
@@ -59,9 +61,11 @@ Rules: `testing.md`, `stack-python.md`.
 ## Bench (`tests/bench`)
 - `scripts/bench.sh <major>` builds `benchmark.cc` (Google Benchmark) in the build image and runs it:
   the core's `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP
-  AES-256-GCM of the same shape, per plaintext size. The exit status is the gate — 0 only when every
-  ratio is at or under its ceiling in `tests/bench/baseline.json`; the binary's `--self-test` checks
-  the verdict and the ratio's direction with fixed numbers and no crypto.
+  AES-256-GCM of the same shape, per plaintext size. Each benchmark runs five times
+  (`->Repetitions(5)`) and the gate reads the median, so one noisy repetition cannot move a ratio.
+  The exit status is the gate — 0 only when every ratio is at or under its ceiling in
+  `tests/bench/baseline.json`; the binary's `--self-test` checks the verdict, the ratio's direction
+  and the gate over a fixed measurement map, with no crypto.
 - The bare baseline draws a random nonce, exactly as the core's random seal does, so the `seal` ratio
   charges the core for its own envelope and checks, not for a draw only one side pays; the ceilings
   are per size (`seal`, `open`, `det`), because the core's fixed per-call cost is a larger share of a
