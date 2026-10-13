@@ -7,16 +7,13 @@
 
 namespace {
 
-std::string Name(const ::testing::TestParamInfo<Vector> &info) {
-  std::string name = info.param.id;
-  for (char &c : name) {
-    if (c == '-') c = '_';
-  }
-  return name;
-}
-
 // A buffer that is never empty, so data() is never null, filled so a cleanse is visible.
 Bytes Scratch(size_t n) { return Bytes(n + 1, 0xAA); }
+
+// What an envelope leaves for its ciphertext: nothing when it is shorter than its overhead.
+size_t CiphertextLength(const Vector &v) {
+  return v.envelope.size() > GCM_ENVELOPE_OVERHEAD ? v.envelope.size() - GCM_ENVELOPE_OVERHEAD : 0;
+}
 
 class NistVector : public ::testing::TestWithParam<Vector> {};
 
@@ -38,7 +35,7 @@ TEST_P(NistVector, GivenNistKnownAnswer_WhenThePrimitiveSeals_ThenCiphertextAndT
   EXPECT_EQ(tag, v.tag);
 }
 
-INSTANTIATE_TEST_SUITE_P(Spec, NistVector, ::testing::ValuesIn(NistVectors()), Name);
+INSTANTIATE_TEST_SUITE_P(Spec, NistVector, ::testing::ValuesIn(NistVectors()), VectorName);
 
 class OpeningVector : public ::testing::TestWithParam<Vector> {};
 
@@ -58,7 +55,28 @@ TEST_P(OpeningVector, GivenValidEnvelope_WhenOpened_ThenPlaintextIsTheVectors) {
   EXPECT_EQ(Bytes(out.begin(), out.begin() + static_cast<long>(out_len)), v.plaintext);
 }
 
-INSTANTIATE_TEST_SUITE_P(Spec, OpeningVector, ::testing::ValuesIn(OpeningVectors()), Name);
+// The glue hands the core a buffer of exactly the plaintext's length — none at all for an
+// empty one. Eight guard bytes follow it here, and must come back as they were.
+TEST_P(OpeningVector, GivenBufferOfExactlyThePlaintextsLength_WhenOpened_ThenNothingPastItIsWritten) {
+  // Given
+  const Vector &v = GetParam();
+  const Bytes guard(8, 0xAA);
+  Bytes out(v.plaintext.size() + guard.size(), 0xAA);
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(v.key.data(), v.key.size(), v.aad.data(), v.aad.size(),
+                                v.envelope.data(), v.envelope.size(), out.data(),
+                                v.plaintext.size(), &out_len);
+
+  // Then
+  EXPECT_EQ(rc, GCM_OK);
+  EXPECT_EQ(out_len, v.plaintext.size());
+  EXPECT_EQ(Bytes(out.begin(), out.end() - static_cast<long>(guard.size())), v.plaintext);
+  EXPECT_EQ(Bytes(out.end() - static_cast<long>(guard.size()), out.end()), guard);
+}
+
+INSTANTIATE_TEST_SUITE_P(Spec, OpeningVector, ::testing::ValuesIn(OpeningVectors()), VectorName);
 
 class RandomSealVector : public ::testing::TestWithParam<Vector> {};
 
@@ -77,7 +95,7 @@ TEST_P(RandomSealVector, GivenInputsAndTheVectorsNonce_WhenSealed_ThenEnvelopeIs
   EXPECT_EQ(envelope, v.envelope);
 }
 
-INSTANTIATE_TEST_SUITE_P(Spec, RandomSealVector, ::testing::ValuesIn(RandomSealVectors()), Name);
+INSTANTIATE_TEST_SUITE_P(Spec, RandomSealVector, ::testing::ValuesIn(RandomSealVectors()), VectorName);
 
 class DerivedSealVector : public ::testing::TestWithParam<Vector> {};
 
@@ -96,7 +114,7 @@ TEST_P(DerivedSealVector, GivenInputsAlone_WhenSealedDeterministic_ThenEnvelopeI
   EXPECT_EQ(envelope, v.envelope);
 }
 
-INSTANTIATE_TEST_SUITE_P(Spec, DerivedSealVector, ::testing::ValuesIn(DerivedSealVectors()), Name);
+INSTANTIATE_TEST_SUITE_P(Spec, DerivedSealVector, ::testing::ValuesIn(DerivedSealVectors()), VectorName);
 
 class FailingVector : public ::testing::TestWithParam<Vector> {};
 
@@ -117,7 +135,29 @@ TEST_P(FailingVector, GivenEnvelopeThatMustNotOpen_WhenOpened_ThenItsOutcomeAndN
   EXPECT_EQ(out, Bytes(out.size(), 0));
 }
 
-INSTANTIATE_TEST_SUITE_P(Spec, FailingVector, ::testing::ValuesIn(FailingVectors()), Name);
+// As the glue calls it: a buffer of exactly the ciphertext's length, none for a 29-byte
+// envelope. What the core cleanses is that buffer and nothing after it.
+TEST_P(FailingVector, GivenBufferOfExactlyTheCiphertextsLength_WhenOpened_ThenNothingPastItIsWritten) {
+  // Given
+  const Vector &v = GetParam();
+  const size_t capacity = CiphertextLength(v);
+  const Bytes guard(8, 0xAA);
+  Bytes out(capacity + guard.size(), 0xAA);
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(v.key.data(), v.key.size(), v.aad.data(), v.aad.size(),
+                                v.envelope.data(), v.envelope.size(), out.data(), capacity,
+                                &out_len);
+
+  // Then
+  EXPECT_EQ(rc, ExpectedError(v));
+  EXPECT_EQ(out_len, 0u);
+  EXPECT_EQ(Bytes(out.begin(), out.end() - static_cast<long>(guard.size())), Bytes(capacity, 0));
+  EXPECT_EQ(Bytes(out.end() - static_cast<long>(guard.size()), out.end()), guard);
+}
+
+INSTANTIATE_TEST_SUITE_P(Spec, FailingVector, ::testing::ValuesIn(FailingVectors()), VectorName);
 
 // A vector that no suite consumes would be a vector that proves nothing. The loader refuses a
 // kind or an expect it does not know, so a vector cannot slip between the selections.

@@ -28,16 +28,41 @@ static const size_t cipher_key_lens[GCM_SUITES] = {
 static EVP_CIPHER *ciphers[GCM_SUITES] = {NULL, NULL, NULL};
 static EVP_MAC *mac_hmac = NULL;
 
+/*
+ * Fetch by name, never through a legacy per-cipher symbol (crypto-safety.md).
+ *
+ * The core's output buffers are exactly as long as the data. EVP promises to write no more
+ * than that only for a cipher whose block size is 1, as AES-GCM's is in OpenSSL's own
+ * providers. And EVP reads from the key as many bytes as the cipher says its key has, while
+ * the core has only checked the caller's key against the length the name stands for. A
+ * provider that advertises another block size or key length is not used, and its handle
+ * counts as absent. Like the IV length (nonce_len_is_default), these are checked instead of
+ * assumed.
+ */
+static EVP_CIPHER *
+fetch_cipher(const char *name, size_t key_len)
+{
+	EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, name, NULL);
+
+	if (cipher != NULL &&
+		(EVP_CIPHER_get_block_size(cipher) != 1 ||
+		 EVP_CIPHER_get_key_length(cipher) != (int) key_len))
+	{
+		EVP_CIPHER_free(cipher);
+		cipher = NULL;
+	}
+	return cipher;
+}
+
 enum gcm_error
 gcm_init(void)
 {
 	int			i;
 
-	/* Fetch by name, never through a legacy per-cipher symbol (crypto-safety.md). */
 	for (i = 0; i < GCM_SUITES; i++)
 	{
 		if (ciphers[i] == NULL)
-			ciphers[i] = EVP_CIPHER_fetch(NULL, cipher_names[i], NULL);
+			ciphers[i] = fetch_cipher(cipher_names[i], cipher_key_lens[i]);
 	}
 	if (mac_hmac == NULL)
 		mac_hmac = EVP_MAC_fetch(NULL, "HMAC", NULL);
@@ -203,13 +228,14 @@ gcm_aead_seal_raw(const uint8_t *key, size_t key_len,
 				  const uint8_t *plaintext, size_t plaintext_len,
 				  uint8_t *ciphertext, uint8_t tag[GCM_TAG_LEN])
 {
-	const EVP_CIPHER *cipher = cipher_for(key_len);
+	const EVP_CIPHER *cipher;
 	enum gcm_error rc;
 
 	if (!gcm_key_len_supported(key_len))
 		return GCM_BAD_KEY_LEN;
 	if (associated_len > (size_t) INT_MAX || plaintext_len > (size_t) INT_MAX)
 		return GCM_BAD_LENGTH;
+	cipher = cipher_for(key_len);
 	if (!gcm_ready() || cipher == NULL)
 		return GCM_OPENSSL_FAILURE;
 
@@ -228,7 +254,7 @@ gcm_seal_with_nonce(const uint8_t *key, size_t key_len,
 					const uint8_t *plaintext, size_t plaintext_len,
 					uint8_t *out, size_t out_len)
 {
-	const EVP_CIPHER *cipher = cipher_for(key_len);
+	const EVP_CIPHER *cipher;
 	uint8_t    *ciphertext;
 	enum gcm_error rc;
 
@@ -238,6 +264,7 @@ gcm_seal_with_nonce(const uint8_t *key, size_t key_len,
 		plaintext_len > (size_t) INT_MAX - GCM_ENVELOPE_OVERHEAD ||
 		out_len != plaintext_len + GCM_ENVELOPE_OVERHEAD)
 		return GCM_BAD_LENGTH;
+	cipher = cipher_for(key_len);
 	if (!gcm_ready() || cipher == NULL)
 		return GCM_OPENSSL_FAILURE;
 	ciphertext = out + GCM_VERSION_LEN + GCM_NONCE_LEN;

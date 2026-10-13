@@ -298,7 +298,11 @@ The plaintext of Part 1 is always UTF-8, whatever the database encoding.
 
 - **Sealing.** The `text` argument is converted from the database encoding to UTF-8. A UTF8 database
   converts nothing. A SQL_ASCII database has no encoding to convert from, so the bytes are verified
-  as UTF-8 and refused if they are not.
+  as UTF-8 and refused if they are not. In any other database a character the encoding holds and
+  UTF-8 has no equivalent for — one in a user-defined row of EUC_KR, for instance — is refused with
+  `22P05`. The extension does not verify the argument against the database encoding, and the
+  conversion reports only how far it got: whatever stopped it, bytes that are not valid in that
+  encoding included, is reported as `22P05` and not as `22021`.
 - **Opening.** After the tag has verified, the plaintext is verified as UTF-8 and converted to the
   database encoding. A UTF8 database and a SQL_ASCII database verify and convert nothing further.
 
@@ -307,8 +311,9 @@ whatever `search_path` says. A database whose encoding has no default conversion
 there cannot use the functions at all: every call fails with `42883` before anything is sealed or
 opened.
 
-Three plaintexts authenticate and are then refused. The first two can only come from an envelope
-this extension did not seal:
+Three plaintexts authenticate and are then refused. The extension does not seal the first two
+from a well-formed `text` value — in a UTF8 database it seals the argument's bytes as they are,
+without verifying them — so they point to an envelope sealed elsewhere:
 
 | `plaintext_class` | The plaintext | Result of `gcm_decrypt` |
 |---|---|---|

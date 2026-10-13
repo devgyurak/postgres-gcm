@@ -150,6 +150,36 @@ TEST(ErrorPath, GivenWrongKeyLength_WhenOpened_ThenNoAllocationOutlivesTheCall) 
   EXPECT_EQ(alloc_counter::Live(), before);
 }
 
+// The two below leave before the core asks OpenSSL for anything; they are here so that every
+// outcome of gcm_open has a case, and so that a later change which allocates first is seen.
+TEST(ErrorPath, GivenKeyOfAnotherSuite_WhenOpened_ThenNoAllocationOutlivesTheCall) {
+  // Given: a 16-byte key for an envelope sealed with AES-256
+  Sealed s;
+  s.key.resize(16);
+  const long before = alloc_counter::Live();
+
+  // When
+  const gcm_error rc = s.Run(Op::kOpen);
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_KEY_LEN);
+  EXPECT_EQ(alloc_counter::Live(), before);
+}
+
+TEST(ErrorPath, GivenOutputBufferTooSmall_WhenOpened_ThenNoAllocationOutlivesTheCall) {
+  // Given
+  Sealed s;
+  s.out.resize(s.plaintext.size() - 1);
+  const long before = alloc_counter::Live();
+
+  // When
+  const gcm_error rc = s.Run(Op::kOpen);
+
+  // Then
+  EXPECT_EQ(rc, GCM_BAD_LENGTH);
+  EXPECT_EQ(alloc_counter::Live(), before);
+}
+
 TEST(ErrorPath, GivenWrongKeyLength_WhenSealedDeterministic_ThenNoAllocationOutlivesTheCall) {
   // Given
   Sealed s;

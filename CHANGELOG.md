@@ -15,8 +15,10 @@ Notable changes per release. Envelope changes get their own entry with a compati
 - **Compatibility:** an envelope sealed by a Phase S build does not open any more. Nothing was
   released, so nothing stored is affected.
 - Tests read `spec/test-vectors.json` and carry no known answer of their own: the unit suite runs
-  all 77 vectors and a nonce collision test; the regression suite runs the 62 envelope vectors,
+  all 78 vectors and a nonce collision test; the regression suite runs the 63 envelope vectors,
   the AAD forms, `pg_gcm.min_key_bytes` (placeholders included) and the conversion lookup.
+- After review: `gcm_decrypt` sizes its result to the plaintext; a fetched cipher that does not
+  report a block size of 1 and its suite's key length is not used; one more vector, `tag-last-bit-flipped-empty`.
 - `pg_gcm.so` exports its SQL functions and nothing else on every major; on PostgreSQL 15 a build
   used to export the core's functions too. The build fails on a stray export.
 - CI: the `unit`, `build` (every image × amd64 and arm64) and `regress` workflows, their matrices

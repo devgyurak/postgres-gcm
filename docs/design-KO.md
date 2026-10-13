@@ -368,6 +368,11 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 - `pg_do_encoding_conversion_buf(proc, src, dest, in, inlen, out, outlen, true)` 로 glue 가 할당한
   버퍼 (`inlen * MAX_CONVERSION_GROWTH + 1`, `MaxAllocSize` 에 대해 오버플로 검사) 에 변환한다. 검증에
   성공한 뒤에 반환한 개수가 `inlen` 보다 작으면 대상 인코딩이 담을 수 없는 문자가 있다는 뜻이다.
+  봉인할 때는 앞서는 검증이 없으므로 — 확장은 인자를 DB 인코딩에 대해 검증하지 않는다 — 변환을 멈춘
+  원인이 무엇이든 짧은 개수는 변환할 수 없는 문자로 보고한다 (명세 §2.4). 변환된 텍스트의 길이는 `strlen` 으로
+  구한다. 서버 자신의 `convert` 함수들처럼 glue 도 변환 프로시저가 출력을 NUL 로 끝낸다는 데
+  기댄다. 조회가 `pg_catalog` 로 한정되어 있으므로, 이를 깰 수 있는 것은 superuser 가 거기에 넣은
+  프로시저뿐이다.
 - 변환 프로시저는 `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` 로 얻는다. 카탈로그 조회이고, 변환이
   없으면 glue 가 두 인코딩의 이름을 담아 `42883` 을 올린다. 비밀 사본이 생기기 전에 실행한다.
   `pg_catalog` 에서만 찾고 `search_path` 를 따라가지 않는다 (§8 O14).
@@ -768,6 +773,16 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   프리릴리스 이미지는 눈에 보이게 실패하고, 그 job 만 required check 로 삼지 않는다 (O1). GitHub 는
   schedule 을 기본 브랜치에서만 실행하므로, nightly 실행은 이 파일들이 `main` 에 들어갈 때 시작된다.
   그때까지 100 만 평문 실행은 `develop` 에 push 할 때마다 일어난다.
+- **Phase 전체 리뷰 이후 (2026-10-13).** `gcm_decrypt` 는 결과를 평문 길이에 맞춰 할당하므로, 코어는
+  항상 정확히 암호문 길이만큼의 버퍼를 받는다 — 빈 텍스트면 버퍼가 없다 — 그리고 단위 테스트는 모든
+  봉투 벡터를 그렇게, 버퍼 뒤에 가드 바이트를 두고 연다. EVP 가 그 이상 쓰지 않는다고 약속하는 것은
+  블록 크기가 1 인 cipher 뿐이고 AES-GCM 이 그렇다. `gcm_init` 은 fetch 한 cipher 마다 이를 요구하고,
+  cipher 가 보고하는 키 길이가 그 이름이 뜻하는 길이일 것도 요구한다. EVP 가 키에서 그만큼의 바이트를
+  읽기 때문이다. 다르게 보고하는 cipher 는 없는 것으로 취급한다. 저장소 안에 그 거부에 닿는 테스트는
+  없다. 다른 블록 크기나 키 길이를 보고하는 프로바이더가 있어야 하기 때문이다. 벡터 파일에는 78 번째 벡터 `tag-last-bit-flipped-empty` — 빈
+  텍스트의 29 바이트 봉투에서의 tag 실패 — 가 추가되어, 단위 테스트는 78 개, 회귀 테스트는 63 개를
+  실행한다. `54000` 테스트는 길이를 집합 반환 함수로 넘긴다. 상수였을 때는 플래너가 `repeat()` 를
+  접어 사본을 하나 더 들고 있었고, 백엔드 피크가 285 MB 가 아니라 547 MB 였다.
 - **어떤 테스트도 다루지 않는 것.** `54000` 은 변환 버퍼가 한계인 경우 — EUC_KR DB 에서 256 MB 텍스트를
   봉인할 때 — 만 테스트하고, 1 GB 근처의 한계와 여는 쪽은 테스트하지 않는다. tag 불일치나 거부된
   할당이 아닌 EVP 호출 실패 (O8, 변함없음). 백엔드 밖에서는 관찰할 수 없는 `PG_FINALLY` 의 cleanse.

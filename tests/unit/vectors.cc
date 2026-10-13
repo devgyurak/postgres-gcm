@@ -74,6 +74,12 @@ bool IsEnvelope(const Vector &v) { return v.kind != "nist"; }
 
 std::ostream &operator<<(std::ostream &os, const Vector &v) { return os << v.id; }
 
+std::string VectorName(const ::testing::TestParamInfo<Vector> &info) {
+  std::string name = info.param.id;
+  std::replace(name.begin(), name.end(), '-', '_');
+  return name;
+}
+
 const std::vector<Vector> &AllVectors() {
   static const std::vector<Vector> vectors = Load();
   return vectors;

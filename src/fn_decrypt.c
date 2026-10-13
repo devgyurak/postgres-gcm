@@ -83,11 +83,14 @@ gcm_decrypt(PG_FUNCTION_ARGS)
 			envelope_len = VARSIZE_ANY_EXHDR(envelope);
 
 			/*
-			 * The plaintext is never longer than the envelope, which is a varlena already,
-			 * so this size needs no overflow check. In a UTF-8 (or SQL_ASCII) database the
-			 * core opens straight into the result: one copy of the plaintext fewer.
+			 * The plaintext is the envelope less its overhead, and the envelope is a varlena
+			 * already, so this size needs no overflow check. An envelope too short to have
+			 * one is refused by the core before it looks at the buffer. In a UTF-8 (or
+			 * SQL_ASCII) database the core opens straight into the result: one copy of the
+			 * plaintext fewer.
 			 */
-			opened_cap = envelope_len;
+			opened_cap = envelope_len > GCM_ENVELOPE_OVERHEAD ?
+				envelope_len - GCM_ENVELOPE_OVERHEAD : 0;
 			if (direct)
 			{
 				result = (text *) palloc(VARHDRSZ + opened_cap);
