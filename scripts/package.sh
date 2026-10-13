@@ -53,10 +53,11 @@ cp "$build"/sql/*.sql "$stage/$name/sql/"
 cp "$ROOT/LICENSE" "$ROOT/README.md" "$stage/$name/"
 
 mkdir -p "$out"
-# COPYFILE_DISABLE keeps macOS from adding ._* AppleDouble members; the fixed owner and group keep
-# the archive reproducible and root-owned whatever uid built it.
+# COPYFILE_DISABLE keeps macOS from adding ._* AppleDouble members and --no-xattrs drops its
+# com.apple.provenance pax header; the fixed owner and group keep the archive root-owned whatever
+# uid built it. The timestamps are not pinned, so two runs of this are not byte-identical.
 COPYFILE_DISABLE=1 tar --create --gzip --file "$out/$tarball" --directory "$stage" \
-  --owner=0 --group=0 --numeric-owner "$name"
+  --no-xattrs --owner=0 --group=0 --numeric-owner "$name"
 sha256="$(python3 - "$out/$tarball" <<'PY'
 import hashlib
 import pathlib
