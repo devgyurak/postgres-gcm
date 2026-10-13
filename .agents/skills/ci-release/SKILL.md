@@ -15,7 +15,7 @@ from source.
 | 2 | `unit.yml` | PR, push, nightly | `scripts/unit-in-docker.sh` for the newest supported major and the OpenSSL floor: sanitizers, a non-zero test count, the collision test at 100,000 on a PR and 1,000,000 otherwise |
 | 2 | `build.yml` | PR, push | `scripts/build-in-docker.sh` for every image of `docker/versions.json` × amd64/arm64, `-Werror`, the server's own libcrypto |
 | 2 | `regress.yml` | PR, push | build, `scripts/dev-up.sh`, `scripts/verify.sh` per image — **the required checks**, never path-filtered |
-| 3 | `e2e.yml` | PR (path-filtered workflow of its own), push | compose E2E: round trip, Korean `LIKE`, streaming replication |
+| 3 | `e2e.yml` | PR (path-filtered workflow of its own), push | build, then `scripts/e2e.sh` per image: a primary, a streaming replica and the SQL runner. Not a required check |
 | 4 | `load.yml` | nightly, dispatch | load gate against pgcrypto |
 | 4 | `bench.yml` | merges, nightly | core micro-benchmark ratio gate |
 | 4 | `release.yml` | tag `v*`, dispatch (dry run) | guard (SemVer, tag on `main`, `## <version>` in CHANGELOG) → build → server image smoke → package, sign, SBOM → publish |
