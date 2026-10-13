@@ -9,7 +9,9 @@ set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
 
-[ $# -ge 2 ] && [ $# -le 3 ] || die "usage: scripts/package.sh <major> <arch> [outdir]"
+if [ $# -lt 2 ] || [ $# -gt 3 ]; then
+  die "usage: scripts/package.sh <major> <arch> [outdir]"
+fi
 major="$1"
 arch="$2"
 out="${3:-$ROOT/dist}"
@@ -28,6 +30,21 @@ version="$(extension_version "$build/pg_gcm.control")"
 name="pg_gcm-$version"
 tarball="pg_gcm-$version-pg$major-$arch.tar.gz"
 
+# arch is a label; check it against the ELF the build actually produced (e_machine: 0x3e x86-64,
+# 0xb7 AArch64), so an amd64 build is never shipped as arm64.
+machine="$(python3 - "$build/pg_gcm.so" <<'PY'
+import struct
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    header = handle.read(20)
+if header[:4] != b"\x7fELF":
+    sys.exit("error: the build is not an ELF object")
+print({0x3E: "amd64", 0xB7: "arm64"}.get(struct.unpack_from("<H", header, 18)[0], "unknown"))
+PY
+)"
+[ "$machine" = "$arch" ] || die "build/$major/pg_gcm.so is a $machine object, not $arch"
+
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/$name/sql"
@@ -36,7 +53,10 @@ cp "$build"/sql/*.sql "$stage/$name/sql/"
 cp "$ROOT/LICENSE" "$ROOT/README.md" "$stage/$name/"
 
 mkdir -p "$out"
-tar --create --gzip --file "$out/$tarball" --directory "$stage" "$name"
+# COPYFILE_DISABLE keeps macOS from adding ._* AppleDouble members; the fixed owner and group keep
+# the archive reproducible and root-owned whatever uid built it.
+COPYFILE_DISABLE=1 tar --create --gzip --file "$out/$tarball" --directory "$stage" \
+  --owner=0 --group=0 --numeric-owner "$name"
 sha256="$(python3 - "$out/$tarball" <<'PY'
 import hashlib
 import pathlib

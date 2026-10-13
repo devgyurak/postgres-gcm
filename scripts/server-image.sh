@@ -9,7 +9,9 @@ set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
 
-[ $# -ge 1 ] && [ $# -le 2 ] || die "usage: scripts/server-image.sh <major> [tag]"
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+  die "usage: scripts/server-image.sh <major> [tag]"
+fi
 major="$1"
 tag="${2:-pg-gcm-server:$major}"
 

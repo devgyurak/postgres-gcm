@@ -5,7 +5,8 @@
 # the gate: 0 only when every cell ran and the worst gcm/pgcrypto ratio was at or under the
 # ceiling in tests/load/baseline.json.
 # Usage: scripts/load.sh <major> [args for tests/load/run.py]
-#   Needs scripts/build-in-docker.sh <major> to have run. Starts pg-gcm-dev-<major> if needed.
+#   Needs scripts/build-in-docker.sh <major> to have run. Recreates pg-gcm-dev-<major> — dev-up.sh
+#   tears that container down and starts it fresh every time.
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
