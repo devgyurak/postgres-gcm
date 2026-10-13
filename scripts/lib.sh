@@ -66,6 +66,12 @@ print(found[0][member])
 PY
 }
 
+# extension_version [control file] — the extension's version, read from a control file (the
+# source one by default, the built copy when one is given). Nothing copies the version out.
+extension_version() {
+  awk -F"'" '/^default_version/ {print $2}' "${1:-$ROOT/pg_gcm.control}"
+}
+
 build_image_tag() {
   echo "pg-gcm-build:$1"
 }
