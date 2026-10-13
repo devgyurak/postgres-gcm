@@ -4,6 +4,27 @@ Notable changes per release. Envelope changes get their own entry with a compati
 
 ## Unreleased
 
+### Phase 4 — distribution (2026-10-13)
+- The load gate (`tests/load`, `scripts/load.sh`, the `load` workflow): rows of Korean names
+  sealed by `gcm_encrypt` and by `pgcrypto` AES-CBC, and the p95 of `gcm_decrypt(...) LIKE
+  '%김%'` against the pgcrypto scan at 10k/100k/300k rows and 1/8/32 sessions, interleaved. The
+  gate is the worst ratio against `tests/load/baseline.json`, never milliseconds; nightly and
+  on demand, never on a pull request.
+- Core micro-benchmarks (`tests/bench`, `scripts/bench.sh`, the `bench` workflow): the core's
+  seal and open over bare OpenSSL EVP, gated as ratios in `tests/bench/baseline.json`; on a
+  merge and nightly, one image per libcrypto.
+- `docs/perf.md`: the load baseline and how both gates are measured.
+- Distribution: `docker/server.Dockerfile` layers the built extension onto `postgres:<major>`
+  and runs `CREATE EXTENSION pg_gcm` in an init script; `scripts/server-image.sh` builds it and
+  `scripts/smoke-image.sh` checks the Korean `LIKE` round trip before anything is pushed.
+- Release: `scripts/package.sh` writes `pg_gcm-<version>-pg<major>-<arch>.tar.gz` with its
+  checksum, `scripts/sbom.py` a CycloneDX SBOM, `scripts/release-guard.py` guards the tag
+  (SemVer, on `main`, matching `pg_gcm.control`, with a `## <version>` CHANGELOG section), and
+  `release.yml` publishes the tarballs, `SHA256SUMS`, its keyless signature and the SBOM. A
+  `workflow_dispatch` run is a dry run that publishes nothing.
+- The operational constraints moved into `docs/ops-constraints.md`; the README gained the
+  summary, the support matrix, the function table and the install and documentation sections.
+
 ### Phase 3 — SQL E2E (2026-10-13)
 - `tests/e2e`: a primary, a streaming replica taken from it with `pg_basebackup`, and a Python
   runner that only issues SQL with keys as bind parameters. Twenty-one scenarios: the replica is a

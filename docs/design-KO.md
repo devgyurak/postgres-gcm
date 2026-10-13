@@ -4,15 +4,19 @@
 
 > 이 문서는 `docs/design.md` 의 번역이다. 두 문서가 다르면 영어 문서가 맞고, 이 번역을 고친다.
 
-상태: **Phase 3 완료** (2026-10-13). 확장이 명세 — `spec/envelope.md` 와 `spec/test-vectors.json` — 를
+상태: **Phase 4 완료** (2026-10-13). 확장이 명세 — `spec/envelope.md` 와 `spec/test-vectors.json` — 를
 구현한다. 세 가지 키 길이, AAD 가 있는 형태와 없는 형태, `pg_gcm.strict` 와 `pg_gcm.min_key_bytes` 까지다.
 코어는 단위 테스트에서 모든 벡터를, SQL 함수는 회귀 테스트에서 모든 봉투 벡터를 실행하고, E2E 스위트는
 primary 와, primary 가 봉인한 것을 재생만 한 스트리밍 replica 에서 그 함수들을 실행한다. PostgreSQL
-15~18 에서다 (§4, §8). **릴리스된 것은 없고 아직 쓸 수 있는 단계가 아니다**: 부하 게이트, 운영 제약
-문서, 배포는 Phase 4 다. 설계가 기대는 PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와
-함께 §8 에 기록되어 있거나, §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스,
-공식 이미지와 대조했고, 스파이크 실행, 명세 작성, 구현을 명세에 맞추는 일은 2026-10-12 에, E2E 스위트
-실행은 2026-10-13 에 했으며, 각각에서 확인된 것을 §8 에 적었다.
+15~18 에서다 (§4, §8). 부하 게이트는 복호화 + `LIKE` 스캔을 `pgcrypto` 와 비교해 감시하고, 코어
+마이크로 벤치마크는 봉인과 열기를 bare OpenSSL EVP 와 비교해 감시한다 ([`docs/perf.md`](perf.md)).
+운영 제약은 별도 문서 [`docs/ops-constraints.md`](ops-constraints.md) 에 있고, 릴리스 파이프라인이
+tarball 과 그 체크섬, SBOM, 그리고 extension 을 미리 설치한 `postgres:<major>` 이미지를 만든다.
+**릴리스된 것은 없고 아직 쓸 수 있는 단계가 아니다**: tag 를 자르지 않았고 0.1.0 까지 형식이 바뀔 수
+있다. 설계가 기대는 PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 에
+기록되어 있거나, §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식 이미지와
+대조했고, 스파이크 실행, 명세 작성, 구현을 명세에 맞추는 일은 2026-10-12 에, E2E 스위트 실행과 배포는
+2026-10-13 에 했으며, 각각에서 확인된 것을 §8 에 적었다.
 
 ## 0. 목표와 범위
 
@@ -272,8 +276,16 @@ primary, 스트리밍 replica, Python 러너로 된 compose 파일: 왕복, 한�
 
 ### Phase 4 — 배포
 
-메이저 × 아키텍처 빌드 매트릭스, 체크섬과 SBOM 이 붙은 tarball, extension 을 미리 설치한
-`postgres:<major>` 이미지, README 와 `docs/ops-constraints.md`, 그리고 `docs/perf.md` 의 부하 기준선.
+메이저 × 아키텍처 빌드 매트릭스는 `build.yml` 이다 (§4, Phase 2). 이 phase 는 패키징, 배포 이미지,
+그리고 두 성능 게이트를 더한다. `scripts/package.sh` 가 `pg_gcm-<version>-pg<major>-<arch>.tar.gz` 와
+그 체크섬을, `scripts/sbom.py` 가 CycloneDX SBOM 을 쓰고, `release.yml` 이 tag (SemVer, `main` 위,
+`pg_gcm.control` 과 일치, CHANGELOG 에 `## <version>` 절) 를 검사한 뒤 tarball, `SHA256SUMS`, 그
+keyless 서명, SBOM 을 게시한다. `workflow_dispatch` 실행은 dry run 이다. `docker/server.Dockerfile`
+은 빌드한 extension 을 `postgres:<major>` 위에 얹고 init 스크립트에서 `CREATE EXTENSION pg_gcm` 을
+실행한다. `scripts/server-image.sh` 가 그것을 만들고 `scripts/smoke-image.sh` 가 이미지 자체의 init 에
+대해 한국어 `LIKE` 왕복을 푸시 전에 확인한다. 운영 제약은 `docs/ops-constraints.md` 이고, 부하 기준선과
+두 성능 게이트는 `docs/perf.md` 다. 게이트와 이미지가 실제로 무엇을 하는지, 무엇이 아직 기록되지
+않았는지는 §8 "Phase 4 에서 확인된 것" 에 있다.
 
 ### Phase 5 — 생태계 (선택)
 
@@ -403,60 +415,13 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 핸들은 프로세스의 수명 동안 살고 해제하지 않는다. preload 중에 등록한 `on_proc_exit` 콜백은 backend
 에서 실행되지 않고 — 자식이 postmaster 의 콜백을 버린다 — 어차피 프로세스가 끝나는 중이다.
 
-## 6. 운영 제약 (초안 — Phase 4 에서 `docs/ops-constraints.md` 와 README 로 옮긴다)
+## 6. 운영 제약
 
-1. **키와 평문이 로그와 통계에 나올 수 있다.** `log_statement`, `auto_explain`,
-   `pg_stat_activity.query`, 그리고 — `log_min_error_statement` 의 기본값이 `error` 이므로 — 실패한
-   모든 문장의 로그 줄, 위조된 tag 오류도 포함해서. 키는 **바인드 파라미터**로 보내 문장 텍스트에
-   `$1` 만 남게 하고 — **`log_parameter_max_length = 0` 도 설정한다.** 기본값 -1 은 `log_statement`,
-   `log_min_duration_statement`, 샘플링 설정이 쓰는 줄에 모든 바인드 값을 전부 남기므로, 바인드
-   파라미터만으로는 키가 느린 문장 로그에 남는 것을 막지 못한다. `log_parameter_max_length_on_error`
-   는 기본값 0 으로 둔다. 키가 실린 문장을 받는 DB 에서는 `auto_explain` 을 돌리지 않는다. 16 부터
-   "Query Parameters" 를 찍고, 모든 메이저에서 custom plan 의 텍스트에 파라미터 값이 들어간다. `LIKE`
-   패턴도 평문 조각이다.
-2. **DDL 에 키 리터럴을 절대 넣지 않는다.** 뷰, 컬럼 기본값, check 제약, 규칙, 트리거, 함수 본문,
-   정책은 카탈로그에 저장되고 `pg_dump` 에 찍힌다. 인덱스를 걸려고 이 함수들을 `IMMUTABLE` 로 선언한
-   함수로 감싸지 않는다 (§5.3).
-3. **복호화한 값이 디스크에 닿을 수 있다.** `gcm_decrypt(...)` 에 대한 정렬이나 해시가 `work_mem` 을
-   넘으면 평문을 임시 파일에 쓴다. Phase S 에서 기본 `work_mem` 4MB 로 확인했다: 10~15 바이트
-   이름의 정렬은 메이저에 따라 30,000 행과 300,000 행 사이 어딘가에서 메모리를 벗어났고, 임시
-   파일에는 이름이 평문으로 있었지만 테이블 파일에는 없었다 (§8). `temp_tablespaces` 가 있는
-   볼륨을 암호화한다.
-4. **함수는 플래너에게 불투명하다.** `WHERE gcm_decrypt(col, $1) LIKE ...` 는 후보 집합을 스캔한다.
-   선택도는 다른 조건에서 나와야 한다. 복호화한 값에 대한 인덱스는 설계상 없다 (§5.3).
-5. **`gcm_encrypt_det` 는 같음, 빈도, 길이를 드러내고 무작위 변형보다 비싸다** (nonce 에 HMAC-SHA256
-   을 두 번 돈다). 조인 키, UNIQUE 제약, 정확히 일치하는 조회에만 쓰고 자유 텍스트에는 쓰지 않는다.
-   AAD 는 nonce 의 입력이므로 (§8 O16) 호출마다 달라도 된다. 서로 다른 AAD 로 봉인한 값은 같다고
-   비교되지 않는데, 값을 행에 묶는다는 것이 바로 그 뜻이고 그 값으로 조인할 수 없게 된다는 뜻이기도
-   하다. **`gcm_decrypt` 는 두 변형을 모두 연다.** 그래서 결정적 컬럼의 유일성이 중요하면 그 컬럼에
-   version 바이트 검사를 건다 — AES-256 이면 `CHECK (get_byte(col, 0) = 3)` — 또는, 더 약한
-   방법으로, 무작위 nonce 컬럼과 공유하지 않는 키나 AAD 를 쓴다. 그렇지 않으면 같은 값의 무작위
-   nonce 봉투가 그 옆에 저장될 수 있다. AAD 와 값의 서로 다른 쌍마다 nonce 가 하나씩 쓰이므로,
-   행마다 다른 AAD 는 키의 사용 예산 (9 번) 을 행마다 한 번씩 쓴다.
-6. **자체 운영 PostgreSQL 만.** 관리형 서비스는 이 extension 을 올리지 않는다.
-7. **복호화하는 모든 노드에 설치한다.** 스트리밍 replica 는 extension 의 카탈로그 항목을 WAL 로 받지만
-   공유 라이브러리는 디스크에 따로 설치해야 한다. 논리 복제 구독자는 둘 다 필요하다.
-8. **`pg_gcm.min_key_bytes` 가 잘린 키를 막는다.** 키 길이가 suite 를 고르므로, 24 나 16 바이트로
-   잘린 32 바이트 키는 더 약한 suite 의 올바른 키이고 아무 말 없이 봉인된다. 기본값 32 가 그것을
-   거부한다. 더 작은 suite 를 의도적으로 쓸 때만 낮춘다. 복호화는 이 값을 보지 않으므로, 다시 올려도
-   낮았던 동안 쓴 데이터가 잠기지 않는다.
-9. **사용 예산, 교체, 복구는 운영자의 책임이다.** 배포 전에, 한 키의 모든 사용을 서버·컬럼·
-   애플리케이션에 걸쳐 합산하는 사용 예산과 교체 기준을 정한다. extension 은 아무것도 세지 않고,
-   교체하지 않고, 반복된 nonce 를 탐지하지 않으며, 이 프로젝트는 보편적으로 안전한 한도를 제시하지
-   않는다. suite 와 보안 영역마다 독립적인 전체 길이 무작위 키를 쓴다. 교체하면 결정적 암호문이
-   바뀌므로 조인·UNIQUE 컬럼의 이관을 계획하고, 옛 데이터와 백업을 위해 옛 키를 보관한다. 백업을
-   복원해도 사용량은 되돌아가지 않는다. 사용 이력이나 어느 writer 의 난수 상태가 불확실하면 그 키로
-   쓰기를 멈추고 새 키로 재개한다 (NIST SP 800-38D §8).
-10. **서버가 OpenSSL 3.0 이상을 링크해야 한다.** 공식 `postgres` 이미지는 그렇다. RHEL/Rocky 8 용 PGDG
-    패키지는 1.1.1 을 링크하며 지원하지 않는다. OpenSSL 3.0 자체도 2026-09-07 에 상위 지원이 끝났으니
-    3.5 를 쓰는 플랫폼을 권한다.
-11. **NULL 인자는 조용히 NULL 을 준다.** 바인딩하지 않은 키 파라미터는 실패하는 대신 NULL 을 저장한다.
-    평문이 NULL 일 수 없는 암호화 컬럼에는 `NOT NULL` 을 건다.
-12. **연결을 보호하고, 서버의 관리자를 신뢰해야 한다.** 모든 키와 평문은 클라이언트에서 서버로
-    이동한다. 보호된 로컬 소켓으로 접속하거나, **서버 인증서를 검증하는** TLS (`sslmode=verify-full`)
-    로 접속한다. 그렇지 않으면 바인드 파라미터와 1 번의 로그 설정을 적용해도 키와 평문이 네트워크에서
-    읽히거나 가짜 서버로 넘어갈 수 있다. 복호화하는 모든 노드의 DB superuser 와 OS 관리자는 그것을 볼
-    수 있으므로 신뢰할 수 있어야 한다 — `pgcrypto` 가 문서화한 것과 같은 한계다.
+운영자가 지켜야 할 제약은 여기서 확정되어 [`docs/ops-constraints.md`](ops-constraints.md) 에
+유지된다. 그 모두는 [`README.md`](../README.md) 첫 화면에도 있다. 그것은 이 코드가 아니라 배포에
+속한다. extension 이 보호할 수 있는 것과 없는 것은 §5.4 의 신뢰 경계로 정해져 있고, `postgresql.conf`
+의 어떤 설정도 그것을 옮기지 못한다. 배포 전에 그 문서를 읽고, 정확하게 유지한다 — SQL 함수만큼이나
+이 프로젝트의 결과물이다.
 
 ## 7. 라이선스 — PostgreSQL License (2026-10-10 확정)
 
@@ -825,6 +790,43 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   `docker/versions.json` 의 모든 이미지로 스위트를 실행한다. required check 가 아니다. 그것은
   `regress.yml` 에 있다.
 
+### Phase 4 에서 확인된 것 (2026-10-13)
+
+여기서 "실행" 은 개발 장비에서 이 저장소의 스크립트를 돌린 것과, 게이트를 받아 갈 워크플로를
+뜻한다. tag 는 자르지 않았고 아무것도 릴리스하지 않았다.
+
+- **부하 게이트.** `tests/load/run.py` 는 한국어 이름 N 행을 한 테이블에 두 번 봉인한다 —
+  `gcm_encrypt` 와 `pgcrypto` `encrypt_iv(..., 'aes-cbc')`, 같은 키로. 그리고 `sessions` 와 `rounds` 에
+  걸쳐 교차로, 어느 쿼리도 기계를 독점하지 않게, `gcm_decrypt(...) LIKE '%김%'` 스캔과 CBC 스캔을
+  시간 재어 각각의 p95 와 그 비율을 보고한다. 게이트는 `tests/load/baseline.json` 에 대한 셀별 최악의
+  비율이고 밀리초가 아니라서 이식 가능하다. `run.py --self-test` 는 답이 알려진 셀에 대해 판정을
+  확인하고 lint 워크플로에서 실행된다. Phase S 의 네 번의 실행이 기대값이고 (GCM 쿼리가 CBC 쿼리의
+  0.49~0.63 을 차지했다, 위 step 7), 상한은 1.0 이다.
+- **마이크로 벤치마크.** `tests/bench/benchmark.cc` (Google Benchmark) 는 코어의 `gcm_seal` (무작위와
+  결정적) 과 `gcm_open` 을 같은 모양의 직접 짠 EVP AES-256-GCM 과 16, 256, 4096, 65536 바이트에서
+  재고, `tests/bench/baseline.json` 의 세 비율을 게이트로 삼는다 — bare EVP 에 대한 무작위 봉인과
+  열기, 그리고 무작위 봉인에 대한 결정적 봉인인데, 여기서 두 번의 HMAC-SHA256 이 드러난다. 바이너리의
+  `--self-test` 가 판정 자체를 확인한다. 서버도 PostgreSQL 헤더도 관여하지 않는다.
+- **배포 이미지.** `docker/server.Dockerfile` 은 공식 `postgres:<major>` (base 는 digest 로 고정) 이고,
+  빌드한 `pg_gcm.so`, `pg_gcm.control`, SQL 을 그 이미지 자체의 `pg_config` 가 이르는 디렉터리에
+  설치하며, `docker/initdb.d/00-pg_gcm.sql` 이 `/docker-entrypoint-initdb.d` 에 있어 처음 init 때
+  `CREATE EXTENSION pg_gcm` 이 실행된다. `scripts/smoke-image.sh` 가 이미지를 띄워 `HEALTHCHECK` 를
+  기다리고 — 스스로 `CREATE EXTENSION` 을 하지 않고 — `홍길동` 을 봉인·개방하고 `LIKE '%길%'` 을
+  확인한다: 실패나 extension 부재는 0 이 아닌 종료다.
+- **릴리스 파이프라인.** `scripts/package.sh` 는 빌드를 `pg_gcm-<version>/…` 로 펼쳐
+  `pg_gcm-<version>-pg<major>-<arch>.tar.gz` 와 그 체크섬을 쓴다. `scripts/release-guard.py` 는
+  `vMAJOR.MINOR.PATCH` 가 아닌 tag, `pg_gcm.control` 의 `default_version` 과 다른 tag, `main` 의
+  조상이 아닌 tag, `## <version>` CHANGELOG 절이 없는 tag 를 거부한다. `scripts/sbom.py` 는
+  extension, 그 PostgreSQL 과 libcrypto 의존성, 모든 산출물의 SHA-256 을 담은 CycloneDX 1.5 문서를
+  쓴다. `release.yml` 이 그 모두를 돌리고 `SHA256SUMS` 를 cosign 으로 keyless 서명하고 GitHub
+  release 를 만든다. `workflow_dispatch` 실행은 파이프라인을 연습하고 아무것도 게시하지 않는다. 두
+  헬퍼 스크립트의 `--self-test` 는 lint 워크플로에서 실행된다.
+- **아직 기록되지 않은 것.** 게이트가 CI 러너에서 실행된 적이 없으므로
+  `tests/load/baseline.json` 과 `tests/bench/baseline.json` 의 상한은 Phase S 의 기대값이고 §8
+  Open O17 의 placeholder 이지 그 러너의 측정이 아니다. `docs/perf.md` 도 그렇게 말한다. tag 를 자른
+  적이 없고 릴리스도 게시하지 않았으므로 파이프라인은 연습만 되고 끝에서 끝까지 관찰되지는 않았으며,
+  배포 이미지는 smoke 테스트만 됐다.
+
 ### 미확인
 
 번호는 다시 쓰지 않는다. O2~O16 은 위에서 답했다. O7, O13, O16 은 Phase 1 에서, O14 와 O15 는 Phase 2
@@ -833,6 +835,7 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 | # | 질문 | 확인 방법 |
 |---|---|---|
 | O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 확장은 `19beta4` 에서 빌드되고 모든 스위트를 통과하며, 그 CI job 은 pre-release 라고 표시되고 required check 로 삼지 않는다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
+| O17 | CI 러너에서의 부하와 마이크로 벤치마크 비율은 얼마이고 상한은 얼마나 타이트해도 되나? `tests/load/baseline.json` (1.0) 과 `tests/bench/baseline.json` (4.0/3.0/5.0) 의 상한은 그 러너의 측정이 아니라 Phase S 의 기대값과 placeholder 이다 (봉인 상한은 RAND_bytes 가 지배하는 작은 크기 위로 여유를 둔다, §8) | 세 번씩 돌린 `load.yml` 과 `bench.yml` 의 최악 비율과 러너 CPU 를 `docs/perf.md` 에 기록하고, 세 번 모두에서 유지될 때만 관측된 최악 쪽으로 각 상한을 낮춘다 |
 
 ## 9. 참고 자료
 

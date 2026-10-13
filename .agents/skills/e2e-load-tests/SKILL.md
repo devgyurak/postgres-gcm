@@ -1,6 +1,6 @@
 ---
 name: e2e-load-tests
-description: The compose-based end-to-end suite (primary, streaming replica and a Python SQL runner) and the load harness that gates decrypt + LIKE p95 against pgcrypto. Use it for replication and performance gates.
+description: The compose-based end-to-end suite (primary, streaming replica and a Python SQL runner), the load harness that gates decrypt + LIKE p95 against pgcrypto, and the core micro-benchmarks gated against bare OpenSSL EVP. Use it for replication and performance gates.
 ---
 
 # e2e-load-tests
@@ -48,3 +48,14 @@ Rules: `testing.md`, `stack-python.md`.
   `convert_from(decrypt_iv(...), 'UTF8') LIKE '%김%'` at 1/8/32 sessions in an interleaved order.
 - The gate is a ratio, never milliseconds, written to `tests/load/baseline.json` from three CI runs and
   recorded in `docs/perf.md` with the runner's CPU.
+
+## Bench (`tests/bench`)
+- `scripts/bench.sh <major>` builds `benchmark.cc` (Google Benchmark) in the build image and runs it:
+  the core's `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP
+  AES-256-GCM of the same shape, per plaintext size. The exit status is the gate — 0 only when every
+  ratio is at or under its ceiling in `tests/bench/baseline.json`; the binary's `--self-test` checks
+  the verdict with fixed ratios and no crypto.
+- The gate is a ratio, never nanoseconds. The ceilings are the Phase S expectation and a placeholder
+  (`docs/design.md` §8 O17); lower one toward the observed worst only when it holds across three
+  `bench` runs and both libcryptos, and record it in `docs/perf.md`. No server and no PostgreSQL
+  header is involved.

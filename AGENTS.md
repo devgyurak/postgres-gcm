@@ -65,7 +65,7 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
 - Out of scope from the start: keyring or KMS integration, key ids, a key stored in a GUC or a table.
   If asked for one, turn it back into a proposal to amend the design.
 
-## 3. Repository layout (`tests/load`, `tests/bench` and `docs/ops-constraints.md` come in Phase 4)
+## 3. Repository layout
 
 ```
 AGENTS.md / CLAUDE.md          Agent instructions (this file is the source)
@@ -74,7 +74,8 @@ AGENTS.md / CLAUDE.md          Agent instructions (this file is the source)
 docs/design.md                 The design document — rationale, decisions, open questions, phases
 docs/design-KO.md              Its Korean translation. The English file above is canonical
 LICENSE                        The PostgreSQL License (design §7)
-docs/ops-constraints.md        Operational constraints — also duplicated on the README's first screen (Phase 4)
+docs/ops-constraints.md        Operational constraints — also summarised on the README's first screen
+docs/perf.md                   The load baseline and both performance gates
 spec/envelope.md               The envelope (Part 1) and its PostgreSQL binding with the failure semantics (Part 2)
 spec/test-vectors.json         NIST CAVP GCM KAT plus the project's own vectors, reproduced by scripts/check-vectors.py
 src/                           The extension (C11)
@@ -91,10 +92,11 @@ tests/unit/                    GoogleTest — gcm/envelope/nonce, linking libcry
 tests/e2e/                     compose: primary + streaming replica + a Python SQL runner
 tests/load/                    Load: decrypt + LIKE over 10k/100k/300k rows, gated against pgcrypto
 tests/bench/                   Core micro-benchmarks (Google Benchmark) — ratios against bare EVP
-scripts/                       dev-up.sh, build-in-docker.sh, verify.sh (+ verify.sql), unit-in-docker.sh, e2e.sh,
+scripts/                       dev-up.sh, build-in-docker.sh, verify.sh (+ verify.sql), unit-in-docker.sh, e2e.sh, load.sh,
+                               bench.sh, server-image.sh, smoke-image.sh, package.sh (+ sbom.py, release-guard.py),
                                agents-sync.sh, check-architecture.py, check-action-pins.py, check-vectors.py, ci-matrix.py, lib.sh
 scripts/spike/                 The Phase S measurements (measure.sh, ldd.sh, a never-shipped probe module)
-docker/                        build.Dockerfile (postgres:<major> + server-dev headers) + versions.json
+docker/                        build.Dockerfile, server.Dockerfile, initdb.d/, versions.json
 .github/workflows/             CI — added per phase (ci-release skill)
 ```
 
@@ -107,12 +109,15 @@ docker/                        build.Dockerfile (postgres:<major> + server-dev h
 | Unit tests | `cmake -S tests/unit -B build/unit && cmake --build build/unit && ctest --test-dir build/unit` (in the Linux build image: `scripts/unit-in-docker.sh 17`) | `unit-tests` |
 | Regression tests | `scripts/verify.sh 17` (after the two rows above: installs the build into the dev container, runs `make installcheck`, then `scripts/verify.sql`) | `regress-tests` |
 | E2E | `scripts/e2e.sh 17` (after the build: a primary, a streaming replica and the SQL runner of `tests/e2e/compose.yml`) | `e2e-load-tests` |
-| Load | `python tests/load/run.py --rows 300000 --baseline pgcrypto` | `e2e-load-tests` |
+| Load | `scripts/load.sh 17` (after the build: the dev server, then `python tests/load/run.py --rows 300000 --baseline pgcrypto` in a runner; the worst gcm/pgcrypto ratio is the gate) | `e2e-load-tests` |
+| Core benchmarks | `scripts/bench.sh 17` (after the build image: the core's seal and open against bare OpenSSL EVP, gated as ratios) | `e2e-load-tests` |
+| Distribution image | `scripts/server-image.sh 17 [tag]` then `scripts/smoke-image.sh <tag>` (before anything is pushed) | `ci-release` |
+| Release artifacts | `scripts/package.sh 17 arm64 [outdir]`, `python3 scripts/sbom.py …`, `python3 scripts/release-guard.py …` | `ci-release` |
 | Spec vectors | `python3 scripts/check-vectors.py`, and `--self-test` (needs `pip install -r scripts/requirements-lint.txt`) | `unit-tests` |
 | Architecture boundaries | `python3 scripts/check-architecture.py` | `.agents/rules/architecture.md` |
 | Agent adapters | `scripts/agents-sync.sh [--check]` | this file, §7 |
 
-If a command does not exist yet (load, Phase 4), **create it as that skill prescribes**. Do not introduce a
+Every command exists as of Phase 4. A new one is created **as that skill prescribes**; do not introduce a
 different build method on your own.
 
 ## 5. Absolute rules (the full text is in `.agents/rules/`)
@@ -167,12 +172,15 @@ different build method on your own.
 
 ## 6. Current phase and roadmap
 
-Current: **Phase 3 — SQL E2E, done (2026-10-13).** The extension implements `spec/envelope.md`: the
-three suites by key length, the AAD overloads, `pg_gcm.strict` and `pg_gcm.min_key_bytes`. The unit
+Current: **Phase 4 — distribution, done (2026-10-13).** The extension implements `spec/envelope.md`:
+the three suites by key length, the AAD overloads, `pg_gcm.strict` and `pg_gcm.min_key_bytes`. The unit
 suite runs all 78 vectors of `spec/test-vectors.json`, the regression suite the 63 envelope vectors,
 and the end-to-end suite its scenarios on a primary and on a streaming replica, on 15–18; the `unit`,
-`build`, `regress` and `e2e` workflows run them. Nothing is released and it is not for use yet. Next
-is Phase 4.
+`build`, `regress` and `e2e` workflows run them. A load gate watches the decrypt-and-`LIKE` scan against
+`pgcrypto` and core micro-benchmarks watch the seal and the open against bare OpenSSL EVP
+(`docs/perf.md`), the distribution image and the release pipeline exist, and the operational constraints
+are `docs/ops-constraints.md`. **Nothing is released and it is not for use yet**: no tag has been cut and
+the format may change until 0.1.0. Next is Phase 5.
 
 | Phase | Deliverable | Done when |
 |---|---|---|
@@ -180,7 +188,7 @@ is Phase 4.
 | 1 spec | `spec/envelope.md`, `spec/test-vectors.json` | Byte format, vectors and PostgreSQL failure semantics (SQLSTATEs, NULL handling, encoding) settled |
 | 2 implementation | `src/`, `tests/unit`, `test/sql` | CI green, including the nonce collision boundary test |
 | 3 SQL E2E | `tests/e2e` | Round trip, Korean `LIKE` and streaming replication pass |
-| 4 distribution | Build matrix, README, `docs/ops-constraints.md`, load baseline | Release artifacts plus checksums and an SBOM; a server image with the extension preinstalled |
+| 4 distribution | Build matrix, packaging and the release pipeline, the distribution image, the load gate and the core micro-benchmarks (`docs/perf.md`), `docs/ops-constraints.md` and the README | Release artifacts plus checksums, a signature and an SBOM; a server image with the extension preinstalled; both performance gates run in CI |
 | 5 ecosystem | PGXN, distribution packages | Optional |
 
 ## 7. Where each tool's agent configuration lives

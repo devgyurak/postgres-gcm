@@ -2,17 +2,21 @@
 
 English | [한국어](design-KO.md)
 
-Status: **Phase 3 done** (2026-10-13). The extension implements the specification — `spec/envelope.md`,
+Status: **Phase 4 done** (2026-10-13). The extension implements the specification — `spec/envelope.md`,
 with `spec/test-vectors.json` — for the three key sizes, with and without AAD, with `pg_gcm.strict` and
 `pg_gcm.min_key_bytes`. Its core runs every vector in the unit suite, its SQL functions every envelope
 vector in the regression suite, and an end-to-end suite runs them on a primary and on a streaming
-replica that only replayed what the primary sealed, on PostgreSQL 15–18 (§4, §8). **Nothing is released
-and it is not for use yet**: the load gate, the operational constraints document and distribution are
-Phase 4. Every claim about PostgreSQL behaviour that the design leans on is either cited in §9,
-recorded with its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL
-15–18 sources and the official images on 2026-10-10; the spike ran, the specification was written and
-the implementation was brought to it on 2026-10-12; the end-to-end suite ran on 2026-10-13; §8 records
-what each established.
+replica that only replayed what the primary sealed, on PostgreSQL 15–18 (§4, §8). A load gate watches
+the decrypt-and-`LIKE` scan against `pgcrypto`, and core micro-benchmarks watch the seal and the open
+against bare OpenSSL EVP ([`docs/perf.md`](perf.md)). The operational constraints are their own
+document, [`docs/ops-constraints.md`](ops-constraints.md), and a release pipeline builds the tarballs,
+their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. **Nothing
+is released and it is not for use yet**: no tag has been cut and the format may change until 0.1.0.
+Every claim about PostgreSQL behaviour that the design leans on is either cited in §9, recorded with
+its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources
+and the official images on 2026-10-10; the spike ran, the specification was written and the
+implementation was brought to it on 2026-10-12; the end-to-end suite ran and distribution followed on
+2026-10-13; §8 records what each established.
 
 ## 0. Goal and scope
 
@@ -283,9 +287,18 @@ replication (the replica reads ciphertext it never encrypted), and NULL argument
 
 ### Phase 4 — distribution
 
-Build matrix per major and architecture, tarballs with checksums and an SBOM, a `postgres:<major>`
-image with the extension preinstalled, README and `docs/ops-constraints.md`, and the load baseline in
-`docs/perf.md`.
+The build matrix per major and architecture is `build.yml` (§4, Phase 2); this phase adds
+packaging, the distribution image and the two performance gates. `scripts/package.sh` writes
+`pg_gcm-<version>-pg<major>-<arch>.tar.gz` and its checksum, `scripts/sbom.py` a CycloneDX SBOM,
+and `release.yml` guards the tag (SemVer, on `main`, matching `pg_gcm.control`, with a
+`## <version>` section in the changelog) and then publishes the tarballs, `SHA256SUMS`, its
+keyless signature and the SBOM; a `workflow_dispatch` run is a dry run. `docker/server.Dockerfile`
+layers the built extension onto `postgres:<major>` and runs `CREATE EXTENSION pg_gcm` in an init
+script; `scripts/server-image.sh` builds it and `scripts/smoke-image.sh` checks the Korean `LIKE`
+round trip against the image's own init before anything is pushed. The operational constraints
+are `docs/ops-constraints.md`, and the load baseline and both performance gates are
+`docs/perf.md`. §8 "Established in Phase 4" records what the gates and the image were observed to
+do, and what is left to record.
 
 ### Phase 5 — ecosystem (optional)
 
@@ -831,6 +844,48 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   or `develop`, and on a pull request that changes the extension, the suite or what builds them. It is not a required
   check; `regress.yml` holds those.
 
+### Established in Phase 4 (2026-10-13)
+
+"Run" here is this repository's scripts on the development machine, and the workflow that would
+take a gate; nothing was tagged and nothing was released.
+
+- **The load gate.** `tests/load/run.py` loads N rows of Korean names sealed twice in one table
+  — `gcm_encrypt` and `pgcrypto` `encrypt_iv(..., 'aes-cbc')` under the same key — and times,
+  interleaved across `sessions` and `rounds` so that neither query owns the machine, the
+  `gcm_decrypt(...) LIKE '%김%'` scan against the CBC one, reporting the p95 of each and their
+  ratio. The gate is the worst per-cell ratio against `tests/load/baseline.json`, never a number
+  of milliseconds, so it is portable; `run.py --self-test` checks the verdict over cells whose
+  answer is known and runs in the lint workflow. Phase S's four runs are the expectation (the
+  GCM query took 0.49–0.63 of the CBC one, step 7 above); the ceiling is 1.0.
+- **The micro-benchmarks.** `tests/bench/benchmark.cc` (Google Benchmark) measures the core's
+  `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP AES-256-GCM of
+  the same shape at 16, 256, 4096 and 65536 bytes, and gates three ratios from
+  `tests/bench/baseline.json` — the random seal and the open over bare EVP, and the
+  deterministic seal over the random one, which is where the two HMAC-SHA256 passes show. The
+  binary's `--self-test` checks the verdict itself; no server and no PostgreSQL header is
+  involved.
+- **The distribution image.** `docker/server.Dockerfile` is the official `postgres:<major>`
+  (base pinned by digest) with the built `pg_gcm.so`, `pg_gcm.control` and SQL installed into
+  the directories that image's own `pg_config` names, and `docker/initdb.d/00-pg_gcm.sql` in
+  `/docker-entrypoint-initdb.d`, so `CREATE EXTENSION pg_gcm` runs on first init.
+  `scripts/smoke-image.sh` starts the image, waits on its `HEALTHCHECK`, and — with no
+  `CREATE EXTENSION` of its own — seals and opens `홍길동` and checks `LIKE '%길%'`: a failure or
+  a missing extension is a non-zero exit.
+- **The release pipeline.** `scripts/package.sh` lays a build out as `pg_gcm-<version>/…` and
+  writes `pg_gcm-<version>-pg<major>-<arch>.tar.gz` with its checksum;
+  `scripts/release-guard.py` refuses a tag that is not `vMAJOR.MINOR.PATCH`, that disagrees with
+  `pg_gcm.control`'s `default_version`, that is not an ancestor of `main`, or without a
+  `## <version>` changelog section; `scripts/sbom.py` writes a CycloneDX 1.5 document naming the
+  extension, its PostgreSQL and libcrypto dependencies and every artifact's SHA-256.
+  `release.yml` runs all of it, signs `SHA256SUMS` keyless with cosign and creates the GitHub
+  release; a `workflow_dispatch` run exercises the pipeline and publishes nothing. Both helper
+  scripts' `--self-test`s run in the lint workflow.
+- **What is not yet recorded.** No gate has run on a CI runner, so the ceilings in
+  `tests/load/baseline.json` and `tests/bench/baseline.json` are the Phase S expectation and the
+  placeholder of §8 Open O17, not a measurement of that runner; `docs/perf.md` says so. No tag
+  has been cut and no release published, so the pipeline is exercised but not yet observed end
+  to end, and the distribution image is smoke-tested only.
+
 ### Open
 
 Numbers are never reused. O2–O16 are answered above: O7, O13 and O16 in Phase 1, O14 and O15 in
@@ -839,6 +894,7 @@ Phase 2.
 | # | Question | How to settle it |
 |---|---|---|
 | O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the extension builds and passes every suite on `19beta4`, in a CI job labelled pre-release that is not meant to be a required check | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
+| O17 | What are the load and micro-benchmark ratios on the CI runner, and how tight may the ceilings be? The ceilings in `tests/load/baseline.json` (1.0) and `tests/bench/baseline.json` (4.0/3.0/5.0) are the Phase S expectation and a placeholder, not a measurement of that runner (the seal ceiling carries headroom over the RAND_bytes-dominated small sizes, §8) | Record the worst ratio and the runner's CPU from three runs of each of `load.yml` and `bench.yml` in `docs/perf.md`, and lower each ceiling toward the observed worst only when it holds across all three |
 
 ## 9. References
 
