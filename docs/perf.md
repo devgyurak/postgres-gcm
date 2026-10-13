@@ -62,7 +62,9 @@ last is where the two HMAC-SHA256 passes for the nonce show (`docs/design.md` §
 `scripts/bench.sh <major>` builds and runs it in the build image; the `bench` workflow runs it
 on a merge and nightly, one image per libcrypto. Each benchmark runs five times
 (`->Repetitions(5)`) and the gate reads the median, so one noisy repetition cannot move a ratio —
-a single sample per cell let either side swing about 2x on a busy host. The bare baseline draws
+a single sample per cell let either side swing about 2x on a busy host. The repetitions run in a
+random order (`--benchmark_enable_random_interleaving`), so both sides of a ratio meet the same
+load rather than one side a quiet moment and the other a busy one. The bare baseline draws
 its nonce with `RAND_bytes`, exactly as the core's random seal does, so the seal ratio charges the
 core for its own envelope and checks rather than for a draw only one side pays — a fixed-nonce
 baseline made the seal ratio noisy at the smallest sizes. The ceilings are per size

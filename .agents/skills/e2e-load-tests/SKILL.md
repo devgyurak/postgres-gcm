@@ -62,10 +62,12 @@ Rules: `testing.md`, `stack-python.md`.
 - `scripts/bench.sh <major>` builds `benchmark.cc` (Google Benchmark) in the build image and runs it:
   the core's `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP
   AES-256-GCM of the same shape, per plaintext size. Each benchmark runs five times
-  (`->Repetitions(5)`) and the gate reads the median, so one noisy repetition cannot move a ratio.
-  The exit status is the gate — 0 only when every ratio is at or under its ceiling in
-  `tests/bench/baseline.json`; the binary's `--self-test` checks the verdict, the ratio's direction
-  and the gate over a fixed measurement map, with no crypto.
+  (`->Repetitions(5)`) in a random order (`--benchmark_enable_random_interleaving`, set by
+  `bench.sh`) and the gate reads the median, so both sides of a ratio meet the same load and one
+  noisy repetition cannot move it. The exit status is the gate — 0 only when every ratio is at or
+  under its ceiling in `tests/bench/baseline.json`; the binary's `--self-test` checks the verdict,
+  the ratio's direction and the gate over a fixed measurement map (each of the three ratio pairs
+  gets a failing case), with no crypto.
 - The bare baseline draws a random nonce, exactly as the core's random seal does, so the `seal` ratio
   charges the core for its own envelope and checks, not for a draw only one side pays; the ceilings
   are per size (`seal`, `open`, `det`), because the core's fixed per-call cost is a larger share of a

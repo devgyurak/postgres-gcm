@@ -871,8 +871,8 @@ take a gate; nothing was tagged and nothing was released.
   the same shape at 16, 256, 4096 and 65536 bytes, and gates three ratios from
   `tests/bench/baseline.json` — the random seal and the open over bare EVP, and the
   deterministic seal over the random one, which is where the two HMAC-SHA256 passes show. Each
-  benchmark runs five times and the gate reads the median, so one noisy repetition cannot move a
-  ratio. The baseline's nonce is random, as the core's random seal is, so the seal ratio measures
+  benchmark runs five times in a random order and the gate reads the median, so one noisy
+  repetition cannot move a ratio. The baseline's nonce is random, as the core's random seal is, so the seal ratio measures
   the core's own envelope and checks rather than a draw only one side pays; the ceilings are per
   size, because the core's fixed per-call cost is a larger share of a small message. The binary's
   `--self-test` checks the verdict, the ratio's direction and the gate over fixed measurements; no

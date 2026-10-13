@@ -9,5 +9,5 @@
   },
   "recorded_ratios": null,
   "runner_cpu": "to be recorded from the bench workflow",
-  "note": "A ratio, never nanoseconds, so it is portable across runners. The ceilings are per size because the core's fixed per-call cost is a larger share of a small message; sizes live in tests/bench/benchmark.cc (kSizes). Refresh recorded_ratios and tighten a ceiling toward the observed worst only when it holds across runs and both libcryptos."
+  "note": "A ratio, never nanoseconds, so it is portable across runners. Each benchmark runs five times in a random order and the gate reads the median of the raw repetitions. The ceilings are per size because the core's fixed per-call cost is a larger share of a small message; sizes live in tests/bench/benchmark.cc (kSizes). Refresh recorded_ratios and tighten a ceiling toward the observed worst only when it holds across runs and both libcryptos."
 }

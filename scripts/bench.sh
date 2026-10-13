@@ -16,6 +16,10 @@ ensure_build_image "$major"
 # --benchmark_min_time is left at its default: a ratio gate is only as steady as the sample, and
 # these are the numbers the ceiling was set from. PG_GCM_BENCH_MIN_TIME overrides it; its form is
 # the benchmark library's — a bare number on 1.7 (the floor image), a suffixed one ("10s") on 1.9.
+#
+# --benchmark_enable_random_interleaving runs the repetitions of every benchmark in a random order
+# instead of five in a row, so both sides of a ratio meet the same load rather than one side meeting
+# a quiet moment and the other a busy one.
 docker run --rm \
   --env PG_GCM_BENCH_MIN_TIME="${PG_GCM_BENCH_MIN_TIME:-}" \
   --volume "$ROOT:/src:ro" \
@@ -34,10 +38,11 @@ docker run --rm \
     # The gate against fixed ratios first, so a broken gate is seen before a slow run.
     "$build/pg_gcm_bench" --self-test
     # The exit status is the gate: 0 only when every ratio was at or under its ceiling.
+    flags=(--benchmark_enable_random_interleaving=true)
     if [ -n "$PG_GCM_BENCH_MIN_TIME" ]; then
-      "$build/pg_gcm_bench" --benchmark_min_time="$PG_GCM_BENCH_MIN_TIME"
+      "$build/pg_gcm_bench" "${flags[@]}" --benchmark_min_time="$PG_GCM_BENCH_MIN_TIME"
     else
-      "$build/pg_gcm_bench"
+      "$build/pg_gcm_bench" "${flags[@]}"
     fi
   '
 echo "== PostgreSQL $major: the benchmark gate passed"
