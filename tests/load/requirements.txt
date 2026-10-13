@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: PostgreSQL
+# What the load runner needs (tests/load/runner.Dockerfile), pinned by version. The lint
+# workflow installs it too, so that mypy sees psycopg's types.
+psycopg[binary]==3.3.6

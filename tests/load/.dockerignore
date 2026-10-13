@@ -1,0 +1,5 @@
+# The runner image is built from three files (runner.Dockerfile); nothing else is sent.
+*
+!requirements.txt
+!run.py
+!baseline.json
