@@ -318,11 +318,16 @@ int SelfTest() {
       {"the open ratio above its ceiling", Passes(0.5, 3.1, 0.5, ceiling), false},
       {"the det ratio above its ceiling", Passes(0.5, 0.5, 5.1, ceiling), false},
       {"every ratio above its ceiling", Passes(9.0, 9.0, 9.0, ceiling), false},
-      // The gate over a fixed measurement map: GateVerdict must read the right benchmark names.
+      // The gate over a fixed measurement map: GateVerdict must read the right benchmark names,
+      // so each of the three pairs gets a case that fails on its own ratio.
       {"the gate passes fixed measurements",
        GateVerdict(FakeRatios(1.0, 1.0, 1.0), FixedCeilings(), nullptr), true},
       {"the gate fails on a fixed seal regression",
        GateVerdict(FakeRatios(2.0, 1.0, 1.0), FixedCeilings(), nullptr), false},
+      {"the gate fails on a fixed open regression",
+       GateVerdict(FakeRatios(1.0, 2.0, 1.0), FixedCeilings(), nullptr), false},
+      {"the gate fails on a fixed det regression",
+       GateVerdict(FakeRatios(1.0, 1.0, 3.0), FixedCeilings(), nullptr), false},
   };
   // name, the ratio RatioOf gives, and the ratio it must give. Swapping the gate's numerator and
   // denominator would turn 2.0 into 0.5 and let a regression pass, so the direction is pinned.
