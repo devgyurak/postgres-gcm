@@ -15,6 +15,7 @@ Rules: `stack-ci-docker.md`. Majors and image digests come from `docker/versions
 | `scripts/verify.sh <major>` | Copies the build into the server container's `pg_config --pkglibdir` / `--sharedir` (`docker cp`; `make install` in the build container reaches nothing the server sees), runs `make installcheck` inside the build image on the same network with `PGHOST`, `PGPORT`, `PGUSER` and `PGPASSWORD` set, then `scripts/verify.sql` with the library loaded lazily and preloaded, in two backends each |
 | `scripts/verify.sql` | The Phase S checks in design §4, one labelled row per check, ending ` \| ok`, ` \| FAIL` or ` \| info` |
 | `scripts/unit-in-docker.sh <major>` | The unit suite in that major's build image (GCC, the server's libcrypto) |
+| `scripts/e2e.sh <major>` | The end-to-end suite of `tests/e2e/compose.yml` for that image, with the build installed into a primary and a streaming replica (the `e2e-load-tests` skill) |
 | `scripts/lib.sh` | Sourced by the others: the image reference from `docker/versions.json`, installing into a container, waiting on health |
 
 ## Rules

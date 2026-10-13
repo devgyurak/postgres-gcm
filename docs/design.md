@@ -2,15 +2,17 @@
 
 English | [한국어](design-KO.md)
 
-Status: **Phase 2 done** (2026-10-12). The extension implements the specification — `spec/envelope.md`,
+Status: **Phase 3 done** (2026-10-13). The extension implements the specification — `spec/envelope.md`,
 with `spec/test-vectors.json` — for the three key sizes, with and without AAD, with `pg_gcm.strict` and
-`pg_gcm.min_key_bytes`. Its core runs every vector in the unit suite and its SQL functions every
-envelope vector in the regression suite, on PostgreSQL 15–18 (§4, §8). **Nothing is released and it is
-not for use yet**: the SQL E2E with replication, the load gate and distribution are Phases 3 and 4.
-Every claim about PostgreSQL behaviour that the design leans on is either cited in §9, recorded with
-its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources
-and the official images on 2026-10-10; the spike ran, the specification was written and the
-implementation was brought to it on 2026-10-12; §8 records what each established.
+`pg_gcm.min_key_bytes`. Its core runs every vector in the unit suite, its SQL functions every envelope
+vector in the regression suite, and an end-to-end suite runs them on a primary and on a streaming
+replica that only replayed what the primary sealed, on PostgreSQL 15–18 (§4, §8). **Nothing is released
+and it is not for use yet**: the load gate, the operational constraints document and distribution are
+Phase 4. Every claim about PostgreSQL behaviour that the design leans on is either cited in §9,
+recorded with its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL
+15–18 sources and the official images on 2026-10-10; the spike ran, the specification was written and
+the implementation was brought to it on 2026-10-12; the end-to-end suite ran on 2026-10-13; §8 records
+what each established.
 
 ## 0. Goal and scope
 
@@ -276,7 +278,8 @@ has to bound the lifetime itself: an `FmgrInfo` can outlive a statement — PL/p
 ### Phase 3 — SQL E2E
 
 A compose file with a primary, a streaming replica and a Python runner: round trip, Korean `LIKE`,
-replication (the replica reads ciphertext it never encrypted), and NULL arguments giving NULL.
+replication (the replica reads ciphertext it never encrypted), and NULL arguments giving NULL. It is
+`tests/e2e`, run by `scripts/e2e.sh <major>`; §8 "Established in Phase 3" records what it showed.
 
 ### Phase 4 — distribution
 
@@ -839,6 +842,41 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   through the function manager; that cost is not measured before the load gate of Phase 4. The
   suites run on amd64 in CI and on arm64 on the development machine; on arm64 CI compiles and
   does not run them.
+
+### Established in Phase 3 (2026-10-13)
+
+- **The suite.** `tests/e2e/compose.yml` starts a primary and a replica from the official image —
+  the build is installed into each when its container starts — and a runner (Python, `psycopg`)
+  that only issues SQL, with keys as bind parameters. The replica is a `pg_basebackup` of the
+  primary, streaming from it. Twenty-one scenarios, observed on PostgreSQL 15.19, 16.15, 17.11 and
+  18.6 with OpenSSL 3.5.7, on 17.11 with OpenSSL 3.0.22 and on 19beta4. Three establish that the
+  second node is what it is said to be: it is in recovery with a WAL receiver streaming from the
+  primary, it refuses a write, and it has the extension's catalog entry although
+  `CREATE EXTENSION` ran on the primary alone. Nine run on each node: every name comes back;
+  notes sealed by the two-argument form open by it;
+  `LIKE '%길%'` on the decrypted value finds the two names that contain it; a value sealed
+  deterministically on the primary is found on either node by sealing it again there; the same
+  value with another AAD is not; two tables join on their deterministic envelopes with no key in
+  the query; a forged tag is `XX001` with `pg_gcm.strict` on and NULL with it off; and a NULL in
+  each of the fifteen argument positions gives NULL. The runner waits for the replica to replay
+  the primary's last WAL position before the first scenario, and fails if it does not within 30 s.
+  Its exit status is 0 only when every scenario unittest ran was recorded as passed, at least one
+  ran, and the two nodes ran the same shared scenarios; `run.py --self-test`, in the lint
+  workflow, checks that this gate refuses a failure, an error, a skip, a failing subtest, an
+  unexpected success and an empty run.
+- **Item 7 of §6, observed.** With the library left out of the replica's disk (a run made by
+  hand on 17.11), the catalog entry was still there and the join on envelopes still worked, and
+  the six scenarios that call a function there failed with `could not access file
+  "$libdir/pg_gcm"`. The NULL scenario passed there all the same: a `STRICT` function is not
+  called for a NULL argument, so the library is never loaded for it.
+- **What it does not show.** The suite's network carries keys and plaintext unencrypted between
+  the runner and the servers; that is a test network with public test keys, not a deployment
+  (§6 item 12). It does not test a logical subscriber, a promoted replica, a base backup restored
+  later, or replication between different majors or different builds of the extension. It runs
+  on amd64 in CI and on arm64 on the development machine.
+- **CI.** `e2e.yml` runs the suite for every image of `docker/versions.json` on a push to `main`
+  or `develop`, and on a pull request that changes the extension, the suite or what builds them. It is not a required
+  check; `regress.yml` holds those.
 
 ### Open
 

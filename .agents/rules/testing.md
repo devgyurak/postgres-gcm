@@ -7,7 +7,7 @@ paths:
 # Testing rules — GWT and the pyramid
 
 ```
-        e2e / load        Slow. Nightly and release gate. Real servers: replication, LIKE at scale
+        e2e / load        Real servers. e2e: replication; pushes, and PRs that touch what it tests. load: LIKE at scale; nightly and release gate
        bench (gbench)     Core micro-benchmarks. Merges to develop/main + nightly. No server
      regress (pg_regress) Real-server SQL scenarios, every supported major. PR gate
    unit (gtest)           The server-independent core plus vectors. Seconds. PR gate, and run before committing
@@ -92,6 +92,10 @@ SELECT gcm_decrypt(gcm_encrypt_det('홍길동', :k), :k) LIKE '%길%' AS hit;
 ## E2E (`tests/e2e`) and load (`tests/load`)
 - E2E: primary + streaming replica + a Python runner that encrypts and decrypts only through SQL.
   Required: the replica opens what the primary sealed; deterministic values sealed on the primary join
-  on the replica; a NULL in any argument gives NULL.
+  on the replica; a NULL in any argument gives NULL. Required as well, because the rest proves
+  nothing without it: the second node is in recovery and streaming from the primary, and refuses a
+  write. A scenario that holds on both nodes is written once and run by a class per node; the
+  shared Given is built once, on the primary, and the runner waits for the replica to replay it —
+  a bounded wait on a WAL position, not a retry of a scenario.
 - Load: decrypt + `LIKE` at 10k/100k/300k rows, p95 compared with `pgcrypto` `decrypt()` on the same
   rows; the gate lives in `tests/load/baseline.json` and is derived from measurements.

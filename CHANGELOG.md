@@ -4,6 +4,14 @@ Notable changes per release. Envelope changes get their own entry with a compati
 
 ## Unreleased
 
+### Phase 3 — SQL E2E (2026-10-13)
+- `tests/e2e`: a primary, a streaming replica taken from it with `pg_basebackup`, and a Python
+  runner that only issues SQL with keys as bind parameters. Twenty-one scenarios: the replica is a
+  streaming standby that refuses writes; the round trip, the Korean `LIKE`, deterministic lookups
+  and joins, a forged tag under each setting of `pg_gcm.strict` and NULL arguments, on the node
+  that sealed the rows and on the one that only replayed them.
+- `scripts/e2e.sh <major>` runs it; the `e2e` workflow runs it for every image.
+
 ### Phase 2 — implementation and tests (2026-10-12)
 - The extension implements `spec/envelope.md`. AES-128, AES-192 and AES-256 are selected by the key
   length (16, 24 or 32 bytes); each function has a three-argument form taking `aad`; the associated
