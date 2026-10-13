@@ -939,9 +939,9 @@ was cut, so the PGXN path is exercised but not observed end to end.
   prereq phases, relations and version ranges — and adds the cross-checks the specification cannot
   make: the version against the control file, the provided `file` and `docfile` against the working
   tree, the extension version against the distribution version, the `pg_gcm` extension, and the
-  PostgreSQL floor. `--self-test` gives 35 verdicts — 32 documents broken one way at a time, two
+  PostgreSQL floor. `--self-test` gives 36 verdicts — 33 documents broken one way at a time, two
   the checker must accept, and the valid document itself — and requires each to be as expected;
-  observed, all 35. The lint workflow runs the checker, its `--self-test`, and
+  observed, all 36. The lint workflow runs the checker, its `--self-test`, and
   `scripts/pgxn-dist.sh` over the archive layout.
 - **The archive.** `scripts/pgxn-dist.sh` reads the version through the checker, refuses a dirty
   working tree, and writes `pg_gcm-<version>.zip` with `git archive HEAD` and the prefix

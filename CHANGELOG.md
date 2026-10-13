@@ -7,7 +7,7 @@ Notable changes per release. Envelope changes get their own entry with a compati
 ### Phase 5 — ecosystem (2026-10-13)
 - PGXN: `META.json` (PGXN Meta Spec 1.0.0), `scripts/check-pgxn.py` validates it against the
   specification and cross-checks it against `pg_gcm.control`, the SQL install script, `README.md`
-  and the extension version (`--self-test` gives 35 verdicts over a valid document and its
+  and the extension version (`--self-test` gives 36 verdicts over a valid document and its
   single-fault mutations), and
   `scripts/pgxn-dist.sh` writes the source archive `pg_gcm-<version>.zip` with `git archive HEAD`
   and checks its layout. `release.yml` builds and validates the archive in the `publish` job and

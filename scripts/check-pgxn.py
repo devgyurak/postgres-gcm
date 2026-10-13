@@ -296,6 +296,10 @@ def check_resources(value: Any) -> list[str]:
             kind = entry["type"]
             if not (isinstance(kind, str) and kind and kind == kind.lower()):
                 problems.append(f"resources.repository.type {kind!r} must be lowercase")
+    # A custom resource is a string (the spec's map value for a resources x_ key).
+    for key, extra in value.items():
+        if str(key).lower().startswith("x_") and not (isinstance(extra, str) and extra):
+            problems.append(f"resources.{key} must be a non-empty string")
     return problems
 
 
@@ -430,6 +434,7 @@ def self_test() -> int:
         "a repository with an unknown key": lambda d: d["resources"]["repository"].update(
             branch="main"
         ),
+        "a custom resource that is not a string": lambda d: d["resources"].update(x_docs=42),
         "a release_status outside the three": lambda d: d.update(release_status="beta"),
         "a tag with a slash": lambda d: d.update(tags=["a/b"]),
         "an unknown top-level key": lambda d: d.update(distribution="other"),

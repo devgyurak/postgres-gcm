@@ -873,9 +873,9 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 - **검사기.** `scripts/check-pgxn.py` 는 그 명세의 규칙 — 필수 필드, 값에 대한 규칙, 사용자 정의
   `x_` 예외를 둔 미지의 키 규칙, prereq phase·relation·버전 범위 — 을 구현하고, 명세가 할 수 없는
   교차 검사를 더한다: 제어 파일에 대한 버전, 작업 트리에 대한 제공 `file`·`docfile`, 배포본 버전에
-  대한 extension 버전, `pg_gcm` extension, 그리고 PostgreSQL 하한. `--self-test` 는 35 가지 판정을
-  낸다 — 한 번에 한 가지씩 깨뜨린 32 개 문서, 검사기가 받아들여야 하는 두 문서, 유효한 문서 자신 —
-  그리고 각각이 기대대로이기를 요구한다. 관측: 35 가지 모두. lint 워크플로가 검사기, 그
+  대한 extension 버전, `pg_gcm` extension, 그리고 PostgreSQL 하한. `--self-test` 는 36 가지 판정을
+  낸다 — 한 번에 한 가지씩 깨뜨린 33 개 문서, 검사기가 받아들여야 하는 두 문서, 유효한 문서 자신 —
+  그리고 각각이 기대대로이기를 요구한다. 관측: 36 가지 모두. lint 워크플로가 검사기, 그
   `--self-test`, 그리고 아카이브 배치에 대한 `scripts/pgxn-dist.sh` 를 실행한다.
 - **아카이브.** `scripts/pgxn-dist.sh` 는 검사기를 통해 버전을 읽고, 더러운 작업 트리를 거부하며,
   `git archive HEAD` 와 접두사 `pg_gcm-<version>/` 로 `pg_gcm-<version>.zip` 을 쓴다. 그런 다음
