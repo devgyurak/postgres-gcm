@@ -8,7 +8,8 @@ description: The compose-based end-to-end suite (primary, streaming replica and 
 Rules: `testing.md`, `stack-python.md`.
 
 ## E2E (`tests/e2e`)
-- Run: `scripts/build-in-docker.sh <major>`, then `scripts/e2e.sh <major>`. The script takes the
+- Run: `scripts/build-in-docker.sh <major>`, then `scripts/e2e.sh <major>` (Docker Compose v2.20
+  or later; the script refuses an older one). The script takes the
   image from `docker/versions.json`, generates the two passwords of the run, and runs
   `docker compose ... up --exit-code-from runner`; `compose.yml` refuses to start without what it sets.
 - `compose.yml`: `primary` and `replica` are the official image with `node.sh` as entrypoint, which
@@ -35,7 +36,9 @@ Rules: `testing.md`, `stack-python.md`.
   5. a NULL in each argument position gives NULL.
 - A scenario that holds on both nodes goes in `OnEitherNode` and runs through `OnThePrimary` and
   `OnTheReplica`; no test body loops over nodes. New shared state goes in `set_up_cluster`, which
-  ends by waiting for the replica to replay it.
+  ends by waiting for the replica to replay it and for its WAL receiver to report `streaming`. A
+  change to the gate (`gate`, `same_scenarios`) comes with a case in `self_test` that it must refuse.
+  The runner's connections time out after ten seconds (`PGCONNECT_TIMEOUT` in `compose.yml`).
 - Lint: `ruff`, `mypy --strict` (the lint workflow installs `tests/e2e/requirements.txt` for
   psycopg's types) and `shellcheck` cover `tests/e2e/`.
 

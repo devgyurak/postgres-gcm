@@ -3,7 +3,7 @@
 # Run the end-to-end suite for one image: a primary, a streaming replica and the SQL runner
 # (tests/e2e/compose.yml). Exits 0 only when the runner did: every scenario ran and passed.
 # Usage: scripts/e2e.sh <major>
-#   Needs scripts/build-in-docker.sh <major> to have run.
+#   Needs scripts/build-in-docker.sh <major> to have run, and Docker Compose v2.20 or later.
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -16,6 +16,17 @@ major="$1"
 # A pass on a binary older than the sources is not a pass.
 [ "$(cat "$ROOT/build/$major/SOURCE_HASH" 2>/dev/null)" = "$(source_hash)" ] ||
   die "build/$major was not built from the current sources — run scripts/build-in-docker.sh $major"
+
+# The options used below are those of a recent Compose v2; an older one is refused, not tried.
+compose_version="$(docker compose version --short 2>/dev/null)" ||
+  die "docker compose is needed (the Compose v2 plugin, 2.20 or later)"
+compose_version="${compose_version#v}"
+compose_major="${compose_version%%.*}"
+compose_rest="${compose_version#*.}"
+compose_minor="${compose_rest%%.*}"
+if [ "$compose_major" -lt 2 ] || { [ "$compose_major" -eq 2 ] && [ "$compose_minor" -lt 20 ]; }; then
+  die "docker compose $compose_version is too old: 2.20 or later is needed"
+fi
 
 PG_GCM_E2E_IMAGE="$(image_ref "$major")"
 PG_GCM_E2E_BUILD="$ROOT/build/$major"
