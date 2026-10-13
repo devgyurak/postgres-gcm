@@ -18,7 +18,7 @@ from source.
 | 3 | `e2e.yml` | PR (path-filtered workflow of its own), push | build, then `scripts/e2e.sh` per image: a primary, a streaming replica and the SQL runner. Not a required check |
 | 4 | `load.yml` | nightly, dispatch | load gate against pgcrypto |
 | 4 | `bench.yml` | merges, nightly | core micro-benchmark ratio gate |
-| 4 | `release.yml` | tag `v*`, dispatch (dry run) | guard (SemVer, tag on `main`, `## <version>` in CHANGELOG) → build → server image smoke → package, sign, SBOM → publish |
+| 4 | `release.yml` | tag `v*`, dispatch (dry run) | guard (SemVer, tag on `main`, `## <version>` in CHANGELOG) → package every supported major on amd64 and arm64 → smoke each tarball → build and smoke the server image, then push and sign it (tag only) → SBOM, checksums, sign, publish |
 
 The workflows call the same scripts a developer runs, so a failure reproduces locally with one
 command. Each takes its matrix from `scripts/ci-matrix.py` (`all`, or `unit`: one image per
@@ -29,8 +29,16 @@ required check. A `schedule` runs from the default branch only: a nightly job do
 its file is on `main`.
 
 ## Release
-- A dispatch run publishes nothing and exercises the whole pipeline; run it before every tag.
+- A dispatch run exercises the whole pipeline except the pushes, the image signature and the
+  release create; run it before every tag.
+- `package` builds the tarball per major per architecture, and `scripts/smoke-tarball.sh` layers
+  it onto the official image and runs the Korean `LIKE` round trip there, so the shipped bytes are
+  loaded on amd64 and arm64 alike.
 - The server image layers the extension onto `postgres:<major>` and runs
-  `CREATE EXTENSION pg_gcm` in an init script; `scripts/smoke-image.sh` starts it and checks the Korean
-  `LIKE` round trip before anything is pushed.
+  `CREATE EXTENSION pg_gcm` in an init script; `scripts/smoke-image.sh` starts it and checks the
+  Korean `LIKE` round trip. The `server` job depends on `package`, so the image reaches ghcr.io and
+  is signed with cosign only after every tarball passed, and only on a tag — never an unsigned
+  image ahead of a failed package.
+- The SBOM is written before `SHA256SUMS`, which covers the SBOM's own file; the checksums are
+  signed keyless, and the GitHub release is created last.
 - Secrets (registry credentials) are repository secrets; workflows never echo them.

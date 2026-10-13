@@ -100,10 +100,10 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
   남기지 않는다.
 - `STRICT` 의 귀결 하나를 함수를 문서화하는 모든 곳에 적는다. **키가 빠지면 오류가 아니라 NULL 이다.**
   평문이 NULL 일 수 없는 암호화 컬럼에는 `NOT NULL` 을 선언해, 바인딩하지 않은 키 파라미터가 NULL 을
-  저장하는 대신 문장을 실패시키게 한다 (§6, 11 번).
+  저장하는 대신 문장을 실패시키게 한다 (docs/ops-constraints.md 11 번).
 - 함수마다 `COST` 를 명시한다: `gcm_decrypt` 50, `gcm_encrypt` 100, `gcm_encrypt_det` 200 으로, Phase S
   측정에서 나온 둥근 값이다 (§8). C 함수의 기본 비용은 1 이고 플래너는 한 스캔의 조건을 비용 순으로
-  배열하므로, 명시하지 않으면 `gcm_decrypt(...) LIKE ...` 가 §6 4 번이 기대는 값싼 조건들 뒤에 놓이지
+  배열하므로, 명시하지 않으면 `gcm_decrypt(...) LIKE ...` 가 docs/ops-constraints.md 4 번이 기대는 값싼 조건들 뒤에 놓이지
   않는다.
 - 이진 평문(`bytea` 입력, `bytea` 출력)은 0.1 에 일부러 넣지 않는다. 첫 인자에서 `text` 와 `bytea` 를
   오버로드하면 타입 없는 리터럴이 모호해진다. 필요하면 개정을 거쳐 별도 이름(`gcm_encrypt_bytes`,
@@ -340,19 +340,19 @@ immutable 함수는 인덱스 표현식, 인덱스 조건절, 생성 컬럼, 파
   `gcm_decrypt` 오류가 단순한 `EXPLAIN` 이나 Bind 단계에서 나올 수 있고, 그 순간 플래너가 인자의 자기
   사본을 쥐고 있다.
 - 장벽이 아니다. PostgreSQL 은 래퍼의 volatility 선언을 믿으므로, `gcm_decrypt` 를 `IMMUTABLE` SQL
-  함수로 감싼 사용자는 그것에 인덱스를 걸 수 있다. 이것은 운영 제약 (§6, 2 번) 이고 extension 이 막을
+  함수로 감싼 사용자는 그것에 인덱스를 걸 수 있다. 이것은 운영 제약 (docs/ops-constraints.md 2 번) 이고 extension 이 막을
   수 있는 일이 아니다.
 
 ### 5.4 키는 SQL 인자이고, 설정이 아니다
 
 `postgresql.conf`, GUC, 테이블, 환경 변수에 키를 두지 않는다. 그 대가 —
-문장이 있는 곳 어디서나 키가 보인다 — 는 운영 제약(§6)이며, 완화책은 extension 의 코드가 아니라 바인드
+문장이 있는 곳 어디서나 키가 보인다 — 는 운영 제약(docs/ops-constraints.md)이며, 완화책은 extension 의 코드가 아니라 바인드
 파라미터다.
 
 서버 안에서 암호화하면 extension 이 옮길 수 없는 신뢰 경계가 그어진다. `pgcrypto` 가 스스로에 대해
 문서화한 것과 같은 경계다 ("Security Limitations", §9). 키와 평문은 클라이언트 연결을 건너고, 관리자가
 통제하는 서버의 메모리에 존재한다. 이 설계가 지키는 것은 저장된 컬럼, 백업, 그리고 암호문만 가진
-replica 다. 보호되지 않은 연결, DB superuser, 서버의 OS 관리자로부터는 지키지 못한다 (§6, 12 번).
+replica 다. 보호되지 않은 연결, DB superuser, 서버의 OS 관리자로부터는 지키지 못한다 (docs/ops-constraints.md 12 번).
 
 ### 5.5 tag 불일치는 기본값에서 NULL 로 내려가지 않는다
 
@@ -617,7 +617,7 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   구체적이기 때문이다 — 키 없이도 봉투 하나를 같은 평문으로 열리는 다른 봉투로 바꿀 수 있었다 —
   그리고 막는 비용은 associated data 1 바이트이고 전송되는 바이트는 그대로다. 이것으로 막지 못하는
   것은 옮겨 심기다. `gcm_decrypt` 는 두 변형을 모두 열므로, 같은 키와 AAD 로 봉인한 같은 값의 무작위
-  nonce 봉투는 여전히 두 번째 봉투가 된다. 결정적 컬럼이 이에 대해 할 일은 §6 5 번에 있다. 이 phase
+  nonce 봉투는 여전히 두 번째 봉투가 된다. 결정적 컬럼이 이에 대해 할 일은 docs/ops-constraints.md 5 번에 있다. 이 phase
   에 미친 영향이 하나 있다. NIST 벡터는 더 이상 봉투가 아니므로 (그 associated data 는 NIST 의
   것이다) NIST known answer 는 primitive 의 벡터이고 SQL 은 이를 보지 않는다.
 - **O16 — 결정적 nonce 도 associated data 에서 유도한다.** Phase 1 암호 리뷰에서 제기되어 같은 날
@@ -698,7 +698,7 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 - **nonce 충돌 테스트.** 한 키와 한 AAD 로 서로 다른 평문 100 만 개를 결정적으로 봉인하면 서로 다른
   nonce 100 만 개가 나온다 (PR 에서는 10 만 개). 이는 유도 과정이 제대로 연결됐는지 보는 점검이다 —
   너무 적은 바이트로 잘리거나 입력이 상수면 실패한다 — 96 비트 nonce 의 birthday bound 에 대해서는
-  아무것도 말해 주지 않으며, 어떤 테스트도 거기에 닿을 수 없다. §6 의 9 번 항목이 그대로 규칙이다.
+  아무것도 말해 주지 않으며, 어떤 테스트도 거기에 닿을 수 없다. docs/ops-constraints.md 의 9 번 항목이 그대로 규칙이다.
 - **O14 — 변환은 `pg_catalog` 에서만 찾는다.** `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` 를 쓴다.
   17.11 에서 관찰한 것: superuser 가 아니어도 스키마에 `CREATE` 권한이 있는 role 은 거기에 기본 변환을
   만들 수 있고, `search_path` 를 따라가면 내장 변환보다 먼저 발견된다. 다만 이미 있는 함수만 묶을 수
@@ -777,13 +777,13 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   예상된 실패, 예상 밖의 성공, 빈 실행을 거부하는지, 그리고 시나리오가 서로 다르거나 하나도 없는 두
   클래스를 거부하는지 확인한다. 첫 시나리오 전의 대기는 WAL receiver 의 상태도 포함하므로,
   `streaming` 을 단정하는 시나리오가 막 연결된 receiver 를 만나지 않는다.
-- **§6 의 7 번 항목을 관찰했다.** replica 의 디스크에서 라이브러리를 뺀 경우 (17.11 에서 21 개
+- **docs/ops-constraints.md 의 7 번 항목을 관찰했다.** replica 의 디스크에서 라이브러리를 뺀 경우 (17.11 에서 21 개
   시나리오를 손으로 실행), 카탈로그 항목은 그대로 있었고 봉투에 대한 조인도 그대로 동작했으며, 거기서
   함수를 호출하는 일곱 시나리오는 `could not access file "$libdir/pg_gcm"` 로 실패했다. 21 개 중 14 개가
   통과했고 게이트는 닫혔다. NULL 시나리오는 거기서도 통과했다.
   `STRICT` 함수는 NULL 인자에 대해 호출되지 않으므로 라이브러리가 로드되지도 않는다.
 - **보여 주지 않는 것.** 스위트의 네트워크는 러너와 서버 사이에서 키와 평문을 암호화 없이 나른다.
-  공개된 테스트 키를 쓰는 테스트용 네트워크이지 배포 형태가 아니다 (§6 의 12 번 항목). 논리 복제
+  공개된 테스트 키를 쓰는 테스트용 네트워크이지 배포 형태가 아니다 (docs/ops-constraints.md 의 12 번 항목). 논리 복제
   구독자, 승격된 replica, 나중에 복원한 base backup, 서로 다른 메이저 사이나 확장의 서로 다른 빌드
   사이의 복제는 테스트하지 않는다. CI 에서는 amd64 로, 개발 장비에서는 arm64 로 실행된다.
 - **CI.** `e2e.yml` 은 `main` 이나 `develop` 으로의 push 때, 그리고 확장이나 스위트나 그것을 빌드하는 것을 바꾸는 PR 에서
@@ -796,17 +796,22 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 뜻한다. tag 는 자르지 않았고 아무것도 릴리스하지 않았다.
 
 - **부하 게이트.** `tests/load/run.py` 는 한국어 이름 N 행을 한 테이블에 두 번 봉인한다 —
-  `gcm_encrypt` 와 `pgcrypto` `encrypt_iv(..., 'aes-cbc')`, 같은 키로. 그리고 `sessions` 와 `rounds` 에
+  `gcm_encrypt` 와 `pgcrypto` `encrypt_iv(..., 'aes-cbc')`, 같은 키로. 그리고 `sessions` 에
   걸쳐 교차로, 어느 쿼리도 기계를 독점하지 않게, `gcm_decrypt(...) LIKE '%김%'` 스캔과 CBC 스캔을
-  시간 재어 각각의 p95 와 그 비율을 보고한다. 게이트는 `tests/load/baseline.json` 에 대한 셀별 최악의
-  비율이고 밀리초가 아니라서 이식 가능하다. `run.py --self-test` 는 답이 알려진 셀에 대해 판정을
-  확인하고 lint 워크플로에서 실행된다. Phase S 의 네 번의 실행이 기대값이고 (GCM 쿼리가 CBC 쿼리의
-  0.49~0.63 을 차지했다, 위 step 7), 상한은 1.0 이다.
+  시간 재어 각각의 p95 와 그 비율을 보고한다. Phase S 와 같이 JIT 와 병렬 워커를 끄어 두 플랜의
+  모양을 같게 하고, 테이블을 `VACUUM (ANALYZE, FREEZE)` 하며, 쿼리별 워밍업 한 번을 버리고, 각
+  셀이 쿼리당 `samples` 번의 스캔을 모아 한 세션에서도 p95 가 백분위수가 되게 한다. 게이트는
+  `tests/load/baseline.json` 에 대한 셀별 최악의 비율이고 밀리초가 아니라서 이식 가능하다.
+  `run.py --self-test` 는 답이 알려진 케이스에 대해 판정과 비율의 방향을 확인하고 lint 워크플로에서
+  실행된다. Phase S 의 네 번의 실행이 기대값이고 (GCM 쿼리가 CBC 쿼리의 0.49~0.63 을 차지했다, 위
+  step 7), 상한은 1.0 — GCM 이 더 느리지 않다는 설계의 요구다.
 - **마이크로 벤치마크.** `tests/bench/benchmark.cc` (Google Benchmark) 는 코어의 `gcm_seal` (무작위와
   결정적) 과 `gcm_open` 을 같은 모양의 직접 짠 EVP AES-256-GCM 과 16, 256, 4096, 65536 바이트에서
   재고, `tests/bench/baseline.json` 의 세 비율을 게이트로 삼는다 — bare EVP 에 대한 무작위 봉인과
-  열기, 그리고 무작위 봉인에 대한 결정적 봉인인데, 여기서 두 번의 HMAC-SHA256 이 드러난다. 바이너리의
-  `--self-test` 가 판정 자체를 확인한다. 서버도 PostgreSQL 헤더도 관여하지 않는다.
+  열기, 그리고 무작위 봉인에 대한 결정적 봉인인데, 여기서 두 번의 HMAC-SHA256 이 드러난다. 기준선의
+  nonce 는 코어의 무작위 봉인과 같이 무작위라, 봉인 비율이 한쪽만 내는 비용이 아니라 코어 자체의 봉투와
+  점검을 재게 되고, 상한은 크기별이다 — 코어의 고정된 호출 비용은 작은 메시지에서 더 큰 몫이다.
+  바이너리의 `--self-test` 가 판정과 비율의 방향을 확인한다. 서버도 PostgreSQL 헤더도 관여하지 않는다.
 - **배포 이미지.** `docker/server.Dockerfile` 은 공식 `postgres:<major>` (base 는 digest 로 고정) 이고,
   빌드한 `pg_gcm.so`, `pg_gcm.control`, SQL 을 그 이미지 자체의 `pg_config` 가 이르는 디렉터리에
   설치하며, `docker/initdb.d/00-pg_gcm.sql` 이 `/docker-entrypoint-initdb.d` 에 있어 처음 init 때
@@ -818,8 +823,12 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   `vMAJOR.MINOR.PATCH` 가 아닌 tag, `pg_gcm.control` 의 `default_version` 과 다른 tag, `main` 의
   조상이 아닌 tag, `## <version>` CHANGELOG 절이 없는 tag 를 거부한다. `scripts/sbom.py` 는
   extension, 그 PostgreSQL 과 libcrypto 의존성, 모든 산출물의 SHA-256 을 담은 CycloneDX 1.5 문서를
-  쓴다. `release.yml` 은 지원 major 를 amd64 와 arm64 로 패키징하고, 그 모두를 돌리고,
-  `SHA256SUMS` 를 cosign 으로 keyless 서명하고 GitHub release 를 만든다. `workflow_dispatch` 실행은 파이프라인을 연습하고 아무것도 게시하지 않는다. 두
+  쓴다 — extension 은 `metadata.component` 에만 두어 `bom-ref` 가 중복되지 않는다. `release.yml` 은
+  지원 major 를 amd64 와 arm64 로 패키징하고, `scripts/smoke-tarball.sh` 가 각 tarball 을 공식
+  이미지에 얹어 라운드 트립을 실행하므로 배포되는 바이트가 모든 아키텍처에서 로드된다. `server` job 은
+  배포 이미지를 빌드·smoke 한 뒤에야 모든 tarball 이 통과했고 tag 일 때만 keyless cosign 으로 서명해
+  푸시한다. `publish` job 은 SBOM 과 `SHA256SUMS` (SBOM 파일 자체 포함) 를 쓰고, 체크섬을 서명하고
+  GitHub release 를 만든다. `workflow_dispatch` 실행은 푸시·서명·릴리스만 빼고 모든 것을 연습한다. 두
   헬퍼 스크립트의 `--self-test` 는 lint 워크플로에서 실행된다.
 - **아직 기록되지 않은 것.** 게이트가 CI 러너에서 실행된 적이 없으므로
   `tests/load/baseline.json` 과 `tests/bench/baseline.json` 의 상한은 Phase S 의 기대값이고 §8
@@ -835,7 +844,7 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 | # | 질문 | 확인 방법 |
 |---|---|---|
 | O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 확장은 `19beta4` 에서 빌드되고 모든 스위트를 통과하며, 그 CI job 은 pre-release 라고 표시되고 required check 로 삼지 않는다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
-| O17 | CI 러너에서의 부하와 마이크로 벤치마크 비율은 얼마이고 상한은 얼마나 타이트해도 되나? `tests/load/baseline.json` (1.0) 과 `tests/bench/baseline.json` (4.0/3.0/5.0) 의 상한은 그 러너의 측정이 아니라 Phase S 의 기대값과 placeholder 이다 (봉인 상한은 RAND_bytes 가 지배하는 작은 크기 위로 여유를 둔다, §8) | 세 번씩 돌린 `load.yml` 과 `bench.yml` 의 최악 비율과 러너 CPU 를 `docs/perf.md` 에 기록하고, 세 번 모두에서 유지될 때만 관측된 최악 쪽으로 각 상한을 낮춘다 |
+| O17 | CI 러너에서의 부하와 마이크로 벤치마크 비율은 얼마이고 상한은 얼마나 타이트해도 되나? `tests/load/baseline.json` (1.0) 과 `tests/bench/baseline.json` (크기별: 봉인·열기 1.3~1.5, det 3.0~4.5) 의 상한은 그 러너의 측정이 아니라 placeholder 이다 | 세 번씩 돌린 `load.yml` 과 `bench.yml` 의 최악 비율과 러너 CPU 를 `docs/perf.md` 에 기록하고, 세 번 모두에서 유지될 때만 관측된 최악 쪽으로 각 상한을 낮춘다 |
 
 ## 9. 참고 자료
 

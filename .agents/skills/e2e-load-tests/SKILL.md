@@ -17,7 +17,7 @@ Rules: `testing.md`, `stack-python.md`.
   hands over to the image's own entrypoint. The replica first takes a `pg_basebackup` of the primary
   (`--write-recovery-conf`); `primary-init.sh` creates the role it connects as and the `pg_hba.conf`
   line. `runner` is `runner.Dockerfile` (Python, `psycopg`), built from `tests/e2e/` alone.
-- Both servers run with `log_parameter_max_length=0` (design §6 item 1), on a tmpfs, with health
+- Both servers run with `log_parameter_max_length=0` (docs/ops-constraints.md item 1), on a tmpfs, with health
   checks. `scripts/e2e.sh` removes the containers, the network and the runner image at the end. The
   replication password is in the replica's `postgresql.auto.conf` on that tmpfs while the run lasts.
 - `run.py` (argparse; JSON on stdout, one line per scenario on stderr, the gate in the exit status:
@@ -46,6 +46,13 @@ Rules: `testing.md`, `stack-python.md`.
 - `run.py --rows N --baseline pgcrypto`: loads N rows of Korean names sealed by `gcm_encrypt` and by
   `pgcrypto` `encrypt_iv(..., 'aes-cbc')`, then measures p95 of `gcm_decrypt(...) LIKE '%김%'` against
   `convert_from(decrypt_iv(...), 'UTF8') LIKE '%김%'` at 1/8/32 sessions in an interleaved order.
+  `--rows`, `--sessions` and `--samples` (scans per query per cell) default to
+  `tests/load/baseline.json`; the rows × sessions matrix of those defaults is the gate.
+- The two plans must have the same shape: `connect()` sets `SET jit = off` and `SET
+  max_parallel_workers_per_gather = 0` (as Phase S does), `load_rows` follows the load with `VACUUM
+  (ANALYZE, FREEZE)`, and one warm-up scan of each query is discarded before the timed rounds.
+  Without the parallel setting, `gcm_decrypt`'s `COST 50` earns it a gather that `decrypt_iv`'s
+  `COST 1` does not, and the ratio flatters GCM.
 - The gate is a ratio, never milliseconds, written to `tests/load/baseline.json` from three CI runs and
   recorded in `docs/perf.md` with the runner's CPU.
 
@@ -54,8 +61,11 @@ Rules: `testing.md`, `stack-python.md`.
   the core's `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP
   AES-256-GCM of the same shape, per plaintext size. The exit status is the gate — 0 only when every
   ratio is at or under its ceiling in `tests/bench/baseline.json`; the binary's `--self-test` checks
-  the verdict with fixed ratios and no crypto.
-- The gate is a ratio, never nanoseconds. The ceilings are the Phase S expectation and a placeholder
-  (`docs/design.md` §8 O17); lower one toward the observed worst only when it holds across three
+  the verdict and the ratio's direction with fixed numbers and no crypto.
+- The bare baseline draws a random nonce, exactly as the core's random seal does, so the `seal` ratio
+  charges the core for its own envelope and checks, not for a draw only one side pays; the ceilings
+  are per size (`seal`, `open`, `det`), because the core's fixed per-call cost is a larger share of a
+  small message. The gate is a ratio, never nanoseconds; the ceilings are a placeholder
+  (`docs/design.md` §8 O17). Lower one toward the observed worst only when it holds across three
   `bench` runs and both libcryptos, and record it in `docs/perf.md`. No server and no PostgreSQL
   header is involved.

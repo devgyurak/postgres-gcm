@@ -8,7 +8,7 @@ paths:
 # Testing rules — GWT and the pyramid
 
 ```
-        e2e / load        Real servers. e2e: replication; pushes, and PRs that touch what it tests. load: LIKE at scale; nightly and release gate
+        e2e / load        Real servers. e2e: replication; pushes, and PRs that touch what it tests. load: LIKE at scale; nightly and on demand
        bench (gbench)     Core micro-benchmarks. Merges to develop/main + nightly. No server
      regress (pg_regress) Real-server SQL scenarios, every supported major. PR gate
    unit (gtest)           The server-independent core plus vectors. Seconds. PR gate, and run before committing

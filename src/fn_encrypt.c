@@ -193,7 +193,7 @@ gcm_encrypt(PG_FUNCTION_ARGS)
  *
  * Equal plaintexts with equal aad under one key give equal envelopes, so this reveals
  * equality, frequency and length. For join keys, UNIQUE constraints and exact-match lookups
- * only — never free text (design §6, item 5).
+ * only — never free text (docs/ops-constraints.md item 5).
  */
 Datum
 gcm_encrypt_det(PG_FUNCTION_ARGS)

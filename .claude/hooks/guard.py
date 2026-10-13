@@ -102,7 +102,7 @@ def main() -> None:
     ):
         deny(
             "turning on statement logging writes keys and plaintext to the server log "
-            "(docs/design.md §6). Denied."
+            "(docs/ops-constraints.md). Denied."
         )
 
     cwd = os.getcwd()

@@ -55,7 +55,7 @@ before deploying.
 |---|---|
 | PostgreSQL | 15, 16, 17, 18 (19 is built and tested as a pre-release) |
 | OpenSSL | 3.0 or later (the server's own `libcrypto`) |
-| Architecture | amd64, arm64 |
+| Architecture | amd64, arm64 (release tarballs for both; the published server image is amd64) |
 | Deployment | self-managed PostgreSQL on disk (not managed services) |
 
 ## Install
@@ -82,6 +82,22 @@ cd pg_gcm-<version>
 sudo install -m 0644 pg_gcm.so "$(pg_config --pkglibdir)/"
 sudo install -m 0644 pg_gcm.control sql/*.sql "$(pg_config --sharedir)/extension/"
 psql -c 'CREATE EXTENSION pg_gcm'
+```
+
+The tarball is a Debian/glibc build; its `pg_gcm.so` requires only `GLIBC_2.17` and
+`OPENSSL_3.0.0`, so it also loads on another glibc distribution that links OpenSSL 3.0 or later.
+On musl (Alpine), build from source instead. Each release is also smoke-tested by running the
+round trip against the official `postgres` image on both architectures before it is published.
+
+Verify the artifacts before installing — every file is in `SHA256SUMS`, the SBOM included, and
+the checksums are signed keyless with cosign:
+
+```sh
+sha256sum --check SHA256SUMS
+cosign verify-blob SHA256SUMS \
+  --signature SHA256SUMS.sig --certificate SHA256SUMS.pem \
+  --certificate-identity-regexp 'https://github.com/<owner>/postgres-gcm/.github/workflows/release.yml@.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 PGXN and distribution packages are Phase 5.

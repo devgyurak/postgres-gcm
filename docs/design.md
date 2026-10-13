@@ -107,11 +107,11 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
   expression to explain.
 - A consequence of `STRICT` to state wherever the functions are documented: **a missing key yields
   NULL, not an error.** Declare an encrypted column `NOT NULL` when its plaintext is never NULL, so an
-  unset key parameter fails the statement instead of storing NULL (§6, item 11).
+  unset key parameter fails the statement instead of storing NULL (docs/ops-constraints.md item 11).
 - Each function is declared with an explicit `COST`: 50 for `gcm_decrypt`, 100 for `gcm_encrypt` and
   200 for `gcm_encrypt_det`, round values from the Phase S measurement (§8). A C function defaults to
   cost 1, and the planner orders the quals of one scan by cost, so without it
-  `gcm_decrypt(...) LIKE ...` is not placed after the cheap predicates that §6 item 4 relies on.
+  `gcm_decrypt(...) LIKE ...` is not placed after the cheap predicates that docs/ops-constraints.md item 4 relies on.
 - Binary plaintext (`bytea` in, `bytea` out) is deliberately not in 0.1: overloading `text` and `bytea`
   on the first argument makes an untyped literal ambiguous. If wanted, it gets distinct names
   (`gcm_encrypt_bytes`, `gcm_decrypt_bytes`) through an amendment.
@@ -355,20 +355,20 @@ Three things follow from `STABLE`, each confirmed on 15–18 (§8):
   selectivity. A `gcm_decrypt` error can therefore surface from a plain `EXPLAIN` or at Bind, and the
   planner holds its own copy of the arguments at that moment.
 - It is not a barrier. PostgreSQL trusts the volatility label of a wrapper, so a user who writes an
-  `IMMUTABLE` SQL function around `gcm_decrypt` can index it. That is an operational constraint (§6,
+  `IMMUTABLE` SQL function around `gcm_decrypt` can index it. That is an operational constraint (docs/ops-constraints.md
   item 2), not something the extension can prevent.
 
 ### 5.4 The key is a SQL argument, never configuration
 
 No key in `postgresql.conf`, a GUC, a table or an environment variable.
-The cost — the key is visible wherever the statement is — is an operational constraint (§6), and the
+The cost — the key is visible wherever the statement is — is an operational constraint (docs/ops-constraints.md), and the
 mitigation is bind parameters, not code in the extension.
 
 Encrypting inside the server draws a trust boundary that the extension cannot move, the one `pgcrypto`
 documents for itself ("Security Limitations", §9): the key and the plaintext cross the client
 connection, and they exist in the memory of a server its administrators control. The design protects
 stored columns, backups and replicas that hold only ciphertext. It does not protect against an
-unprotected connection, the database superuser or the server's operating-system administrator (§6,
+unprotected connection, the database superuser or the server's operating-system administrator (docs/ops-constraints.md
 item 12).
 
 ### 5.5 A tag mismatch is not degraded to NULL by default
@@ -644,7 +644,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   second, different one that opens to the same plaintext — and closing it costs one byte of
   associated data and nothing on the wire. What it does not close is transplanting: `gcm_decrypt`
   opens either variant, so a random-nonce envelope of the same value under the same key and AAD is
-  still a second envelope, and §6 item 5 says what a deterministic column does about that. One
+  still a second envelope, and docs/ops-constraints.md item 5 says what a deterministic column does about that. One
   consequence for this phase: a NIST vector is no longer an envelope (its associated data is
   NIST's), so the NIST known answers are vectors of the primitive and SQL never sees them.
 - **O16 — the deterministic nonce is derived from the associated data too.** Raised by the Phase 1
@@ -734,7 +734,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
 - **The nonce collision test.** A million distinct plaintexts sealed deterministically under one
   key and AAD give a million distinct nonces (100,000 on a pull request). That is a check of the
   derivation's wiring — a truncation to too few bytes or a constant input would fail it — and says
-  nothing about the birthday bound of a 96-bit nonce, which no test can reach. §6 item 9 stays the
+  nothing about the birthday bound of a 96-bit nonce, which no test can reach. docs/ops-constraints.md item 9 stays the
   rule.
 - **O14 — the conversion is looked up in `pg_catalog` alone**, with
   `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)`. Observed on 17.11: a role that is not a
@@ -829,7 +829,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   expected failure, an unexpected success and an empty run, and two classes whose scenarios
   differ or are none. The wait before the first scenario also covers the WAL receiver's state,
   so the scenario that asserts `streaming` does not meet a receiver that has only just connected.
-- **Item 7 of §6, observed.** With the library left out of the replica's disk (a run of the
+- **docs/ops-constraints.md item 7, observed.** With the library left out of the replica's disk (a run of the
   twenty-one scenarios made by hand on 17.11), the catalog entry was still there and the join on
   envelopes still worked, and the seven scenarios that call a function there failed with `could
   not access file "$libdir/pg_gcm"`: 14 of 21 passed and the gate was closed. The NULL scenario
@@ -837,7 +837,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   library is never loaded for it.
 - **What it does not show.** The suite's network carries keys and plaintext unencrypted between
   the runner and the servers; that is a test network with public test keys, not a deployment
-  (§6 item 12). It does not test a logical subscriber, a promoted replica, a base backup restored
+  (docs/ops-constraints.md item 12). It does not test a logical subscriber, a promoted replica, a base backup restored
   later, or replication between different majors or different builds of the extension. It runs
   on amd64 in CI and on arm64 on the development machine.
 - **CI.** `e2e.yml` runs the suite for every image of `docker/versions.json` on a push to `main`
@@ -851,19 +851,26 @@ take a gate; nothing was tagged and nothing was released.
 
 - **The load gate.** `tests/load/run.py` loads N rows of Korean names sealed twice in one table
   — `gcm_encrypt` and `pgcrypto` `encrypt_iv(..., 'aes-cbc')` under the same key — and times,
-  interleaved across `sessions` and `rounds` so that neither query owns the machine, the
+  interleaved across `sessions` so that neither query owns the machine, the
   `gcm_decrypt(...) LIKE '%김%'` scan against the CBC one, reporting the p95 of each and their
-  ratio. The gate is the worst per-cell ratio against `tests/load/baseline.json`, never a number
-  of milliseconds, so it is portable; `run.py --self-test` checks the verdict over cells whose
-  answer is known and runs in the lint workflow. Phase S's four runs are the expectation (the
-  GCM query took 0.49–0.63 of the CBC one, step 7 above); the ceiling is 1.0.
+  ratio. As in Phase S, JIT and parallel workers are off so both plans have the same shape, the
+  table is `VACUUM (ANALYZE, FREEZE)`d, one warm-up scan of each query is discarded, and each cell
+  collects about `samples` scans per query so the p95 is a percentile even at one session. The
+  gate is the worst per-cell ratio against `tests/load/baseline.json`, never a number of
+  milliseconds, so it is portable; `run.py --self-test` checks the verdict and the ratio's
+  direction over cases whose answer is known and runs in the lint workflow. Phase S's four runs
+  are the expectation (the GCM query took 0.49–0.63 of the CBC one, step 7 above); the ceiling is
+  1.0, the design's requirement that GCM not be slower.
 - **The micro-benchmarks.** `tests/bench/benchmark.cc` (Google Benchmark) measures the core's
   `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP AES-256-GCM of
   the same shape at 16, 256, 4096 and 65536 bytes, and gates three ratios from
   `tests/bench/baseline.json` — the random seal and the open over bare EVP, and the
   deterministic seal over the random one, which is where the two HMAC-SHA256 passes show. The
-  binary's `--self-test` checks the verdict itself; no server and no PostgreSQL header is
-  involved.
+  baseline's nonce is random, as the core's random seal is, so the seal ratio measures the core's
+  own envelope and checks rather than a draw only one side pays; the ceilings are per size,
+  because the core's fixed per-call cost is a larger share of a small message. The binary's
+  `--self-test` checks the verdict and the ratio's direction; no server and no PostgreSQL header
+  is involved.
 - **The distribution image.** `docker/server.Dockerfile` is the official `postgres:<major>`
   (base pinned by digest) with the built `pg_gcm.so`, `pg_gcm.control` and SQL installed into
   the directories that image's own `pg_config` names, and `docker/initdb.d/00-pg_gcm.sql` in
@@ -876,11 +883,15 @@ take a gate; nothing was tagged and nothing was released.
   `scripts/release-guard.py` refuses a tag that is not `vMAJOR.MINOR.PATCH`, that disagrees with
   `pg_gcm.control`'s `default_version`, that is not an ancestor of `main`, or without a
   `## <version>` changelog section; `scripts/sbom.py` writes a CycloneDX 1.5 document naming the
-  extension, its PostgreSQL and libcrypto dependencies and every artifact's SHA-256.
-  `release.yml` packages the supported majors on amd64 and arm64, runs all of it, signs
-  `SHA256SUMS` keyless with cosign and creates the GitHub release; a `workflow_dispatch` run
-  exercises the pipeline and publishes nothing. Both helper scripts' `--self-test`s run in the
-  lint workflow.
+  extension, its PostgreSQL and libcrypto dependencies and every artifact's SHA-256 — the
+  extension only in `metadata.component`, so no `bom-ref` repeats. `release.yml` packages the
+  supported majors on amd64 and arm64; `scripts/smoke-tarball.sh` layers each tarball onto the
+  official image and runs the round trip, so the shipped bytes are loaded on every architecture;
+  the `server` job builds and smokes the distribution image and only then pushes and signs it
+  keyless with cosign, after every tarball has passed and only on a tag; the `publish` job writes
+  the SBOM and `SHA256SUMS` (the SBOM's own file included), signs the checksums and creates the
+  GitHub release. A `workflow_dispatch` run exercises everything except the pushes, the signature
+  and the release. Both helper scripts' `--self-test`s run in the lint workflow.
 - **What is not yet recorded.** No gate has run on a CI runner, so the ceilings in
   `tests/load/baseline.json` and `tests/bench/baseline.json` are the Phase S expectation and the
   placeholder of §8 Open O17, not a measurement of that runner; `docs/perf.md` says so. No tag
@@ -895,7 +906,7 @@ Phase 2.
 | # | Question | How to settle it |
 |---|---|---|
 | O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the extension builds and passes every suite on `19beta4`, in a CI job labelled pre-release that is not meant to be a required check | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
-| O17 | What are the load and micro-benchmark ratios on the CI runner, and how tight may the ceilings be? The ceilings in `tests/load/baseline.json` (1.0) and `tests/bench/baseline.json` (4.0/3.0/5.0) are the Phase S expectation and a placeholder, not a measurement of that runner (the seal ceiling carries headroom over the RAND_bytes-dominated small sizes, §8) | Record the worst ratio and the runner's CPU from three runs of each of `load.yml` and `bench.yml` in `docs/perf.md`, and lower each ceiling toward the observed worst only when it holds across all three |
+| O17 | What are the load and micro-benchmark ratios on the CI runner, and how tight may the ceilings be? The ceilings in `tests/load/baseline.json` (1.0) and `tests/bench/baseline.json` (per size: seal and open 1.3–1.5, det 3.0–4.5) are a placeholder, not a measurement of that runner | Record the worst ratio and the runner's CPU from three runs of each of `load.yml` and `bench.yml` in `docs/perf.md`, and lower each ceiling toward the observed worst only when it holds across all three |
 
 ## 9. References
 

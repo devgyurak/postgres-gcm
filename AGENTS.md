@@ -109,7 +109,7 @@ docker/                        build.Dockerfile, server.Dockerfile, initdb.d/, v
 | Unit tests | `cmake -S tests/unit -B build/unit && cmake --build build/unit && ctest --test-dir build/unit` (in the Linux build image: `scripts/unit-in-docker.sh 17`) | `unit-tests` |
 | Regression tests | `scripts/verify.sh 17` (after the two rows above: installs the build into the dev container, runs `make installcheck`, then `scripts/verify.sql`) | `regress-tests` |
 | E2E | `scripts/e2e.sh 17` (after the build: a primary, a streaming replica and the SQL runner of `tests/e2e/compose.yml`) | `e2e-load-tests` |
-| Load | `scripts/load.sh 17` (after the build: the dev server, then `python tests/load/run.py --rows 300000 --baseline pgcrypto` in a runner; the worst gcm/pgcrypto ratio is the gate) | `e2e-load-tests` |
+| Load | `scripts/load.sh 17` (after the build: the dev server, then the rows × sessions matrix of `tests/load/run.py` in a runner; the worst gcm/pgcrypto ratio is the gate) | `e2e-load-tests` |
 | Core benchmarks | `scripts/bench.sh 17` (after the build image: the core's seal and open against bare OpenSSL EVP, gated as ratios) | `e2e-load-tests` |
 | Distribution image | `scripts/server-image.sh 17 [tag]` then `scripts/smoke-image.sh <tag>` (before anything is pushed) | `ci-release` |
 | Release artifacts | `scripts/package.sh 17 arm64 [outdir]`, `python3 scripts/sbom.py …`, `python3 scripts/release-guard.py …` | `ci-release` |
@@ -140,7 +140,7 @@ different build method on your own.
   fixture (the spec vectors excepted) or any DDL.
 - No document may promise more than the trust boundary allows: keys and plaintext cross the client
   connection and exist in the server, so the connection must be protected (a local socket, or TLS with
-  the server verified) and the server's administrators trusted (design §5.4, §6 item 12).
+  the server verified) and the server's administrators trusted (design §5.4, docs/ops-constraints.md item 12).
 
 **Architecture (`architecture.md`)**
 - The direction is SQL glue → core (`gcm` → `envelope`/`nonce`). The core does not include a
@@ -172,15 +172,19 @@ different build method on your own.
 
 ## 6. Current phase and roadmap
 
-Current: **Phase 4 — distribution, done (2026-10-13).** The extension implements `spec/envelope.md`:
-the three suites by key length, the AAD overloads, `pg_gcm.strict` and `pg_gcm.min_key_bytes`. The unit
-suite runs all 78 vectors of `spec/test-vectors.json`, the regression suite the 63 envelope vectors,
-and the end-to-end suite its scenarios on a primary and on a streaming replica, on 15–18; the `unit`,
-`build`, `regress` and `e2e` workflows run them. A load gate watches the decrypt-and-`LIKE` scan against
-`pgcrypto` and core micro-benchmarks watch the seal and the open against bare OpenSSL EVP
-(`docs/perf.md`), the distribution image and the release pipeline exist, and the operational constraints
-are `docs/ops-constraints.md`. **Nothing is released and it is not for use yet**: no tag has been cut and
-the format may change until 0.1.0. Next is Phase 5.
+Current: **Phase 4 — distribution: implemented and green on a pull request, its completion criterion
+still open (2026-10-13).** The extension implements `spec/envelope.md`: the three suites by key
+length, the AAD overloads, `pg_gcm.strict` and `pg_gcm.min_key_bytes`. The unit suite runs all 78
+vectors of `spec/test-vectors.json`, the regression suite the 63 envelope vectors, and the
+end-to-end suite its scenarios on a primary and on a streaming replica, on 15–18; the `unit`,
+`build`, `regress` and `e2e` workflows run them. A load gate watches the decrypt-and-`LIKE` scan
+against `pgcrypto` and core micro-benchmarks watch the seal and the open against bare OpenSSL EVP
+(`docs/perf.md`), the distribution image and the release pipeline exist, and the operational
+constraints are `docs/ops-constraints.md`. **The completion criterion is not met yet:** both
+performance gates are placeholders that have never run on a GitHub runner — `bench.yml` and
+`load.yml` are on this branch, and a scheduled or dispatched run reads them from the default
+branch — so design §8 Open O17 stays open, and Phase 5 waits on that recording. **Nothing is
+released and it is not for use yet**: no tag has been cut and the format may change until 0.1.0.
 
 | Phase | Deliverable | Done when |
 |---|---|---|
