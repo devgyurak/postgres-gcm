@@ -11,8 +11,11 @@ p95 of each and their ratio. The gate is the worst ratio (GCM over pgcrypto) ove
 never a number of milliseconds, so it is portable across machines; the ceiling lives in
 tests/load/baseline.json, written from measurements (docs/perf.md).
 
-The key is the public 00..1f pattern and travels only as a bind parameter (design section 6,
-item 1). JIT is off, as in the Phase S measurement (docs/design.md section 8).
+The key is the public 00..1f pattern and travels only as a bind parameter
+(docs/ops-constraints.md item 1). JIT is off and no parallel workers are used, as in the Phase S
+measurement, so the two plans have the same shape (docs/design.md section 8). Each cell collects
+about `samples` scans per query across the sessions, so the p95 is a percentile even at one
+session.
 
     python tests/load/run.py --rows 100000 --baseline pgcrypto
     python tests/load/run.py --self-test        # check the gate; no server
@@ -70,8 +73,11 @@ NAMES_ARRAY = ", ".join(f"'{name}'" for name in NAMES)
 def connect() -> Connection:
     """A session. User, password and database come from the PG* variables."""
     conn = psycopg.connect(autocommit=True)
-    # Match the Phase S methodology and keep the two scans comparable (docs/design.md section 8).
+    # Match the Phase S methodology (docs/design.md §8), so the two plans have the same shape and
+    # the ratio is crypto against crypto. gcm_decrypt's declared COST (50) otherwise earns it a
+    # parallel gather at 100k rows that decrypt_iv's COST (1) does not, which flatters GCM.
     conn.execute("SET jit = off")
+    conn.execute("SET max_parallel_workers_per_gather = 0")
     return conn
 
 
@@ -80,6 +86,20 @@ def p95(samples: list[float]) -> float:
     ordered = sorted(samples)
     rank = max(1, math.ceil(0.95 * len(ordered)))
     return ordered[rank - 1]
+
+
+def ratio(gcm: float, pgcrypto: float) -> float:
+    """GCM's p95 over pgcrypto's. GCM is the numerator, so a regression raises the ratio."""
+    return gcm / pgcrypto if pgcrypto > 0 else math.inf
+
+
+def rounds_for(sessions: int, samples: int) -> int:
+    """Rounds so each query collects about `samples` samples.
+
+    A round launches one scan per session, split across the two queries, so each query gets
+    about `rounds * sessions / 2` samples; at one session that still needs `2 * samples`.
+    """
+    return max(1, math.ceil(2 * samples / sessions))
 
 
 def load_rows(conn: Connection, table: str, rows: int) -> None:
@@ -99,6 +119,8 @@ def load_rows(conn: Connection, table: str, rows: int) -> None:
         " FROM generate_series(1, %(rows)s) AS i) AS s",
         {"key": KEY, "iv": IV, "rows": rows},
     )
+    # The Phase S measurement freezes and analyzes before timing (scripts/spike/measure.sql).
+    conn.execute(f"VACUUM (ANALYZE, FREEZE) {table}")
 
 
 def run_once(conn: Connection, table: str, which: str, pattern: str) -> tuple[float, int]:
@@ -112,13 +134,15 @@ def run_once(conn: Connection, table: str, which: str, pattern: str) -> tuple[fl
     return seconds, int(row[0])
 
 
-def measure_cell(rows: int, sessions: int, rounds: int, pattern: str) -> dict[str, Any]:
+def measure_cell(rows: int, sessions: int, samples: int, pattern: str) -> dict[str, Any]:
     """Time both scans at one row count and one session count, interleaved.
 
     Each round launches `sessions` scans at once; session i runs GCM when (i + round) is
     even and pgcrypto otherwise, so over the rounds every session runs both, neither query
-    owns the machine, and neither is measured only when the caches are warm. JIT is off.
+    owns the machine, and neither is measured only when the caches are warm. JIT is off and
+    no parallel workers are used. One warm-up scan of each query is discarded first.
     """
+    rounds = rounds_for(sessions, samples)
     table = f"load_names_{rows}"
     admin = connect()
     try:
@@ -126,9 +150,12 @@ def measure_cell(rows: int, sessions: int, rounds: int, pattern: str) -> dict[st
     finally:
         admin.close()
     conns = [connect() for _ in range(sessions)]
-    samples: dict[str, list[float]] = {"gcm": [], "pgcrypto": []}
+    timings: dict[str, list[float]] = {"gcm": [], "pgcrypto": []}
     counts: dict[str, list[int]] = {"gcm": [], "pgcrypto": []}
     try:
+        # Discard one warm-up scan of each query: the first call reads the table cold.
+        run_once(conns[0], table, "gcm", pattern)
+        run_once(conns[0], table, "pgcrypto", pattern)
         with ThreadPoolExecutor(max_workers=sessions) as pool:
             for round_index in range(rounds):
                 futures = []
@@ -139,7 +166,7 @@ def measure_cell(rows: int, sessions: int, rounds: int, pattern: str) -> dict[st
                     )
                 for which, future in futures:
                     seconds, count = future.result()
-                    samples[which].append(seconds)
+                    timings[which].append(seconds)
                     counts[which].append(count)
     finally:
         for conn in conns:
@@ -158,15 +185,15 @@ def measure_cell(rows: int, sessions: int, rounds: int, pattern: str) -> dict[st
     if len(gcm_counts) != 1 or gcm_counts != cbc_counts or 0 in gcm_counts:
         raise RuntimeError("load: the two scans did not match the same non-zero rows each round")
 
-    gcm_p95 = p95(samples["gcm"])
-    cbc_p95 = p95(samples["pgcrypto"])
+    gcm_p95 = p95(timings["gcm"])
+    cbc_p95 = p95(timings["pgcrypto"])
     return {
         "rows": rows,
         "sessions": sessions,
         "rounds": rounds,
         "gcm_p95_ms": round(gcm_p95 * 1000, 4),
         "pgcrypto_p95_ms": round(cbc_p95 * 1000, 4),
-        "ratio": gcm_p95 / cbc_p95 if cbc_p95 > 0 else math.inf,
+        "ratio": ratio(gcm_p95, cbc_p95),
     }
 
 
@@ -186,7 +213,7 @@ def load_baseline(path: Path) -> dict[str, Any]:
 
 
 def self_test() -> int:
-    """The gate against cells whose verdict is known. Needs no server."""
+    """The gate and the ratio direction against cases whose verdict is known. Needs no server."""
     cases: list[tuple[str, list[dict[str, Any]], float, bool]] = [
         ("a ratio below the ceiling", [{"ratio": 0.5}], 1.0, True),
         ("a ratio at the ceiling", [{"ratio": 1.0}], 1.0, True),
@@ -195,10 +222,17 @@ def self_test() -> int:
         ("no cell measured", [], 1.0, False),
     ]
     verdicts = [(name, verdict(cells, ceiling)[0], want) for name, cells, ceiling, want in cases]
+    # The ratio's direction: GCM is the numerator, so twice pgcrypto is 2.0 and fails, not 0.5.
+    directions = [
+        ("the two sides equal is 1.0", ratio(1.0, 1.0), 1.0),
+        ("GCM twice pgcrypto is 2.0", ratio(2.0, 1.0), 2.0),
+        ("GCM half pgcrypto is 0.5", ratio(1.0, 2.0), 0.5),
+    ]
     wrong = [name for name, got, want in verdicts if got != want]
+    wrong += [name for name, got, want in directions if got != want]
+    total = len(verdicts) + len(directions)
     print(
-        f"load self-test: {len(verdicts) - len(wrong)} of {len(verdicts)} verdicts as expected;"
-        f" wrong: {wrong}",
+        f"load self-test: {total - len(wrong)} of {total} verdicts as expected; wrong: {wrong}",
         file=sys.stderr,
     )
     return 0 if not wrong else 1
@@ -216,7 +250,9 @@ def main() -> int:
     parser.add_argument(
         "--sessions", help="comma-separated session counts (default: baseline.json)"
     )
-    parser.add_argument("--rounds", type=int, help="rounds per cell (default: baseline.json)")
+    parser.add_argument(
+        "--samples", type=int, help="scans per query per cell (default: baseline.json)"
+    )
     parser.add_argument("--gate", default=str(BASELINE), help="the ratio gate file")
     parser.add_argument("--self-test", action="store_true", help="check the gate; no server")
     args = parser.parse_args()
@@ -230,13 +266,13 @@ def main() -> int:
         int(value)
         for value in (args.sessions or ",".join(map(str, baseline["sessions"]))).split(",")
     ]
-    rounds = args.rounds if args.rounds is not None else int(baseline["rounds"])
+    samples = args.samples if args.samples is not None else int(baseline["samples"])
     pattern = str(baseline.get("pattern", PATTERN))
 
     cells = []
     for count in rows:
         for session_count in sessions:
-            cell = measure_cell(count, session_count, rounds, pattern)
+            cell = measure_cell(count, session_count, samples, pattern)
             cells.append(cell)
             print(
                 f"{count:>7} rows, {session_count:>2} sessions: {cell['ratio']:.3f}"

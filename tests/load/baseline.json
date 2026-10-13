@@ -4,10 +4,10 @@
   "max_ratio": 1.0,
   "rows": [10000, 100000, 300000],
   "sessions": [1, 8, 32],
-  "rounds": 30,
+  "samples": 100,
   "pattern": "%김%",
   "recorded_ratio": null,
   "recorded_runs": [],
   "runner_cpu": "to be recorded from three CI runs",
-  "note": "A ratio, never milliseconds. Refresh recorded_runs and recorded_ratio from three release-workflow runs and lower max_ratio toward the observed worst only when it holds across all three."
+  "note": "A ratio, never milliseconds. `samples` is scans per query per cell, split across the two queries and the sessions; refresh recorded_runs and recorded_ratio from three load.yml runs and lower max_ratio toward the observed worst only when it holds across all three."
 }
