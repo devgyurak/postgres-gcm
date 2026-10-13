@@ -28,16 +28,41 @@ static const size_t cipher_key_lens[GCM_SUITES] = {
 static EVP_CIPHER *ciphers[GCM_SUITES] = {NULL, NULL, NULL};
 static EVP_MAC *mac_hmac = NULL;
 
+/*
+ * Fetch by name, never through a legacy per-cipher symbol (crypto-safety.md).
+ *
+ * The core's output buffers are exactly as long as the data. EVP promises to write no more
+ * than that only for a cipher whose block size is 1, as AES-GCM's is in OpenSSL's own
+ * providers. And EVP reads from the key as many bytes as the cipher says its key has, while
+ * the core has only checked the caller's key against the length the name stands for. A
+ * provider that advertises another block size or key length is not used, and its handle
+ * counts as absent. Like the IV length (nonce_len_is_default), these are checked instead of
+ * assumed.
+ */
+static EVP_CIPHER *
+fetch_cipher(const char *name, size_t key_len)
+{
+	EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, name, NULL);
+
+	if (cipher != NULL &&
+		(EVP_CIPHER_get_block_size(cipher) != 1 ||
+		 EVP_CIPHER_get_key_length(cipher) != (int) key_len))
+	{
+		EVP_CIPHER_free(cipher);
+		cipher = NULL;
+	}
+	return cipher;
+}
+
 enum gcm_error
 gcm_init(void)
 {
 	int			i;
 
-	/* Fetch by name, never through a legacy per-cipher symbol (crypto-safety.md). */
 	for (i = 0; i < GCM_SUITES; i++)
 	{
 		if (ciphers[i] == NULL)
-			ciphers[i] = EVP_CIPHER_fetch(NULL, cipher_names[i], NULL);
+			ciphers[i] = fetch_cipher(cipher_names[i], cipher_key_lens[i]);
 	}
 	if (mac_hmac == NULL)
 		mac_hmac = EVP_MAC_fetch(NULL, "HMAC", NULL);

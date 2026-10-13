@@ -87,6 +87,7 @@ ORDER BY v.n;
  version-04-as-05                       | XX001     | NULL       | t
  version-06-as-07                       | XX001     | NULL       | t
  tag-last-bit-flipped-192               | XX001     | NULL       | t
+ tag-last-bit-flipped-empty             | XX001     | NULL       | t
  aad-missing                            | XX001     | NULL       | t
  aad-different                          | XX001     | NULL       | t
  aad-unexpected                         | XX001     | NULL       | t
@@ -111,7 +112,7 @@ ORDER BY v.n;
  precedence-key-length-before-envelope  | 22023     | 22023      | t
  precedence-short-envelope-before-suite | 22P03     | 22P03      | t
  precedence-envelope-before-suite       | 22P03     | 22P03      | t
-(62 rows)
+(63 rows)
 
 -- Every envelope vector was joined to a specified outcome: none fell out of the query above.
 SELECT count(*) AS envelope_vectors,
@@ -120,7 +121,7 @@ FROM vector v
 LEFT JOIN specified s ON s.expect = v.expect AND s.plaintext_class IS NOT DISTINCT FROM v.plaintext_class;
  envelope_vectors | with_a_specified_outcome 
 ------------------+--------------------------
-               62 |                       62
+               63 |                       63
 (1 row)
 
 -- The two-argument form is the three-argument form with an empty aad (spec §2.1).
@@ -133,7 +134,7 @@ JOIN specified s ON s.expect = v.expect AND s.plaintext_class IS NOT DISTINCT FR
 WHERE v.aad = '';
  vectors_with_an_empty_aad | as_specified_by_the_two_argument_form 
 ---------------------------+---------------------------------------
-                        51 |                                    51
+                        52 |                                    52
 (1 row)
 
 -- Sealing: only a deterministic vector can be compared — a random nonce is drawn inside.

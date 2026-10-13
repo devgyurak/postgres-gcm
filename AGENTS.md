@@ -169,8 +169,8 @@ different build method on your own.
 
 Current: **Phase 2 — implementation and tests, done (2026-10-12).** The extension implements
 `spec/envelope.md`: the three suites by key length, the AAD overloads, `pg_gcm.strict` and
-`pg_gcm.min_key_bytes`. The unit suite runs all 77 vectors of `spec/test-vectors.json` and the
-regression suite the 62 envelope vectors, on 15–18; the `unit`, `build` and `regress` workflows run
+`pg_gcm.min_key_bytes`. The unit suite runs all 78 vectors of `spec/test-vectors.json` and the
+regression suite the 63 envelope vectors, on 15–18; the `unit`, `build` and `regress` workflows run
 them on every pull request. Nothing is released and it is not for use yet. Next is Phase 3.
 
 | Phase | Deliverable | Done when |

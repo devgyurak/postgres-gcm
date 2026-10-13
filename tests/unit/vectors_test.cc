@@ -10,6 +10,11 @@ namespace {
 // A buffer that is never empty, so data() is never null, filled so a cleanse is visible.
 Bytes Scratch(size_t n) { return Bytes(n + 1, 0xAA); }
 
+// What an envelope leaves for its ciphertext: nothing when it is shorter than its overhead.
+size_t CiphertextLength(const Vector &v) {
+  return v.envelope.size() > GCM_ENVELOPE_OVERHEAD ? v.envelope.size() - GCM_ENVELOPE_OVERHEAD : 0;
+}
+
 class NistVector : public ::testing::TestWithParam<Vector> {};
 
 TEST_P(NistVector, GivenNistKnownAnswer_WhenThePrimitiveSeals_ThenCiphertextAndTagMatch) {
@@ -128,6 +133,28 @@ TEST_P(FailingVector, GivenEnvelopeThatMustNotOpen_WhenOpened_ThenItsOutcomeAndN
   EXPECT_EQ(rc, ExpectedError(v));
   EXPECT_EQ(out_len, 0u);
   EXPECT_EQ(out, Bytes(out.size(), 0));
+}
+
+// As the glue calls it: a buffer of exactly the ciphertext's length, none for a 29-byte
+// envelope. What the core cleanses is that buffer and nothing after it.
+TEST_P(FailingVector, GivenBufferOfExactlyTheCiphertextsLength_WhenOpened_ThenNothingPastItIsWritten) {
+  // Given
+  const Vector &v = GetParam();
+  const size_t capacity = CiphertextLength(v);
+  const Bytes guard(8, 0xAA);
+  Bytes out(capacity + guard.size(), 0xAA);
+  size_t out_len = 99;
+
+  // When
+  const gcm_error rc = gcm_open(v.key.data(), v.key.size(), v.aad.data(), v.aad.size(),
+                                v.envelope.data(), v.envelope.size(), out.data(), capacity,
+                                &out_len);
+
+  // Then
+  EXPECT_EQ(rc, ExpectedError(v));
+  EXPECT_EQ(out_len, 0u);
+  EXPECT_EQ(Bytes(out.begin(), out.end() - static_cast<long>(guard.size())), Bytes(capacity, 0));
+  EXPECT_EQ(Bytes(out.end() - static_cast<long>(guard.size()), out.end()), guard);
 }
 
 INSTANTIATE_TEST_SUITE_P(Spec, FailingVector, ::testing::ValuesIn(FailingVectors()), VectorName);

@@ -383,8 +383,9 @@ The glue therefore uses the forms that report by return value, present on every 
 - `pg_do_encoding_conversion_buf(proc, src, dest, in, inlen, out, outlen, true)` into a buffer the
   glue allocated (`inlen * MAX_CONVERSION_GROWTH + 1`, overflow-checked against `MaxAllocSize`). A
   count shorter than `inlen` after a successful verification means a character the target cannot hold.
-  On sealing there is no verification to precede it — the server validated the `text` — so a short
-  count is reported as an untranslatable character whatever stopped the conversion (spec §2.4).
+  On sealing there is no verification to precede it — the extension does not verify the argument
+  against the database encoding — so a short count is reported as an untranslatable character
+  whatever stopped the conversion (spec §2.4).
   The length of the converted text is its `strlen`: the glue relies, as the server's own `convert`
   functions do, on the conversion procedure terminating its output. With the lookup confined to
   `pg_catalog`, only a procedure a superuser put there could break that.
@@ -818,6 +819,18 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   meant to be a required check (O1). GitHub runs a schedule from the default branch only, so the
   nightly run starts when these files reach `main`; until then the million-plaintext run happens
   on every push to `develop`.
+- **After the review of the whole phase (2026-10-13).** `gcm_decrypt` sizes its result to the
+  plaintext, so the core is always handed a buffer of exactly the ciphertext's length — none for
+  the empty text — and the unit suite opens every envelope vector that way, with guard bytes after
+  the buffer. EVP promises to write no more than that only for a cipher whose block size is 1, as
+  AES-GCM's is; `gcm_init` requires it of each cipher it fetches, and requires the key length the
+  cipher reports to be the one its name stands for, since EVP reads that many bytes of the key. A
+  cipher that reports otherwise is treated as absent. No test in the repository reaches that
+  refusal: it would take a provider that reports another block size or key length. The
+  file gained a 78th vector, `tag-last-bit-flipped-empty` — a tag failure on the 29-byte envelope
+  of the empty text — so the unit suite runs 78 and the regression suite 63. The `54000` test
+  passes its length through a set-returning function: with a constant the planner folded
+  `repeat()` and kept a second copy, and the backend peaked at 547 MB instead of 285 MB.
 - **What no test covers.** `54000` is tested where a conversion buffer is the limit — a 256 MB
   text sealed in an EUC_KR database — and not at the limits near a gigabyte, nor on the opening
   side. Any failure of an EVP call other than a tag mismatch or a refused allocation (O8,

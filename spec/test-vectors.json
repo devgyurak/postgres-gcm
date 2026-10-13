@@ -631,6 +631,16 @@
       "envelope_hex": "079ee1348a2f3acbc1cd78ccec8a7e93713618c035ecd33a52b8762eb872108fae0a4dd56e53"
     },
     {
+      "id": "tag-last-bit-flipped-empty",
+      "kind": "random",
+      "expect": "bad_tag",
+      "derived_from": "random-256-empty",
+      "note": "The last bit of the tag of the empty text's envelope is flipped: 29 bytes, a tag failure with no plaintext behind it.",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "aad_hex": "",
+      "envelope_hex": "02346707e83c03526c8fcadfa1dbfae02842fe9afd164cedbf5b23f2e4"
+    },
+    {
       "id": "aad-missing",
       "kind": "random",
       "expect": "bad_tag",
