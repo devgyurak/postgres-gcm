@@ -7,9 +7,15 @@ nonce) and by pgcrypto's `encrypt_iv(..., 'aes-cbc')`. For each row count and ea
 count the harness times, interleaved so that neither query owns the machine, the scan
 `gcm_decrypt(name_enc, $1) LIKE '%김%'` against
 `convert_from(decrypt_iv(name_cbc, $1, $2, 'aes-cbc'), 'UTF8') LIKE '%김%'`, and reports the
-p95 of each and their ratio. The gate is the worst ratio (GCM over pgcrypto) over every cell,
-never a number of milliseconds, so it is portable across machines; the ceiling lives in
+p95 of each and their ratio. The gate is the worst ratio (GCM over pgcrypto) over the gated
+cells, never a number of milliseconds, so it is portable across machines; the ceiling lives in
 tests/load/baseline.json, written from measurements (docs/perf.md).
+
+`gated_sessions` in the baseline names the session counts the gate applies to. A cell at many
+sessions on few rows is saturated: a whole scan is a few milliseconds, so under 32 concurrent
+sessions the p95 is scheduling tail rather than crypto and the ratio converges to 1.0 whatever
+the code does (local runs of the 10k × 32 cell ran 0.77–1.03). Those cells are still measured and
+reported, but only the low-concurrency cells — where the crypto dominates — are gated.
 
 The key is the public 00..1f pattern and travels only as a bind parameter
 (docs/ops-constraints.md item 1). JIT is off and no parallel workers are used, as in the Phase S
@@ -197,12 +203,19 @@ def measure_cell(rows: int, sessions: int, samples: int, pattern: str) -> dict[s
     }
 
 
-def verdict(cells: list[dict[str, Any]], ceiling: float) -> tuple[bool, float]:
-    """The gate: every cell ran, and the worst GCM-over-pgcrypto ratio is at or under the ceiling."""
-    if not cells:
+def verdict(
+    cells: list[dict[str, Any]], ceiling: float, gated_sessions: set[int]
+) -> tuple[bool, float]:
+    """The gate: every gated cell ran, and the worst GCM-over-pgcrypto ratio is at or under the ceiling.
+
+    A cell whose session count is not in `gated_sessions` is saturated (see the module docstring)
+    and is recorded but not gated, so it cannot fail the gate on scheduling noise.
+    """
+    gated = [cell for cell in cells if cell["sessions"] in gated_sessions]
+    if not gated:
         # A gate that measured nothing is the same failure as one that failed.
         return False, math.inf
-    worst = max(cell["ratio"] for cell in cells)
+    worst = max(cell["ratio"] for cell in gated)
     return worst <= ceiling, worst
 
 
@@ -214,14 +227,38 @@ def load_baseline(path: Path) -> dict[str, Any]:
 
 def self_test() -> int:
     """The gate and the ratio direction against cases whose verdict is known. Needs no server."""
-    cases: list[tuple[str, list[dict[str, Any]], float, bool]] = [
-        ("a ratio below the ceiling", [{"ratio": 0.5}], 1.0, True),
-        ("a ratio at the ceiling", [{"ratio": 1.0}], 1.0, True),
-        ("a ratio above the ceiling", [{"ratio": 1.5}], 1.0, False),
-        ("the worst of several cells", [{"ratio": 0.5}, {"ratio": 1.5}], 1.0, False),
-        ("no cell measured", [], 1.0, False),
+    cases: list[tuple[str, list[dict[str, Any]], float, set[int], bool]] = [
+        ("a gated ratio below the ceiling", [{"sessions": 1, "ratio": 0.5}], 1.0, {1, 8}, True),
+        ("a gated ratio at the ceiling", [{"sessions": 8, "ratio": 1.0}], 1.0, {1, 8}, True),
+        ("a gated ratio above the ceiling", [{"sessions": 1, "ratio": 1.5}], 1.0, {1, 8}, False),
+        (
+            "the worst of several gated cells",
+            [{"sessions": 1, "ratio": 0.5}, {"sessions": 8, "ratio": 1.5}],
+            1.0,
+            {1, 8},
+            False,
+        ),
+        # A saturated cell is recorded, never gated, however high its ratio sits.
+        (
+            "a saturated cell does not gate",
+            [{"sessions": 1, "ratio": 0.5}, {"sessions": 32, "ratio": 1.5}],
+            1.0,
+            {1, 8},
+            True,
+        ),
+        (
+            "only a saturated cell was measured",
+            [{"sessions": 32, "ratio": 0.5}],
+            1.0,
+            {1, 8},
+            False,
+        ),
+        ("no cell measured", [], 1.0, {1, 8}, False),
     ]
-    verdicts = [(name, verdict(cells, ceiling)[0], want) for name, cells, ceiling, want in cases]
+    verdicts = [
+        (name, verdict(cells, ceiling, gated)[0], want)
+        for name, cells, ceiling, gated, want in cases
+    ]
     # The ratio's direction: GCM is the numerator, so twice pgcrypto is 2.0 and fails, not 0.5.
     directions = [
         ("the two sides equal is 1.0", ratio(1.0, 1.0), 1.0),
@@ -268,19 +305,29 @@ def main() -> int:
     ]
     samples = args.samples if args.samples is not None else int(baseline["samples"])
     pattern = str(baseline.get("pattern", PATTERN))
+    # Absent `gated_sessions`, every session gates (a caller that overrides --sessions still gates).
+    gated_sessions = {int(value) for value in baseline.get("gated_sessions", sessions)}
 
     cells = []
     for count in rows:
         for session_count in sessions:
             cell = measure_cell(count, session_count, samples, pattern)
+            cell["gated"] = session_count in gated_sessions
             cells.append(cell)
             print(
                 f"{count:>7} rows, {session_count:>2} sessions: {cell['ratio']:.3f}"
+                f" ({'gated' if cell['gated'] else 'recorded'})"
                 f" (gcm {cell['gcm_p95_ms']} ms vs pgcrypto {cell['pgcrypto_p95_ms']} ms)",
                 file=sys.stderr,
             )
 
-    passed, worst = verdict(cells, ceiling)
+    passed, worst = verdict(cells, ceiling, gated_sessions)
+    if not any(cell["gated"] for cell in cells):
+        print(
+            "load: no gated session was measured — --sessions must include one of "
+            f"{sorted(gated_sessions)} for the gate to apply",
+            file=sys.stderr,
+        )
     json.dump(
         {
             "baseline": args.baseline,
@@ -295,7 +342,7 @@ def main() -> int:
     )
     sys.stdout.write("\n")
     print(
-        f"load: worst ratio {worst:.3f} against a ceiling of {ceiling}; gate: {passed}",
+        f"load: worst gated ratio {worst:.3f} against a ceiling of {ceiling}; gate: {passed}",
         file=sys.stderr,
     )
     return 0 if passed else 1
