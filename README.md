@@ -4,10 +4,10 @@
 
 > **Implemented to the specification, not released — not for use yet.** The envelope format is
 > defined in [`spec/envelope.md`](spec/envelope.md) with test vectors beside it, and the extension on
-> `develop` implements it: its unit suite runs every vector and its regression suite every envelope
-> vector, on PostgreSQL 15–18. The end-to-end tests with replication, the load gate, the operational
-> constraints document and release packaging are still to come, and the format may change until
-> 0.1.0. The plan, decisions and open questions are in [`docs/design.md`](docs/design.md); the
+> `develop` implements it: its unit suite runs every vector, its regression suite every envelope
+> vector, and an end-to-end suite runs the functions on a primary and a streaming replica, on
+> PostgreSQL 15–18. The load gate, the operational constraints document and release packaging are
+> still to come, and the format may change until 0.1.0. The plan, decisions and open questions are in [`docs/design.md`](docs/design.md); the
 > working rules for people and coding agents are in [`AGENTS.md`](AGENTS.md).
 
 SQL surface:

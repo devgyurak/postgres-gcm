@@ -9,7 +9,7 @@ Order (if a step fails, skip the rest and say so):
 1. `cmake -S tests/unit -B build/unit && cmake --build build/unit -j && ctest --test-dir build/unit --output-on-failure`
 2. `scripts/build-in-docker.sh <major>` (17 when none is given)
 3. `scripts/dev-up.sh <major>` → `scripts/verify.sh <major>` (the dev-container and regress-tests skills)
-4. On request: `docker compose -f tests/e2e/compose.yml up --exit-code-from runner`, and
+4. On request: `scripts/e2e.sh <major>` (the end-to-end suite of `tests/e2e/compose.yml`), and
    `python tests/load/run.py --rows 100000 --baseline pgcrypto` (the gate is `tests/load/baseline.json`)
 5. For Phase S, quote each labelled row of `scripts/verify.sql` verbatim, the unit suite's
    counting-allocator numbers, and what `ldd` shows for `libcrypto` in the server and in `pg_gcm.so`.
