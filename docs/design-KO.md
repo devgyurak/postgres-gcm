@@ -4,7 +4,7 @@
 
 > 이 문서는 `docs/design.md` 의 번역이다. 두 문서가 다르면 영어 문서가 맞고, 이 번역을 고친다.
 
-상태: **Phase 4 — 배포: 구현되어 pull request 에서 green 이고, 완료 기준은 아직 미충족** (2026-10-13).
+상태: **Phase 5 — 생태계: PGXN 패키징을 갖췄고, Phase 4 의 완료 기준은 아직 미충족** (2026-10-13).
 확장이 명세 — `spec/envelope.md` 와 `spec/test-vectors.json` — 를
 구현한다. 세 가지 키 길이, AAD 가 있는 형태와 없는 형태, `pg_gcm.strict` 와 `pg_gcm.min_key_bytes` 까지다.
 코어는 단위 테스트에서 모든 벡터를, SQL 함수는 회귀 테스트에서 모든 봉투 벡터를 실행하고, E2E 스위트는
@@ -13,10 +13,10 @@ primary 와, primary 가 봉인한 것을 재생만 한 스트리밍 replica 에
 마이크로 벤치마크는 봉인과 열기를 bare OpenSSL EVP 와 비교해 감시한다 ([`docs/perf.md`](perf.md)).
 운영 제약은 별도 문서 [`docs/ops-constraints.md`](ops-constraints.md) 에 있고, 릴리스 파이프라인이
 tarball 과 그 체크섬, SBOM, 그리고 extension 을 미리 설치한 `postgres:<major>` 이미지를 만든다.
-**두 성능 게이트는 아직 placeholder 이고 GitHub 러너에서 한 번도 돌지 않았다** (§8 O17). 따라서 완료
-기준은 충족되지 않았다. **릴리스된 것은 없고 아직 쓸 수 있는 단계가 아니다**: tag 를 자르지 않았고
-0.1.0 까지 형식이 바뀔 수
-있다. 설계가 기대는 PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 에
+PGXN 메타데이터와 소스 배포 파이프라인도 갖춰져 있다 (§4, Phase 5). 이것 역시 연습만 되고 끝에서
+끝까지 관찰되지는 않았다: 아무것도 업로드되지 않았다. **두 성능 게이트는 아직 placeholder 이고 GitHub
+러너에서 한 번도 돌지 않았다** (§8 O17). 따라서 완료 기준은 충족되지 않았다. **릴리스된 것은 없고
+아직 쓸 수 있는 단계가 아니다**: tag 를 자르지 않았고 0.1.0 까지 형식이 바뀔 수 있다. 설계가 기대는 PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 에
 기록되어 있거나, §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식 이미지와
 대조했고, 스파이크 실행, 명세 작성, 구현을 명세에 맞추는 일은 2026-10-12 에, E2E 스위트 실행과 배포는
 2026-10-13 에 했으며, 각각에서 확인된 것을 §8 에 적었다.
@@ -290,9 +290,21 @@ keyless 서명, SBOM 을 게시한다. `workflow_dispatch` 실행은 dry run 이
 두 성능 게이트는 `docs/perf.md` 다. 게이트와 이미지가 실제로 무엇을 하는지, 무엇이 아직 기록되지
 않았는지는 §8 "Phase 4 에서 확인된 것" 에 있다.
 
-### Phase 5 — 생태계 (선택)
+### Phase 5 — 생태계
 
-PGXN, 수요가 있으면 배포판 패키징.
+PGXN, 그다음 수요가 있으면 배포판 패키징. `META.json` 은 배포본의 메타데이터다 (PGXN Meta Spec
+1.0.0). `scripts/check-pgxn.py` 는 그것을 그 명세 — PGXN Manager 자신이 강제하는 규칙 — 에 대해
+검증하고, 명세가 할 수 없는 교차 검사를 더한다: 버전이 `pg_gcm.control` 과 일치하는지, 제공하는
+`file` 과 `docfile` 이 존재하는지, extension 버전이 배포본 버전과 같은지. `scripts/pgxn-dist.sh`
+는 소스 아카이브 `pg_gcm-<version>.zip` 을 `git archive HEAD` 로 쓴다 — 최상위 디렉터리 하나가
+`pg_gcm-<version>/` 인, PGXN Manager 가 기대하는 배치다 — 그리고 `dist/` 바깥의 디렉터리에 쓰므로
+체크섬이 붙는 릴리스 산출물에 끼지 않는다. `release.yml` 의 `publish` job 은 메타데이터를 검증하고
+아카이브를 만든 뒤, tag 일 때만 HTTP Basic 인증으로 PGXN Manager 에 업로드한다. `workflow_dispatch`
+는 아카이브를 검증·생성만 하고 업로드하지 않는다. 배포본은 0.1.0 이 pre-release 인 동안
+`release_status` 가 "testing" 이다: 봉투 형식이 아직 바뀔 수 있고 프로젝트가 아직 쓸 수 있는 단계가
+아니므로, PGXN 이 그것을 stable 설치로 제공해서는 안 된다. 배포판 패키징 (Debian, RPM) 은 수요를
+기다리며 만들지 않는다. 검사기와 아카이브가 실제로 무엇을 하는지, 무엇이 아직 기록되지 않았는지는
+§8 "Phase 5 에서 확인된 것" 에 있다.
 
 ## 5. 설계 결정과 근거
 
@@ -842,6 +854,41 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   Open O17 의 placeholder 이지 그 러너의 측정이 아니다. `docs/perf.md` 도 그렇게 말한다. tag 를 자른
   적이 없고 릴리스도 게시하지 않았으므로 파이프라인은 연습만 되고 끝에서 끝까지 관찰되지는 않았으며,
   배포 이미지는 smoke 테스트만 됐다.
+
+### Phase 5 에서 확인된 것 (2026-10-13)
+
+여기서 "실행" 은 개발 장비에서 이 저장소의 스크립트를 돌린 것이다. 아무것도 업로드하지 않았고 tag 도
+자르지 않았으므로, PGXN 경로는 연습만 되고 끝에서 끝까지 관찰되지는 않았다.
+
+- **`META.json`.** 배포본 메타데이터는 PGXN Meta Spec 1.0.0 이다: `name` 은 `pg_gcm`, SemVer
+  `version` 은 `pg_gcm.control` 과 일치하고, `license` 는 `postgresql`, `provides` 는 extension 을
+  지목하며 그 `file` 은 버전이 붙은 SQL 스크립트, `docfile` 은 `README.md` 다.
+  `prereqs.runtime.requires.PostgreSQL` 하한은 15.0.0 이고, 저장소·버그 트래커·홈페이지는
+  `resources` 에, `tags` 는 검색을 위해 있다. `release_status` 는 `testing` 이다: 0.1.0 은
+  pre-release 이고 — 봉투 형식이 아직 바뀔 수 있으며 아직 쓸 수 있는 단계가 아니므로 — PGXN 이
+  그것을 stable 설치로 제공해서는 안 된다. `no_index` 는 에이전트 설정, CI 파일, 개발 스크립트를
+  PGXN 문서 색인에서 제외한다.
+- **검사기.** `scripts/check-pgxn.py` 는 그 명세의 규칙, 즉 PGXN Manager 가 강제하는 규칙을
+  구현하고, 명세가 할 수 없는 교차 검사를 더한다: 제어 파일에 대한 버전, 작업 트리에 대한 제공
+  `file`·`docfile`, 배포본 버전에 대한 extension 버전, 그리고 `pg_gcm` extension. `--self-test` 는
+  유효한 문서를 한 번에 한 가지씩 깨뜨린다 — 24 가지 깨뜨림과 유효한 문서 자신 — 그리고 각각이
+  잡히기를 요구한다. 관측: 25 가지 모두. lint 워크플로가 검사기와 그 `--self-test` 를 실행한다.
+- **아카이브.** `scripts/pgxn-dist.sh` 는 검사기를 통해 버전을 읽고, 더러운 작업 트리를 거부하며,
+  `git archive HEAD` 와 접두사 `pg_gcm-<version>/` 로 `pg_gcm-<version>.zip` 을 쓴다. 그런 다음
+  아카이브를 열어 접두사 아래에 `META.json`, `Makefile`, `pg_gcm.control` 이 있는지, 최상위
+  디렉터리가 정확히 하나인지, 아카이브 자체의 `META.json` 버전이 이름과 맞는지 요구한다. 관측:
+  tag 가 붙은 트리의 아카이브는 그 모두를 통과했고, 커밋되지 않은 변경이 있는 작업 트리는
+  거부됐다.
+- **릴리스 단계.** `release.yml` 의 `publish` job 은 아카이브를 `dist/` 바깥에 만들어 체크섬이
+  붙는 산출물에 끼지 않게 하고, tag 일 때만 GitHub release 전에 `manager.pgxn.org/upload` 로
+  업로드한다: `curl` 에 HTTP Basic 인증, multipart 필드 `archive`, 그리고
+  `X-Requested-With: XMLHttpRequest` — 성공은 `200`, 거부된 배포본은 `409` 다. `PGXN_USER` 와
+  `PGXN_PASSWORD` 는 저장소 secret 이다. `workflow_dispatch` 실행은 아카이브를 검증·생성만 하고
+  아무것도 업로드하지 않는다.
+- **보여주지 않는 것.** 아카이브를 풀어 빌드·설치해 본 적이 없고 업로드도 실행된 적이 없다:
+  아카이브의 소스는 `build` 와 `regress` 워크플로가 컴파일하는 바로 그 추적 파일들이고, 업로드는
+  첫 tag 를 위해 남겨 둔다. 메타데이터는 아직 PGXN Manager 자체 검증기를 거친 적이 없다. 배포판
+  패키징 (Debian, RPM) 은 만들지 않는다 (Phase 5 는 수요를 위해 남겨 둔다).
 
 ### 미확인
 

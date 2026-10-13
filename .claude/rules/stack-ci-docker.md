@@ -43,6 +43,8 @@ paths:
 - Secrets come from GitHub Secrets only.
 - Release artifacts: `pg_gcm-<ver>-pg<major>-<arch>.tar.gz` plus `SHA256SUMS`, its signature and an
   SBOM. Tags are SemVer `vMAJOR.MINOR.PATCH` on `main`, with a `## <version>` section in `CHANGELOG.md`.
+  A PGXN release also uploads `pg_gcm-<version>.zip` — the source archive `scripts/pgxn-dist.sh` builds
+  and `scripts/check-pgxn.py` validates — which is not a checksummed asset.
 - Shell scripts: `#!/usr/bin/env bash`, `set -euo pipefail`, clean under `shellcheck`, usage on no args,
   and runnable by macOS's bash 3.2. A gate that ran nothing fails: `verify.sh` counts the regression
   results and refuses a build older than the sources.

@@ -19,6 +19,7 @@ from source.
 | 4 | `load.yml` | nightly, dispatch | load gate against pgcrypto |
 | 4 | `bench.yml` | merges, nightly | core micro-benchmark ratio gate |
 | 4 | `release.yml` | tag `v*`, dispatch (dry run) | guard (SemVer, tag on `main`, `## <version>` in CHANGELOG) → package every supported major on amd64 and arm64 → smoke each tarball → build and smoke the server image, then push and sign it (tag only) → SBOM, checksums, sign, publish |
+| 5 | `release.yml` (`publish`) | tag `v*`, dispatch (dry run) | validate `META.json` and build the PGXN source archive (`check-pgxn.py`, `pgxn-dist.sh`), then upload it to PGXN Manager (tag only) before the GitHub release |
 
 The workflows call the same scripts a developer runs, so a failure reproduces locally with one
 command. Each takes its matrix from `scripts/ci-matrix.py` (`all`, or `unit`: one image per
@@ -41,6 +42,12 @@ its file is on `main`.
   image ahead of a failed package.
 - The SBOM is written before `SHA256SUMS`, which covers the SBOM's own file; the checksums are
   signed keyless, and the GitHub release is created last.
+- PGXN: `scripts/pgxn-dist.sh` validates `META.json` (`scripts/check-pgxn.py`) and writes the
+  source archive `pg_gcm-<version>.zip` with `git archive HEAD` into a directory outside `dist/`,
+  so it never joins the checksummed assets. The `publish` job uploads it to PGXN Manager
+  (`curl`, HTTP Basic auth, the multipart field `archive`) on a tag only, before the GitHub
+  release; a dispatch run builds and validates it and uploads nothing. `PGXN_USER` and
+  `PGXN_PASSWORD` are repository secrets. Distribution packages (Debian, RPM) are not built.
 - The `server` and `publish` jobs run in the `release` environment; give it required reviewers
   and protect `v*` tags, because a tag push runs this workflow from the tagged commit and the
   guard cannot refuse whoever can push a tag.

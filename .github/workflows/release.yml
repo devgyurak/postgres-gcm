@@ -169,6 +169,24 @@ jobs:
             --output-signature dist/SHA256SUMS.sig \
             --output-certificate dist/SHA256SUMS.pem \
             dist/SHA256SUMS
+      # PGXN: `pgxn-dist.sh` validates META.json and builds the source archive outside dist/, so
+      # it never joins the checksummed assets; the upload itself is a tag only, after the signed
+      # checksums and before the GitHub release (scripts/check-pgxn.py, scripts/pgxn-dist.sh).
+      - name: Build the PGXN source distribution
+        run: scripts/pgxn-dist.sh "$RUNNER_TEMP/pgxn"
+      - name: Upload the distribution to PGXN
+        if: github.event_name == 'push'
+        env:
+          PGXN_USER: ${{ secrets.PGXN_USER }}
+          PGXN_PASSWORD: ${{ secrets.PGXN_PASSWORD }}
+        run: |
+          version="${{ needs.guard.outputs.version }}"
+          curl --fail-with-body --silent --show-error \
+            --user "$PGXN_USER:$PGXN_PASSWORD" \
+            --header 'Accept: application/json' \
+            --header 'X-Requested-With: XMLHttpRequest' \
+            --form "archive=@$RUNNER_TEMP/pgxn/pg_gcm-$version.zip" \
+            https://manager.pgxn.org/upload
       - name: Publish the release
         if: github.event_name == 'push'
         env:

@@ -2,7 +2,7 @@
 
 English | [한국어](design-KO.md)
 
-Status: **Phase 4 — distribution: implemented and green on a pull request, its completion criterion
+Status: **Phase 5 — ecosystem: the PGXN packaging is in place; Phase 4's completion criterion is
 still open** (2026-10-13). The extension implements the specification — `spec/envelope.md`,
 with `spec/test-vectors.json` — for the three key sizes, with and without AAD, with `pg_gcm.strict` and
 `pg_gcm.min_key_bytes`. Its core runs every vector in the unit suite, its SQL functions every envelope
@@ -11,7 +11,9 @@ replica that only replayed what the primary sealed, on PostgreSQL 15–18 (§4, 
 the decrypt-and-`LIKE` scan against `pgcrypto`, and core micro-benchmarks watch the seal and the open
 against bare OpenSSL EVP ([`docs/perf.md`](perf.md)). The operational constraints are their own
 document, [`docs/ops-constraints.md`](ops-constraints.md), and a release pipeline builds the tarballs,
-their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. **Both
+their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. The PGXN metadata and the source-
+distribution pipeline are also in place (§4, Phase 5), and they, too, are exercised but not
+observed end to end: nothing has been uploaded. **Both
 performance gates are still placeholders that have never run on a GitHub runner** (§8 O17), so the
 completion criterion is not met. **Nothing is released and it is not for use yet**: no tag has been cut
 and the format may change until 0.1.0.
@@ -303,9 +305,22 @@ are `docs/ops-constraints.md`, and the load baseline and both performance gates 
 `docs/perf.md`. §8 "Established in Phase 4" records what the gates and the image were observed to
 do, and what is left to record.
 
-### Phase 5 — ecosystem (optional)
+### Phase 5 — ecosystem
 
-PGXN, then distribution packaging if there is demand.
+PGXN, then distribution packaging if there is demand. `META.json` is the distribution's metadata
+(PGXN Meta Spec 1.0.0). `scripts/check-pgxn.py` validates it against that specification — the rules
+PGXN Manager itself enforces — and cross-checks what the specification cannot: the version agrees
+with `pg_gcm.control`, the provided `file` and `docfile` exist, and the extension version equals
+the distribution version. `scripts/pgxn-dist.sh` writes the source archive
+`pg_gcm-<version>.zip` with `git archive HEAD` — whose single top-level directory is
+`pg_gcm-<version>/`, the layout PGXN Manager expects — into a directory outside `dist/`, so it
+never joins the checksummed release assets. `release.yml`'s `publish` job validates the metadata,
+builds the archive, and, on a tag only, uploads it to PGXN Manager with HTTP Basic authentication;
+`workflow_dispatch` builds and validates the archive and uploads nothing. The distribution is
+labelled `release_status` "testing" while 0.1.0 is pre-release: the envelope format may still
+change and the project is not for use, so PGXN must not offer it as a stable install. Distribution
+packages (Debian, RPM) await demand and are not built. §8 "Established in Phase 5" records what
+the checker and the archive were observed to do, and what is left to record.
 
 ## 5. Design decisions and rationale
 
@@ -903,6 +918,43 @@ take a gate; nothing was tagged and nothing was released.
   placeholder of §8 Open O17, not a measurement of that runner; `docs/perf.md` says so. No tag
   has been cut and no release published, so the pipeline is exercised but not yet observed end
   to end, and the distribution image is smoke-tested only.
+
+### Established in Phase 5 (2026-10-13)
+
+"Run" here is this repository's scripts on the development machine; nothing was uploaded and no tag
+was cut, so the PGXN path is exercised but not observed end to end.
+
+- **`META.json`.** The distribution metadata is PGXN Meta Spec 1.0.0: `name` `pg_gcm`, a SemVer
+  `version` that agrees with `pg_gcm.control`, `license` `postgresql`, `provides` naming the
+  extension with the versioned SQL script as its `file` and `README.md` as its `docfile`, a
+  `prereqs.runtime.requires.PostgreSQL` floor of 15.0.0, the repository, bug tracker and homepage
+  as `resources`, and `tags` for search. `release_status` is `testing`: 0.1.0 is pre-release — the
+  envelope format may change and nothing is for use — so PGXN must not offer it as a stable
+  install. `no_index` keeps the agent configuration, the CI files and the development scripts out
+  of PGXN's documentation index.
+- **The checker.** `scripts/check-pgxn.py` implements the specification's rules, the ones PGXN
+  Manager enforces, and adds the cross-checks the specification cannot make: the version against
+  the control file, the provided `file` and `docfile` against the working tree, the extension
+  version against the distribution version, and the `pg_gcm` extension. `--self-test` breaks a
+  valid document one way at a time — 24 breaks plus the valid document itself — and requires each
+  to be caught; observed, all 25. The lint workflow runs the checker and its `--self-test`.
+- **The archive.** `scripts/pgxn-dist.sh` reads the version through the checker, refuses a dirty
+  working tree, and writes `pg_gcm-<version>.zip` with `git archive HEAD` and the prefix
+  `pg_gcm-<version>/`. It then opens the archive and requires `META.json`, `Makefile` and
+  `pg_gcm.control` at the prefix, exactly one top-level directory, and a version in the archive's
+  own `META.json` that matches its name. Observed: an archive of the tagged tree passed all of
+  that, and a working tree with an uncommitted change was refused.
+- **The release step.** `release.yml`'s `publish` job builds the archive outside `dist/`, so it
+  never joins the checksummed assets, and uploads it to `manager.pgxn.org/upload` on a tag only,
+  before the GitHub release: `curl` with HTTP Basic authentication, the multipart field `archive`,
+  and `X-Requested-With: XMLHttpRequest` so success is `200` and a rejected distribution is `409`.
+  `PGXN_USER` and `PGXN_PASSWORD` are repository secrets. A `workflow_dispatch` run validates and
+  builds the archive and uploads nothing.
+- **What it does not show.** No archive has been extracted, built and installed, and no upload has
+  run: the archive's sources are the same tracked files the `build` and `regress` workflows
+  compile, and the upload is left for the first tag. The metadata has not yet been through PGXN
+  Manager's own validator. Distribution packages (Debian, RPM) are not built (Phase 5 keeps them
+  for demand).
 
 ### Open
 

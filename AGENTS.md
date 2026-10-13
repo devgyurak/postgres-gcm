@@ -85,6 +85,7 @@ src/                           The extension (C11)
   envelope.{h,c}               Envelope encoding and decoding (no OpenSSL either)
   nonce.{h,c}                  The synthetic nonce and the nonce_key derivation (EVP_MAC HMAC-SHA256)
 pg_gcm.control                 Extension control file
+META.json                      The PGXN distribution metadata (PGXN Meta Spec 1.0.0)
 sql/pg_gcm--0.1.0.sql          The extension's install script (function declarations)
 Makefile                       PGXS build (`make USE_PGXS=1`)
 test/sql/, test/expected/      pg_regress suites — the real-server SQL scenarios (`make installcheck`)
@@ -94,7 +95,8 @@ tests/load/                    Load: decrypt + LIKE over 10k/100k/300k rows, gat
 tests/bench/                   Core micro-benchmarks (Google Benchmark) — ratios against bare EVP
 scripts/                       dev-up.sh, build-in-docker.sh, verify.sh (+ verify.sql), unit-in-docker.sh, e2e.sh, load.sh,
                                bench.sh, server-image.sh, smoke-image.sh, smoke-tarball.sh, package.sh (+ sbom.py, release-guard.py),
-                               agents-sync.sh, check-architecture.py, check-action-pins.py, check-vectors.py, ci-matrix.py, lib.sh
+                               pgxn-dist.sh (+ check-pgxn.py), agents-sync.sh, check-architecture.py, check-action-pins.py,
+                               check-vectors.py, ci-matrix.py, lib.sh
 scripts/spike/                 The Phase S measurements (measure.sh, ldd.sh, a never-shipped probe module)
 docker/                        build.Dockerfile, server.Dockerfile, initdb.d/, versions.json
 .github/workflows/             CI — added per phase (ci-release skill)
@@ -113,6 +115,7 @@ docker/                        build.Dockerfile, server.Dockerfile, initdb.d/, v
 | Core benchmarks | `scripts/bench.sh 17` (after the build image: the core's seal and open against bare OpenSSL EVP, gated as ratios) | `e2e-load-tests` |
 | Distribution image | `scripts/server-image.sh 17 [tag]` then `scripts/smoke-image.sh <tag>` (before anything is pushed) | `ci-release` |
 | Release artifacts | `scripts/package.sh 17 arm64 [outdir]`, `scripts/smoke-tarball.sh 17 <tarball>`, `python3 scripts/sbom.py …`, `python3 scripts/release-guard.py …` | `ci-release` |
+| PGXN source distribution | `scripts/check-pgxn.py`, `scripts/pgxn-dist.sh [outdir]` | `ci-release` |
 | Spec vectors | `python3 scripts/check-vectors.py`, and `--self-test` (needs `pip install -r scripts/requirements-lint.txt`) | `unit-tests` |
 | Architecture boundaries | `python3 scripts/check-architecture.py` | `.agents/rules/architecture.md` |
 | Agent adapters | `scripts/agents-sync.sh [--check]` | this file, §7 |
@@ -172,7 +175,7 @@ different build method on your own.
 
 ## 6. Current phase and roadmap
 
-Current: **Phase 4 — distribution: implemented and green on a pull request, its completion criterion
+Current: **Phase 5 — ecosystem: the PGXN packaging is in place; Phase 4's completion criterion is
 still open (2026-10-13).** The extension implements `spec/envelope.md`: the three suites by key
 length, the AAD overloads, `pg_gcm.strict` and `pg_gcm.min_key_bytes`. The unit suite runs all 78
 vectors of `spec/test-vectors.json`, the regression suite the 63 envelope vectors, and the
@@ -180,10 +183,12 @@ end-to-end suite its scenarios on a primary and on a streaming replica, on 15–
 `build`, `regress` and `e2e` workflows run them. A load gate watches the decrypt-and-`LIKE` scan
 against `pgcrypto` and core micro-benchmarks watch the seal and the open against bare OpenSSL EVP
 (`docs/perf.md`), the distribution image and the release pipeline exist, and the operational
-constraints are `docs/ops-constraints.md`. **The completion criterion is not met yet:** both
+constraints are `docs/ops-constraints.md`. The PGXN metadata (`META.json`) and the source-distribution
+pipeline (`scripts/check-pgxn.py`, `scripts/pgxn-dist.sh`, the `publish` job of `release.yml`) are in
+place, and nothing has been uploaded. **The completion criterion is not met yet:** both
 performance gates are placeholders that have never run on a GitHub runner — `bench.yml` and
 `load.yml` are on this branch, and a scheduled or dispatched run reads them from the default
-branch — so design §8 Open O17 stays open, and Phase 5 waits on that recording. **Nothing is
+branch — so design §8 Open O17 stays open. **Nothing is
 released and it is not for use yet**: no tag has been cut and the format may change until 0.1.0.
 
 | Phase | Deliverable | Done when |
@@ -193,7 +198,7 @@ released and it is not for use yet**: no tag has been cut and the format may cha
 | 2 implementation | `src/`, `tests/unit`, `test/sql` | CI green, including the nonce collision boundary test |
 | 3 SQL E2E | `tests/e2e` | Round trip, Korean `LIKE` and streaming replication pass |
 | 4 distribution | Build matrix, packaging and the release pipeline, the distribution image, the load gate and the core micro-benchmarks (`docs/perf.md`), `docs/ops-constraints.md` and the README | Release artifacts plus checksums, a signature and an SBOM; a server image with the extension preinstalled; both performance gates run in CI |
-| 5 ecosystem | PGXN, distribution packages | Optional |
+| 5 ecosystem | The PGXN metadata and source distribution — `META.json`, `scripts/check-pgxn.py`, `scripts/pgxn-dist.sh` and the PGXN upload in `release.yml`; distribution packages await demand | `META.json` valid against the PGXN Meta Spec and cross-checked with the control file and the tree; the archive is the PGXN layout; a tag uploads it to PGXN Manager |
 
 ## 7. Where each tool's agent configuration lives
 
