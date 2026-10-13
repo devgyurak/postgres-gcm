@@ -7,7 +7,12 @@ database come from the PG* variables libpq reads. tests/e2e/compose.yml sets all
 
 The results go to stdout as JSON, one line per scenario to stderr as it finishes, and the
 exit status is the gate: 0 only when every scenario that unittest ran is one this runner
-recorded as passed, and at least one ran. A scenario that was skipped has not passed.
+recorded as passed, at least one ran, and the scenarios shared by the two nodes are the same
+non-empty set on each. A scenario that was skipped has not passed.
+
+    run.py --self-test    check the gate itself, with no server: it must refuse a failure, an
+                          error, a skip, a failing subtest, an unexpected success and an
+                          empty run, and accept a run that passed
 """
 
 from __future__ import annotations
@@ -67,6 +72,69 @@ def gate(suite: unittest.TestSuite) -> tuple[Recorder, bool]:
     return recorder, verdict
 
 
+def same_scenarios_on_both_nodes() -> bool:
+    """The shared scenarios reach the loader through both node classes, and are not none."""
+    names = unittest.defaultTestLoader.getTestCaseNames
+    on_primary = names(scenarios.OnThePrimary)
+    return len(on_primary) > 0 and on_primary == names(scenarios.OnTheReplica)
+
+
+class _Passes(unittest.TestCase):
+    def test_passes(self) -> None:
+        self.assertTrue(True)
+
+
+class _Fails(unittest.TestCase):
+    def test_fails(self) -> None:
+        self.assertTrue(False)
+
+
+class _Errors(unittest.TestCase):
+    def test_errors(self) -> None:
+        raise RuntimeError("an error, not a failure")
+
+
+class _Skips(unittest.TestCase):
+    @unittest.skip("a skipped scenario has not passed")
+    def test_skips(self) -> None:
+        self.assertTrue(True)
+
+
+class _FailsInASubtest(unittest.TestCase):
+    def test_fails_in_a_subtest(self) -> None:
+        with self.subTest("the part that fails"):
+            self.assertTrue(False)
+
+
+class _SucceedsUnexpectedly(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_succeeds_unexpectedly(self) -> None:
+        self.assertTrue(True)
+
+
+def self_test() -> int:
+    """The gate against runs whose verdict is known. Needs no server."""
+    load = unittest.defaultTestLoader.loadTestsFromTestCase
+    expected = [
+        (_Passes, True),
+        (_Fails, False),
+        (_Errors, False),
+        (_Skips, False),
+        (_FailsInASubtest, False),
+        (_SucceedsUnexpectedly, False),
+    ]
+    verdicts = [(case.__name__, gate(load(case))[1], want) for case, want in expected]
+    verdicts.append(("an empty run", gate(unittest.TestSuite())[1], False))
+    wrong = [name for name, got, want in verdicts if got != want]
+    shared = same_scenarios_on_both_nodes()
+    print(
+        f"end-to-end self-test: {len(verdicts) - len(wrong)} of {len(verdicts)} gate verdicts"
+        f" as expected; the two nodes share their scenarios: {shared}; wrong: {wrong}",
+        file=sys.stderr,
+    )
+    return 0 if not wrong and shared else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument(
@@ -75,11 +143,15 @@ def main() -> int:
         default=scenarios.replay_timeout,
         help="seconds the replica is given to replay the primary's writes (default: %(default)s)",
     )
+    parser.add_argument("--self-test", action="store_true", help="check the gate; no server")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
     scenarios.replay_timeout = args.replay_timeout
 
     scenarios.set_up_cluster()
     recorder, verdict = gate(unittest.defaultTestLoader.loadTestsFromModule(scenarios))
+    verdict = verdict and same_scenarios_on_both_nodes()
 
     passed = sum(1 for outcome in recorder.outcomes if outcome["outcome"] == "ok")
     json.dump(
