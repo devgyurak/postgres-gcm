@@ -5,7 +5,9 @@
 #
 # One responsibility: a server that already has the extension. No test path depends on this
 # image — tests install the build into the official image themselves (.agents/rules/stack-ci-docker.md).
-ARG BASE
+# A default so a bare `docker build` has a base; scripts/server-image.sh always overrides it with
+# the digest-pinned reference from docker/versions.json.
+ARG BASE=postgres:17-bookworm
 FROM ${BASE}
 
 # The extension, into the directories this server's pg_config names, then the init script that
@@ -23,6 +25,7 @@ RUN set -eux; \
 COPY initdb.d/ /docker-entrypoint-initdb.d/
 
 # The image's own entrypoint runs /docker-entrypoint-initdb.d on first init. The check is TCP:
-# the image's init-time server answers on the socket before the real server is up.
-HEALTHCHECK --interval=1s --timeout=3s --start-period=5s --retries=120 \
+# the image's init-time server answers on the socket before the real server is up. A normal
+# production cadence, not a one-second poll — scripts/smoke-image.sh waits on this status.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
   CMD pg_isready -h 127.0.0.1 -U "${POSTGRES_USER:-postgres}" || exit 1

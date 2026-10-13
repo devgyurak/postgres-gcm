@@ -66,6 +66,9 @@ def build(version: str, postgresql: str, openssl: str, artifacts: list[Path]) ->
         }
         for artifact in artifacts
     ]
+    # The extension is the BOM's subject: it lives in metadata.component, and its bom-ref is
+    # referenced once by dependencies. Listing it in components again would repeat a bom-ref,
+    # which CycloneDX 1.5 requires to be unique within the BOM.
     return {
         "bomFormat": BOM_FORMAT,
         "specVersion": SPEC_VERSION,
@@ -74,7 +77,7 @@ def build(version: str, postgresql: str, openssl: str, artifacts: list[Path]) ->
             "component": extension,
             "tools": [{"vendor": "pg_gcm", "name": "scripts/sbom.py", "version": version}],
         },
-        "components": [extension, server, crypto, *files],
+        "components": [server, crypto, *files],
         "dependencies": [
             {"ref": extension["bom-ref"], "dependsOn": [server["bom-ref"], crypto["bom-ref"]]}
         ],
@@ -85,14 +88,19 @@ def self_test() -> int:
     """The document's shape, from fixed inputs: no artifact and no server."""
     document = build("0.1.0", "15-18", "3.0+", [])
     names = {component["name"] for component in document["components"]}
+    refs = [document["metadata"]["component"]["bom-ref"]] + [
+        component["bom-ref"] for component in document["components"]
+    ]
     checks = {
         "the format and spec version": (document["bomFormat"], document["specVersion"])
         == (BOM_FORMAT, SPEC_VERSION),
         "a metadata component named pg_gcm": document["metadata"]["component"]["name"] == "pg_gcm",
-        "the server and libcrypto are components": names >= {"pg_gcm", "postgresql", "openssl"},
+        "the extension is not also a component": "pg_gcm" not in names,
+        "the server and libcrypto are components": names >= {"postgresql", "openssl"},
+        "every bom-ref is unique": len(refs) == len(set(refs)),
         "the extension depends on both": document["dependencies"][0]["dependsOn"]
         == ["pkg:generic/postgresql", "pkg:generic/openssl"],
-        "the PostgreSQL license": document["components"][0]["licenses"]
+        "the PostgreSQL license": document["metadata"]["component"]["licenses"]
         == [{"license": {"id": "PostgreSQL"}}],
     }
     wrong = [name for name, ok in checks.items() if not ok]

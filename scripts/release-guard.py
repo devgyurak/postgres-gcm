@@ -4,12 +4,12 @@
 main, and CHANGELOG.md carries a `## <version>` section.
 
     python3 scripts/release-guard.py --tag v0.1.0 --on-main true
-    python3 scripts/release-guard.py --dry-run     # print the version; guard nothing
-    python3 scripts/release-guard.py --self-test   # check these rules; no repository
+    python3 scripts/release-guard.py --print-version  # the control file's version, nothing guarded
+    python3 scripts/release-guard.py --self-test      # check these rules; no repository
 
-A `workflow_dispatch` run has no tag, so --dry-run derives the version from the control file
-and the pipeline runs without publishing (`.agents/skills/ci-release.md`). The lint workflow
-runs --self-test.
+A `workflow_dispatch` run has no tag: the guard job prints the control file's version with
+--print-version, and the pipeline runs every step except signing and publishing
+(`.agents/skills/ci-release/SKILL.md`). The lint workflow runs --self-test.
 """
 
 from __future__ import annotations
@@ -94,7 +94,6 @@ def main() -> int:
         default=False,
         help="whether the tag is an ancestor of main, computed by the workflow",
     )
-    parser.add_argument("--dry-run", action="store_true", help="print the version; guard nothing")
     parser.add_argument(
         "--print-version", action="store_true", help="print the control file's version and exit"
     )
@@ -113,11 +112,8 @@ def main() -> int:
     if args.print_version:
         print(version)
         return 0
-    if args.dry_run:
-        print(f"release-guard: dry run for version {version}; nothing is published")
-        return 0
     if not args.tag:
-        parser.error("--tag is required unless --dry-run")
+        parser.error("--tag is required unless --print-version")
 
     changelog = Path(args.changelog).read_text(encoding="utf-8")
     passed, problems = check(args.tag, args.on_main, control, changelog)

@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: PostgreSQL
 # The release pipeline: guard the tag, build and package the supported majors on both
-# architectures, build and smoke the distribution server image, then checksum, SBOM, sign and
-# publish. A
-# workflow_dispatch run is a dry run — it exercises all of that and publishes nothing
-# (.agents/skills/ci-release.md). Tags are SemVer vMAJOR.MINOR.PATCH on main.
+# architectures, smoke each tarball, build and smoke the distribution server image and sign it,
+# then checksum, SBOM, sign the checksums and publish. A workflow_dispatch run is a dry run — it
+# runs every step except signing and publishing (.agents/skills/ci-release/SKILL.md). Tags are
+# SemVer vMAJOR.MINOR.PATCH on main.
 name: release
 
 on:
@@ -77,6 +77,11 @@ jobs:
       # package.sh refuses a build older than the sources and writes the tarball and its .sha256.
       - name: Package
         run: scripts/package.sh "$IMAGE" "$ARCH" dist
+      # The shipped bytes, loaded on the architecture that built them: layer the tarball onto the
+      # official image and run the Korean LIKE round trip there. This is the only check that runs
+      # the packaged .so at all.
+      - name: Smoke the tarball
+        run: scripts/smoke-tarball.sh "$IMAGE" dist/*.tar.gz
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pg_gcm-${{ matrix.entry.image }}-${{ matrix.arch }}
@@ -84,11 +89,13 @@ jobs:
           if-no-files-found: error
 
   server:
-    needs: [guard, images]
-    # Only this job pushes to ghcr.io, so only it needs packages: write.
+    needs: [guard, images, package]
+    # Push and sign happen here, after every tarball and its smoke, so a failed package never
+    # leaves an unsigned image in ghcr.io. No other job pushes.
     permissions:
       contents: read
       packages: write
+      id-token: write
     name: server (${{ matrix.entry.label }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -110,16 +117,17 @@ jobs:
       # The Korean LIKE round trip against the image's own init, before anything is pushed.
       - name: Smoke the server image
         run: scripts/smoke-image.sh "$TAG"
-      - name: Log in to ghcr.io
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
         if: github.event_name == 'push'
-        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - name: Push the server image
+      - name: Push and sign the server image
         if: github.event_name == 'push'
-        run: docker push "$TAG"
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$TAG"
+          cosign sign --yes "$TAG"
 
   publish:
     needs: [guard, package, server]
-    if: github.event_name == 'push'
     permissions:
       contents: write # create the GitHub release
       id-token: write # cosign keyless signing
@@ -133,24 +141,28 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Checksums
-        run: |
-          cd dist
-          sha256sum pg_gcm-*.tar.gz > SHA256SUMS
-          cat SHA256SUMS
+      # The SBOM is written first so its own file is covered by the checksums and the signature.
       - name: SBOM
         run: |
           python3 scripts/sbom.py \
             --output "dist/pg_gcm-${{ needs.guard.outputs.version }}.sbom.cdx.json" \
             --version "${{ needs.guard.outputs.version }}" dist/pg_gcm-*.tar.gz
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum pg_gcm-*.tar.gz pg_gcm-*.sbom.cdx.json > SHA256SUMS
+          cat SHA256SUMS
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      # Only a real tag signs and publishes; a dry run stops after building every artifact above.
       - name: Sign the checksums (keyless)
+        if: github.event_name == 'push'
         run: |
           cosign sign-blob --yes \
             --output-signature dist/SHA256SUMS.sig \
             --output-certificate dist/SHA256SUMS.pem \
             dist/SHA256SUMS
       - name: Publish the release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
