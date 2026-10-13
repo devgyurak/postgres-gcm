@@ -7,8 +7,9 @@
 > `develop` implements it: its unit suite runs every vector, its regression suite every envelope
 > vector, and an end-to-end suite runs the functions on a primary and a streaming replica, on
 > PostgreSQL 15–18. The release packaging and the PGXN metadata are in place but no tag has been
-> cut, and the format may change until 0.1.0. The plan, decisions and open questions are in [`docs/design.md`](docs/design.md);
-> the working rules for people and coding agents are in [`AGENTS.md`](AGENTS.md).
+> cut, and the format may change until 0.1.0. The plan, decisions and open questions are in
+> [`docs/design.md`](docs/design.md); the working rules for people and coding agents are in
+> [`AGENTS.md`](AGENTS.md).
 
 PostgreSQL's `pgcrypto` has AES only in CBC, CFB and ECB, and OpenPGP; it has no AES-GCM. This
 extension adds AES-128/192/256-GCM selected by key length, and keeps partial-match search inside the
@@ -109,8 +110,8 @@ cosign verify-blob SHA256SUMS \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-PGXN and distribution packages are Phase 5. Distribution packages (Debian, RPM) are not built; the
-PGXN source distribution above is the packaging path (design §4, Phase 5).
+Distribution packages (Debian, RPM) are not built; the PGXN source distribution above is the
+packaging path (design §4, Phase 5).
 
 ## SQL surface
 

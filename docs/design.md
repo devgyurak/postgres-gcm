@@ -11,12 +11,12 @@ replica that only replayed what the primary sealed, on PostgreSQL 15–18 (§4, 
 the decrypt-and-`LIKE` scan against `pgcrypto`, and core micro-benchmarks watch the seal and the open
 against bare OpenSSL EVP ([`docs/perf.md`](perf.md)). The operational constraints are their own
 document, [`docs/ops-constraints.md`](ops-constraints.md), and a release pipeline builds the tarballs,
-their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. The PGXN metadata and the source-
-distribution pipeline are also in place (§4, Phase 5), and they, too, are exercised but not
-observed end to end: nothing has been uploaded. **Both
-performance gates are still placeholders that have never run on a GitHub runner** (§8 O17), so the
-completion criterion is not met. **Nothing is released and it is not for use yet**: no tag has been cut
-and the format may change until 0.1.0.
+their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. The
+PGXN metadata and the source-distribution pipeline are also in place (§4, Phase 5); they, too, are
+exercised but not observed end to end, and nothing has been uploaded. **Both performance gates are
+still placeholders that have never run on a GitHub runner** (§8 O17), so the completion criterion is
+not met. **Nothing is released and it is not for use yet**: no tag has been cut and the format may
+change until 0.1.0.
 Every claim about PostgreSQL behaviour that the design leans on is either cited in §9, recorded with
 its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources
 and the official images on 2026-10-10; the spike ran, the specification was written and the
