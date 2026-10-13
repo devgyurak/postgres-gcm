@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: PostgreSQL
+# The end-to-end suite: a primary, a streaming replica taken from it with pg_basebackup, and a
+# runner that only issues SQL. Run it with scripts/e2e.sh <major>, which supplies the image
+# (docker/versions.json), the build to install and two passwords generated for the run.
+#
+# Both servers are the official image; node.sh installs the build into it when the container
+# starts. Keys are the public test pattern and travel as bind parameters on the suite's own
+# network, which is not a model for a deployment (docs/design.md section 6, item 12).
+
+x-node: &node
+  image: ${PG_GCM_E2E_IMAGE:?run scripts/e2e.sh <major>, which sets this}
+  environment:
+    POSTGRES_PASSWORD: ${PG_GCM_E2E_PASSWORD:?run scripts/e2e.sh <major>, which sets this}
+    PG_GCM_E2E_REPLICATION_PASSWORD: ${PG_GCM_E2E_REPLICATION_PASSWORD:?run scripts/e2e.sh <major>, which sets this}
+  # The data directory moved in 18 (scripts/lib.sh, data_mount); nothing outlives the run.
+  tmpfs:
+    - ${PG_GCM_E2E_DATA_MOUNT:?run scripts/e2e.sh <major>, which sets this}
+  # TCP, not the socket: the image's init-time server listens on the socket only.
+  healthcheck:
+    test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+    interval: 1s
+    timeout: 3s
+    retries: 120
+
+services:
+  primary:
+    <<: *node
+    entrypoint: ["bash", "/e2e/node.sh", "primary"]
+    volumes:
+      - ${PG_GCM_E2E_BUILD:?run scripts/e2e.sh <major>, which sets this}:/pg_gcm-build:ro
+      - ./node.sh:/e2e/node.sh:ro
+      - ./primary-init.sh:/docker-entrypoint-initdb.d/replication.sh:ro
+
+  replica:
+    <<: *node
+    entrypoint: ["bash", "/e2e/node.sh", "replica"]
+    volumes:
+      - ${PG_GCM_E2E_BUILD:?run scripts/e2e.sh <major>, which sets this}:/pg_gcm-build:ro
+      - ./node.sh:/e2e/node.sh:ro
+    depends_on:
+      primary:
+        condition: service_healthy
+
+  runner:
+    build:
+      context: .
+      dockerfile: runner.Dockerfile
+    environment:
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: ${PG_GCM_E2E_PASSWORD:?run scripts/e2e.sh <major>, which sets this}
+      PG_GCM_E2E_PRIMARY: primary
+      PG_GCM_E2E_REPLICA: replica
+    depends_on:
+      primary:
+        condition: service_healthy
+      replica:
+        condition: service_healthy
