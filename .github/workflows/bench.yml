@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: PostgreSQL
+# The core micro-benchmarks (tests/bench, scripts/bench.sh) in the build image: the core's
+# seal and open over bare OpenSSL EVP, gated as ratios by tests/bench/baseline.json, one
+# image per libcrypto in docker/versions.json (the newest supported major, and the floor).
+#
+# On a merge and nightly, never on a pull request: a ratio gate wants a settled machine, and
+# the shared PR runners are not one. GitHub runs a schedule from the default branch only.
+name: bench
+
+on:
+  push:
+    branches: [main, develop]
+  schedule:
+    # Nightly, after the unit suite.
+    - cron: "47 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      unit: ${{ steps.list.outputs.unit }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: list
+        run: echo "unit=$(python3 scripts/ci-matrix.py unit)" >>"$GITHUB_OUTPUT"
+
+  bench:
+    needs: images
+    name: bench (${{ matrix.entry.label }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.images.outputs.unit) }}
+    env:
+      IMAGE: ${{ matrix.entry.image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # bench.sh builds the benchmarks, runs the gate's own self-test and then the gate.
+      - name: Core micro-benchmarks
+        run: scripts/bench.sh "$IMAGE"
+      - name: Record the runner's CPU beside the ratios
+        if: always()
+        run: |
+          {
+            echo "### bench (${{ matrix.entry.label }}) on ${{ runner.os }} ${{ runner.arch }}"
+            echo '```'
+            grep -m1 'model name' /proc/cpuinfo || true
+            nproc
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
