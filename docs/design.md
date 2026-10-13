@@ -872,11 +872,11 @@ take a gate; nothing was tagged and nothing was released.
   `tests/bench/baseline.json` — the random seal and the open over bare EVP, and the
   deterministic seal over the random one, which is where the two HMAC-SHA256 passes show. Each
   benchmark runs five times in a random order and the gate reads the median, so one noisy
-  repetition cannot move a ratio. The baseline's nonce is random, as the core's random seal is, so the seal ratio measures
-  the core's own envelope and checks rather than a draw only one side pays; the ceilings are per
-  size, because the core's fixed per-call cost is a larger share of a small message. The binary's
-  `--self-test` checks the verdict, the ratio's direction and the gate over fixed measurements; no
-  server and no PostgreSQL header is involved.
+  repetition cannot move a ratio. The baseline's nonce is random, as the core's random seal is, so
+  the seal ratio measures the core's own envelope and checks rather than a draw only one side pays;
+  the ceilings are per size, because the core's fixed per-call cost is a larger share of a small
+  message. The binary's `--self-test` checks the verdict, the ratio's direction and the gate over
+  fixed measurements; no server and no PostgreSQL header is involved.
 - **The distribution image.** `docker/server.Dockerfile` is the official `postgres:<major>`
   (base pinned by digest) with the built `pg_gcm.so`, `pg_gcm.control` and SQL installed into
   the directories that image's own `pg_config` names, and `docker/initdb.d/00-pg_gcm.sql` in
