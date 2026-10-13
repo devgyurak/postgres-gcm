@@ -49,9 +49,12 @@ LICENSES = {
 TERM = re.compile(r"^[^\s/\\\x00-\x1f\x7f]{2,}$")
 # A Tag: one to 255 characters, no slash, backslash or control character (spaces are allowed).
 TAG = re.compile(r"^[^/\\\x00-\x1f\x7f]{1,255}$")
+# A semantic version, semver.org's own regex with the leading "v" that PGXN's SemVer accepts.
 SEMVER = re.compile(
-    r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
-    r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+    r"^v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-(?:(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+    r"(?:\+(?:[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
 )
 URL = re.compile(r"^[^:/?#\s]+://[^/?#\s]+")
 OPERATOR = re.compile(r"^(?:[<>]=?|==|!=)\s*")
@@ -80,6 +83,15 @@ def is_version_range(value: str) -> bool:
         if not SEMVER.match(version):
             return False
     return True
+
+
+def unknown_keys(mapping: dict[str, Any], allowed: set[str], where: str) -> list[str]:
+    """The spec's rule that a map holds only its keys, or custom ones prefixed with x_/X_."""
+    return [
+        f"{where}.{key} is not a key of the meta spec (custom keys begin with x_)"
+        for key in mapping
+        if key not in allowed and not str(key).lower().startswith("x_")
+    ]
 
 
 def check_maintainer(value: Any) -> list[str]:
@@ -122,7 +134,7 @@ def check_license(value: Any) -> list[str]:
 def check_meta_spec(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["meta-spec is required"]
-    problems = []
+    problems = unknown_keys(value, {"version", "url"}, "meta-spec")
     spec = value.get("version")
     if spec is None:
         problems.append("meta-spec.version is required")
@@ -144,6 +156,9 @@ def check_provides(value: Any, version: Any, exists: Callable[[str], bool]) -> l
         if not isinstance(entry, dict):
             problems.append(f"provides.{extension} must be a map")
             continue
+        problems += unknown_keys(
+            entry, {"file", "version", "abstract", "docfile"}, f"provides.{extension}"
+        )
         file = entry.get("file")
         if not isinstance(file, str) or not file:
             problems.append(f"provides.{extension}.file is required")
@@ -152,6 +167,9 @@ def check_provides(value: Any, version: Any, exists: Callable[[str], bool]) -> l
         docfile = entry.get("docfile")
         if docfile is not None and not (isinstance(docfile, str) and exists(docfile)):
             problems.append(f"provides.{extension}.docfile {docfile!r} is not in the distribution")
+        abstract = entry.get("abstract")
+        if abstract is not None and not (isinstance(abstract, str) and abstract):
+            problems.append(f"provides.{extension}.abstract must be a non-empty string")
         entry_version = entry.get("version")
         if not (isinstance(entry_version, str) and SEMVER.match(entry_version)):
             problems.append(f"provides.{extension}.version must be a semantic version")
@@ -190,7 +208,7 @@ def check_no_index(value: Any) -> list[str]:
         return []
     if not isinstance(value, dict):
         return ["no_index must be a map"]
-    problems = []
+    problems = unknown_keys(value, {"file", "directory"}, "no_index")
     for key in ("file", "directory"):
         entries = value.get(key, [])
         if not isinstance(entries, list) or any(
@@ -205,14 +223,14 @@ def check_prereqs(value: Any) -> list[str]:
         return ["prereqs.runtime.requires must name PostgreSQL"]
     problems = []
     for phase, relations in value.items():
-        if phase not in PHASES:
+        if phase not in PHASES and not str(phase).lower().startswith("x_"):
             problems.append(f"prereqs phase {phase!r} must be one of {', '.join(sorted(PHASES))}")
             continue
         if not isinstance(relations, dict):
             problems.append(f"prereqs.{phase} must be a map")
             continue
         for relation, requirements in relations.items():
-            if relation not in RELATIONS:
+            if relation not in RELATIONS and not str(relation).lower().startswith("x_"):
                 problems.append(
                     f"prereqs.{phase}.{relation!r} must be one of {', '.join(sorted(RELATIONS))}"
                 )
@@ -245,17 +263,25 @@ def check_resources(value: Any) -> list[str]:
         return []
     if not isinstance(value, dict):
         return ["resources must be a map"]
-    problems = []
+    problems = unknown_keys(value, {"homepage", "bugtracker", "repository", "license"}, "resources")
     homepage = value.get("homepage")
     if homepage is not None and not (isinstance(homepage, str) and URL.match(homepage)):
         problems.append(f"resources.homepage {homepage!r} is not a URL")
-    for key in ("bugtracker", "repository"):
+    license = value.get("license")
+    if license is not None and (
+        not isinstance(license, list)
+        or any(not (isinstance(url, str) and URL.match(url)) for url in license)
+    ):
+        problems.append("resources.license must be a list of URLs")
+    fields = {"bugtracker": {"web", "mailto"}, "repository": {"web", "url", "type"}}
+    for key, allowed in fields.items():
         entry = value.get(key)
         if entry is None:
             continue
         if not isinstance(entry, dict):
             problems.append(f"resources.{key} must be a map")
             continue
+        problems += unknown_keys(entry, allowed, f"resources.{key}")
         for field in ("web", "mailto", "url"):
             url = entry.get(field)
             if url is None:
@@ -342,6 +368,7 @@ def valid_document() -> dict[str, Any]:
         "generated_by": "devgyurak",
         "meta-spec": {"version": "1.0.0", "url": "https://pgxn.org/meta/spec.txt"},
         "tags": ["encryption", "aes", "gcm"],
+        "no_index": {"directory": ["scripts"], "file": ["AGENTS.md"]},
         "resources": {
             "homepage": "https://github.com/devgyurak/postgres-gcm",
             "bugtracker": {"web": "https://github.com/devgyurak/postgres-gcm/issues"},
@@ -385,6 +412,24 @@ def self_test() -> int:
         "an extension version that disagrees": lambda d: d["provides"]["pg_gcm"].update(
             version="0.2.0"
         ),
+        "a prerelease version with a leading zero": lambda d: d["provides"]["pg_gcm"].update(
+            version="0.1.0-01"
+        ),
+        "a provided abstract that is not a string": lambda d: d["provides"]["pg_gcm"].update(
+            abstract=42
+        ),
+        "a provided entry with an unknown key": lambda d: d["provides"]["pg_gcm"].update(files="x"),
+        "a meta-spec with an unknown key": lambda d: d["meta-spec"].update(versoin="1.0.0"),
+        "a no_index with an unknown key": lambda d: d.update(no_index={"files": ["a"]}),
+        "a resources entry with an unknown key": lambda d: d["resources"].update(
+            licence="https://x"
+        ),
+        "a resources license that is not a list of URLs": lambda d: d["resources"].update(
+            license=["nope"]
+        ),
+        "a repository with an unknown key": lambda d: d["resources"]["repository"].update(
+            branch="main"
+        ),
         "a release_status outside the three": lambda d: d.update(release_status="beta"),
         "a tag with a slash": lambda d: d.update(tags=["a/b"]),
         "an unknown top-level key": lambda d: d.update(distribution="other"),
@@ -404,6 +449,10 @@ def self_test() -> int:
             homepage="github.com/devgyurak/postgres-gcm"
         ),
     }
+    allowed: dict[str, Callable[[dict[str, Any]], None]] = {
+        "a custom x_ prereq phase": lambda d: d["prereqs"].update(x_extra={"requires": {}}),
+        "a custom x_ resource": lambda d: d["resources"].update(x_docs="https://example.test/"),
+    }
 
     def exists(path: str) -> bool:
         """A file the self-test pretends is absent: its name holds "gone"."""
@@ -412,10 +461,11 @@ def self_test() -> int:
     holes = [
         name for name, mutate in cases.items() if not validate(broken(mutate), exists, "0.1.0")
     ]
+    holes += [name for name, mutate in allowed.items() if validate(broken(mutate), exists, "0.1.0")]
     own = validate(valid_document(), exists, "0.1.0")
     if own:
         holes.append(f"the valid document itself ({own[0]})")
-    total = len(cases) + 1
+    total = len(cases) + len(allowed) + 1
     print(
         f"check-pgxn self-test: {total - len(holes)} of {total} checks as expected;"
         f" not caught: {holes}",
@@ -446,7 +496,12 @@ def main() -> int:
         print(f"check-pgxn: {meta_path} is not a JSON object", file=sys.stderr)
         return 1
 
-    control_version = control_default_version(Path(args.control).read_text(encoding="utf-8"))
+    try:
+        control_text = Path(args.control).read_text(encoding="utf-8")
+    except OSError as error:
+        print(f"check-pgxn: {args.control} is not readable: {error}", file=sys.stderr)
+        return 1
+    control_version = control_default_version(control_text)
     root = meta_path.parent
     problems = validate(document, lambda path: (root / path).is_file(), control_version)
     if control_version is None:

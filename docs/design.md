@@ -308,10 +308,12 @@ do, and what is left to record.
 ### Phase 5 — ecosystem
 
 PGXN, then distribution packaging if there is demand. `META.json` is the distribution's metadata
-(PGXN Meta Spec 1.0.0). `scripts/check-pgxn.py` validates it against that specification — the rules
-PGXN Manager itself enforces — and cross-checks what the specification cannot: the version agrees
-with `pg_gcm.control`, the provided `file` and `docfile` exist, and the extension version equals
-the distribution version. `scripts/pgxn-dist.sh` writes the source archive
+(PGXN Meta Spec 1.0.0). `scripts/check-pgxn.py` validates it against that specification — the
+required fields, the rules on their values, and the rule that a map holds only its keys or custom
+`x_` ones — and cross-checks what the specification cannot: the version agrees with
+`pg_gcm.control`, the provided `file` and `docfile` exist, the extension version equals the
+distribution version, and the PostgreSQL floor is the supported one. `scripts/pgxn-dist.sh` writes
+the source archive
 `pg_gcm-<version>.zip` with `git archive HEAD` — whose single top-level directory is
 `pg_gcm-<version>/`, the layout PGXN Manager expects — into a directory outside `dist/`, so it
 never joins the checksummed release assets. `release.yml`'s `publish` job validates the metadata,
@@ -932,12 +934,15 @@ was cut, so the PGXN path is exercised but not observed end to end.
   envelope format may change and nothing is for use — so PGXN must not offer it as a stable
   install. `no_index` keeps the agent configuration, the CI files and the development scripts out
   of PGXN's documentation index.
-- **The checker.** `scripts/check-pgxn.py` implements the specification's rules, the ones PGXN
-  Manager enforces, and adds the cross-checks the specification cannot make: the version against
-  the control file, the provided `file` and `docfile` against the working tree, the extension
-  version against the distribution version, and the `pg_gcm` extension. `--self-test` breaks a
-  valid document one way at a time — 24 breaks plus the valid document itself — and requires each
-  to be caught; observed, all 25. The lint workflow runs the checker and its `--self-test`.
+- **The checker.** `scripts/check-pgxn.py` implements the specification's rules — the required
+  fields, the rules on their values, the unknown-key rule with its custom `x_` exception, and the
+  prereq phases, relations and version ranges — and adds the cross-checks the specification cannot
+  make: the version against the control file, the provided `file` and `docfile` against the working
+  tree, the extension version against the distribution version, the `pg_gcm` extension, and the
+  PostgreSQL floor. `--self-test` gives 35 verdicts — 32 documents broken one way at a time, two
+  the checker must accept, and the valid document itself — and requires each to be as expected;
+  observed, all 35. The lint workflow runs the checker, its `--self-test`, and
+  `scripts/pgxn-dist.sh` over the archive layout.
 - **The archive.** `scripts/pgxn-dist.sh` reads the version through the checker, refuses a dirty
   working tree, and writes `pg_gcm-<version>.zip` with `git archive HEAD` and the prefix
   `pg_gcm-<version>/`. It then opens the archive and requires `META.json`, `Makefile` and

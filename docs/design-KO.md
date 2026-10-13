@@ -294,9 +294,10 @@ keyless 서명, SBOM 을 게시한다. `workflow_dispatch` 실행은 dry run 이
 ### Phase 5 — 생태계
 
 PGXN, 그다음 수요가 있으면 배포판 패키징. `META.json` 은 배포본의 메타데이터다 (PGXN Meta Spec
-1.0.0). `scripts/check-pgxn.py` 는 그것을 그 명세 — PGXN Manager 자신이 강제하는 규칙 — 에 대해
-검증하고, 명세가 할 수 없는 교차 검사를 더한다: 버전이 `pg_gcm.control` 과 일치하는지, 제공하는
-`file` 과 `docfile` 이 존재하는지, extension 버전이 배포본 버전과 같은지. `scripts/pgxn-dist.sh`
+1.0.0). `scripts/check-pgxn.py` 는 그것을 그 명세 — 필수 필드, 그 값에 대한 규칙, 그리고 맵이 자기
+키나 사용자 정의 `x_` 키만 담아야 한다는 규칙 — 에 대해 검증하고, 명세가 할 수 없는 교차 검사를
+더한다: 버전이 `pg_gcm.control` 과 일치하는지, 제공하는 `file` 과 `docfile` 이 존재하는지,
+extension 버전이 배포본 버전과 같은지, PostgreSQL 하한이 지원 범위인지. `scripts/pgxn-dist.sh`
 는 소스 아카이브 `pg_gcm-<version>.zip` 을 `git archive HEAD` 로 쓴다 — 최상위 디렉터리 하나가
 `pg_gcm-<version>/` 인, PGXN Manager 가 기대하는 배치다 — 그리고 `dist/` 바깥의 디렉터리에 쓰므로
 체크섬이 붙는 릴리스 산출물에 끼지 않는다. `release.yml` 의 `publish` job 은 메타데이터를 검증하고
@@ -869,11 +870,13 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   pre-release 이고 — 봉투 형식이 아직 바뀔 수 있으며 아직 쓸 수 있는 단계가 아니므로 — PGXN 이
   그것을 stable 설치로 제공해서는 안 된다. `no_index` 는 에이전트 설정, CI 파일, 개발 스크립트를
   PGXN 문서 색인에서 제외한다.
-- **검사기.** `scripts/check-pgxn.py` 는 그 명세의 규칙, 즉 PGXN Manager 가 강제하는 규칙을
-  구현하고, 명세가 할 수 없는 교차 검사를 더한다: 제어 파일에 대한 버전, 작업 트리에 대한 제공
-  `file`·`docfile`, 배포본 버전에 대한 extension 버전, 그리고 `pg_gcm` extension. `--self-test` 는
-  유효한 문서를 한 번에 한 가지씩 깨뜨린다 — 24 가지 깨뜨림과 유효한 문서 자신 — 그리고 각각이
-  잡히기를 요구한다. 관측: 25 가지 모두. lint 워크플로가 검사기와 그 `--self-test` 를 실행한다.
+- **검사기.** `scripts/check-pgxn.py` 는 그 명세의 규칙 — 필수 필드, 값에 대한 규칙, 사용자 정의
+  `x_` 예외를 둔 미지의 키 규칙, prereq phase·relation·버전 범위 — 을 구현하고, 명세가 할 수 없는
+  교차 검사를 더한다: 제어 파일에 대한 버전, 작업 트리에 대한 제공 `file`·`docfile`, 배포본 버전에
+  대한 extension 버전, `pg_gcm` extension, 그리고 PostgreSQL 하한. `--self-test` 는 35 가지 판정을
+  낸다 — 한 번에 한 가지씩 깨뜨린 32 개 문서, 검사기가 받아들여야 하는 두 문서, 유효한 문서 자신 —
+  그리고 각각이 기대대로이기를 요구한다. 관측: 35 가지 모두. lint 워크플로가 검사기, 그
+  `--self-test`, 그리고 아카이브 배치에 대한 `scripts/pgxn-dist.sh` 를 실행한다.
 - **아카이브.** `scripts/pgxn-dist.sh` 는 검사기를 통해 버전을 읽고, 더러운 작업 트리를 거부하며,
   `git archive HEAD` 와 접두사 `pg_gcm-<version>/` 로 `pg_gcm-<version>.zip` 을 쓴다. 그런 다음
   아카이브를 열어 접두사 아래에 `META.json`, `Makefile`, `pg_gcm.control` 이 있는지, 최상위

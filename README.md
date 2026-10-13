@@ -69,11 +69,11 @@ sudo make USE_PGXS=1 install
 psql -c 'CREATE EXTENSION pg_gcm'
 ```
 
-From [PGXN](https://pgxn.org/dist/pg_gcm/), which builds that same source with the server's headers
-on the machine:
+From [PGXN](https://pgxn.org/dist/pg_gcm/) (the distribution is labelled `testing` while 0.1.0 is
+pre-release, so it is not in the stable index and `--testing` is needed):
 
 ```sh
-pgxn install pg_gcm
+pgxn install --testing pg_gcm
 psql -d <db> -c 'CREATE EXTENSION pg_gcm'
 ```
 

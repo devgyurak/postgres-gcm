@@ -5,7 +5,8 @@
 # holds exactly the tracked files of that commit (the tag, in the release job) and no build
 # output; the version comes from META.json, so the name and the metadata cannot drift. The
 # archive is validated here, so a mislaid prefix or a missing control file is found by us and not
-# by PGXN. Usage: scripts/pgxn-dist.sh [outdir]
+# by PGXN. The default outdir is outside dist/, so the archive never joins the checksummed
+# release assets. Usage: scripts/pgxn-dist.sh [outdir]
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -13,7 +14,7 @@ source "$(dirname "$0")/lib.sh"
 if [ $# -gt 1 ]; then
   die "usage: scripts/pgxn-dist.sh [outdir]"
 fi
-out="${1:-$ROOT/dist}"
+out="${1:-$ROOT/build/pgxn}"
 
 # The archive is HEAD, so a dirty tree would ship something other than what the maintainer sees.
 if ! git -C "$ROOT" diff --quiet -- || ! git -C "$ROOT" diff --cached --quiet --; then

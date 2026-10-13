@@ -55,6 +55,8 @@ jobs:
         run: python3 scripts/check-pgxn.py
       - name: The PGXN metadata check notices a broken document
         run: python3 scripts/check-pgxn.py --self-test
+      - name: The PGXN source archive is the layout PGXN expects
+        run: scripts/pgxn-dist.sh "$RUNNER_TEMP/pgxn"
       - name: shellcheck
         run: shellcheck -x scripts/*.sh scripts/spike/*.sh .claude/hooks/*.sh tests/e2e/*.sh
       - name: ruff
