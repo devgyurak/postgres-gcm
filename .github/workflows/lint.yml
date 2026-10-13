@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install the pinned tools
-        run: python3 -m pip install --quiet -r scripts/requirements-lint.txt
+        run: python3 -m pip install --quiet -r scripts/requirements-lint.txt -r tests/e2e/requirements.txt
       - name: Agent adapters are in sync with their sources
         run: scripts/agents-sync.sh --check
       - name: Actions are pinned by commit
@@ -40,12 +40,12 @@ jobs:
       - name: The vector check notices a broken file
         run: python3 scripts/check-vectors.py --self-test
       - name: shellcheck
-        run: shellcheck -x scripts/*.sh scripts/spike/*.sh .claude/hooks/*.sh
+        run: shellcheck -x scripts/*.sh scripts/spike/*.sh .claude/hooks/*.sh tests/e2e/*.sh
       - name: ruff
         run: |
           ruff check .
           ruff format --check .
       - name: mypy
-        run: mypy --strict scripts/*.py .claude/hooks/*.py
+        run: mypy --strict scripts/*.py .claude/hooks/*.py tests/e2e/*.py
       - name: actionlint
         run: actionlint
