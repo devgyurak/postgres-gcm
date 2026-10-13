@@ -863,12 +863,15 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   Its exit status is 0 only when every scenario unittest ran was recorded as passed, at least one
   ran, and the two nodes ran the same shared scenarios; `run.py --self-test`, in the lint
   workflow, checks that this gate refuses a failure, an error, a skip, a failing subtest, an
-  unexpected success and an empty run.
-- **Item 7 of §6, observed.** With the library left out of the replica's disk (a run made by
-  hand on 17.11), the catalog entry was still there and the join on envelopes still worked, and
-  the six scenarios that call a function there failed with `could not access file
-  "$libdir/pg_gcm"`. The NULL scenario passed there all the same: a `STRICT` function is not
-  called for a NULL argument, so the library is never loaded for it.
+  expected failure, an unexpected success and an empty run, and two classes whose scenarios
+  differ or are none. The wait before the first scenario also covers the WAL receiver's state,
+  so the scenario that asserts `streaming` does not meet a receiver that has only just connected.
+- **Item 7 of §6, observed.** With the library left out of the replica's disk (a run of the
+  twenty-one scenarios made by hand on 17.11), the catalog entry was still there and the join on
+  envelopes still worked, and the seven scenarios that call a function there failed with `could
+  not access file "$libdir/pg_gcm"`: 14 of 21 passed and the gate was closed. The NULL scenario
+  passed there all the same: a `STRICT` function is not called for a NULL argument, so the
+  library is never loaded for it.
 - **What it does not show.** The suite's network carries keys and plaintext unencrypted between
   the runner and the servers; that is a test network with public test keys, not a deployment
   (§6 item 12). It does not test a logical subscriber, a promoted replica, a base backup restored

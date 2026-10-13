@@ -48,6 +48,8 @@ services:
     environment:
       PGUSER: postgres
       PGDATABASE: postgres
+      # A node that accepts and then says nothing fails a scenario, not the job's timeout.
+      PGCONNECT_TIMEOUT: "10"
       PGPASSWORD: ${PG_GCM_E2E_PASSWORD:?run scripts/e2e.sh <major>, which sets this}
       PG_GCM_E2E_PRIMARY: primary
       PG_GCM_E2E_REPLICA: replica

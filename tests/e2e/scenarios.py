@@ -43,18 +43,27 @@ def connect(node: str) -> Connection:
 
 
 def wait_for_replay(primary: Connection, replica: Connection) -> None:
-    """Return once the replica has replayed everything the primary has written so far."""
+    """Return once the replica has replayed everything the primary has written so far.
+
+    And once its WAL receiver reports streaming: a receiver that has just connected passes
+    through other states first, and the scenario that asserts the state should not meet them.
+    A bounded wait on the cluster's state, before any scenario runs — not a retry of one.
+    """
     target = primary.execute("SELECT pg_current_wal_insert_lsn()").fetchone()
     assert target is not None
     deadline = time.monotonic() + replay_timeout
     while time.monotonic() < deadline:
-        replayed = replica.execute(
-            "SELECT pg_last_wal_replay_lsn() >= %s::pg_lsn", (str(target[0]),)
+        ready = replica.execute(
+            "SELECT pg_last_wal_replay_lsn() >= %s::pg_lsn"
+            " AND EXISTS (SELECT FROM pg_stat_wal_receiver WHERE status = 'streaming')",
+            (str(target[0]),),
         ).fetchone()
-        if replayed == (True,):
+        if ready == (True,):
             return
         time.sleep(0.1)
-    raise TimeoutError(f"the replica did not replay up to {target[0]} in {replay_timeout} s")
+    raise TimeoutError(
+        f"the replica was not streaming and replayed up to {target[0]} in {replay_timeout} s"
+    )
 
 
 def set_up_cluster() -> None:
