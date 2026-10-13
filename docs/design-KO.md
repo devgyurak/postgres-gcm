@@ -872,27 +872,35 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   PGXN 문서 색인에서 제외한다.
 - **검사기.** `scripts/check-pgxn.py` 는 그 명세의 규칙 — 필수 필드, 값에 대한 규칙, 사용자 정의
   `x_` 예외를 둔 미지의 키 규칙, prereq phase·relation·버전 범위 — 을 구현하고, 명세가 할 수 없는
-  교차 검사를 더한다: 제어 파일에 대한 버전, 작업 트리에 대한 제공 `file`·`docfile`, 배포본 버전에
-  대한 extension 버전, `pg_gcm` extension, 그리고 PostgreSQL 하한. `--self-test` 는 36 가지 판정을
-  낸다 — 한 번에 한 가지씩 깨뜨린 33 개 문서, 검사기가 받아들여야 하는 두 문서, 유효한 문서 자신 —
-  그리고 각각이 기대대로이기를 요구한다. 관측: 36 가지 모두. lint 워크플로가 검사기, 그
-  `--self-test`, 그리고 아카이브 배치에 대한 `scripts/pgxn-dist.sh` 를 실행한다.
+  교차 검사를 더한다: 제어 파일에 대한 버전, 작업 트리에 대한 제공 `file`·`docfile`, 배포본 이름과
+  extension 버전을 `pg_gcm` 과 배포 스크립트가 만드는 아카이브에 대고, 15.0.0 을 허용하는 PostgreSQL
+  하한. `--self-test` 는 41 가지 판정을 낸다 — 한 번에 한 가지씩 깨뜨린 37 개 문서, 검사기가
+  받아들여야 하는 세 문서, 유효한 문서 자신 — 그리고 각각이 기대대로이기를 요구한다. 관측: 41 가지
+  모두. lint 워크플로가 검사기, 그 `--self-test`, 그리고 아카이브 배치에 대한
+  `scripts/pgxn-dist.sh` 를 실행한다.
 - **아카이브.** `scripts/pgxn-dist.sh` 는 검사기를 통해 버전을 읽고, 더러운 작업 트리를 거부하며,
-  `git archive HEAD` 와 접두사 `pg_gcm-<version>/` 로 `pg_gcm-<version>.zip` 을 쓴다. 그런 다음
-  아카이브를 열어 접두사 아래에 `META.json`, `Makefile`, `pg_gcm.control` 이 있는지, 최상위
-  디렉터리가 정확히 하나인지, 아카이브 자체의 `META.json` 버전이 이름과 맞는지 요구한다. 관측:
-  tag 가 붙은 트리의 아카이브는 그 모두를 통과했고, 커밋되지 않은 변경이 있는 작업 트리는
-  거부됐다.
-- **릴리스 단계.** `release.yml` 의 `publish` job 은 아카이브를 `dist/` 바깥에 만들어 체크섬이
-  붙는 산출물에 끼지 않게 하고, tag 일 때만 GitHub release 전에 `manager.pgxn.org/upload` 로
-  업로드한다: `curl` 에 HTTP Basic 인증, multipart 필드 `archive`, 그리고
+  출력 디렉터리를 절대 경로로 바꾸고 — 다른 디렉터리에서 준 상대 경로가 아카이브와 배치 검사에서
+  같은 곳을 가리키게 — `git archive HEAD` 와 접두사 `pg_gcm-<version>/` 로
+  `pg_gcm-<version>.zip` 을 쓴다. 그런 다음 아카이브를 열어 접두사 아래에 `META.json`, `Makefile`,
+  `pg_gcm.control` 이 있는지, 최상위 디렉터리가 정확히 하나인지, 아카이브 자체의 `META.json` 버전이
+  이름과 맞는지 요구한다. 관측: HEAD 의 아카이브는 그 모두를 통과했고, 커밋되지 않은 변경이 있는
+  작업 트리는 거부됐으며, pgxn 클라이언트 (1.3.2) 가 그 아카이브를 PostgreSQL 17 빌드 이미지에서
+  빌드·설치했고 거기서 `CREATE EXTENSION pg_gcm` 과 한국어 `LIKE '%길%'` 왕복이 통과했다.
+- **릴리스 단계.** `release.yml` 의 `publish` job 은 아카이브를 `dist/` 바깥에 만들어 체크섬이 붙는
+  산출물에 끼지 않게 한다. GitHub release 를 먼저 만들고 `manager.pgxn.org/upload` 로는 마지막에
+  업로드한다 — 되돌릴 수 있는 단계를 되돌릴 수 없는 단계보다 앞에 — 그리고 둘 다 멱등하므로 재실행이
+  이미 된 일에서 실패하지 않고 부분 릴리스를 마무리한다: `gh release view` 는 이미 있는 release 를
+  건너뛰고, 이미 게시된 버전 (`api.pgxn.org/dist/pg_gcm/<version>/META.json`) 은 PGXN 이 두 번 받지
+  않으므로 그대로 둔다. 업로드는 `curl` 에 HTTP Basic 인증, multipart 필드 `archive`, 그리고
   `X-Requested-With: XMLHttpRequest` — 성공은 `200`, 거부된 배포본은 `409` 다. `PGXN_USER` 와
-  `PGXN_PASSWORD` 는 저장소 secret 이다. `workflow_dispatch` 실행은 아카이브를 검증·생성만 하고
-  아무것도 업로드하지 않는다.
-- **보여주지 않는 것.** 아카이브를 풀어 빌드·설치해 본 적이 없고 업로드도 실행된 적이 없다:
-  아카이브의 소스는 `build` 와 `regress` 워크플로가 컴파일하는 바로 그 추적 파일들이고, 업로드는
-  첫 tag 를 위해 남겨 둔다. 메타데이터는 아직 PGXN Manager 자체 검증기를 거친 적이 없다. 배포판
-  패키징 (Debian, RPM) 은 만들지 않는다 (Phase 5 는 수요를 위해 남겨 둔다).
+  `PGXN_PASSWORD` 는 required reviewer 가 있는 `release` environment 의 secret 이다.
+  `workflow_dispatch` 실행은 아카이브를 검증·생성만 하고 아무것도 업로드하지 않는다.
+- **보여주지 않는 것.** 업로드는 실행된 적이 없고, 위의 아카이브 빌드와 왕복은 CI 가 아니라 한 메이저
+  에서 손으로 했다: 아카이브의 소스는 `build` 와 `regress` 워크플로가 컴파일하는 바로 그 추적
+  파일들이므로 거기서 커버되고, 업로드는 첫 tag 를 위해 남겨 둔다. 메타데이터는 아직 PGXN Manager
+  자체 검증기를 거친 적이 없다. 배포판 패키징 (Debian, RPM) 은 만들지 않는다 (Phase 5 는 수요를 위해
+  남겨 둔다). Phase 5 는 §8 Open O17 이 열린 채로 했다: PGXN 경로는 두 성능 게이트를 지나지 않으므로,
+  그 게이트가 기다리는 기록은 이 작업의 전제가 아니다.
 
 ### 미확인
 

@@ -938,28 +938,37 @@ was cut, so the PGXN path is exercised but not observed end to end.
   fields, the rules on their values, the unknown-key rule with its custom `x_` exception, and the
   prereq phases, relations and version ranges — and adds the cross-checks the specification cannot
   make: the version against the control file, the provided `file` and `docfile` against the working
-  tree, the extension version against the distribution version, the `pg_gcm` extension, and the
-  PostgreSQL floor. `--self-test` gives 36 verdicts — 33 documents broken one way at a time, two
-  the checker must accept, and the valid document itself — and requires each to be as expected;
-  observed, all 36. The lint workflow runs the checker, its `--self-test`, and
-  `scripts/pgxn-dist.sh` over the archive layout.
+  tree, the extension version and the distribution name against `pg_gcm` and the archive the
+  distribution script builds, and a PostgreSQL floor that admits 15.0.0. `--self-test` gives 41
+  verdicts — 37 documents broken one way at a time, three the checker must accept, and the valid
+  document itself — and requires each to be as expected; observed, all 41. The lint workflow runs
+  the checker, its `--self-test`, and `scripts/pgxn-dist.sh` over the archive layout.
 - **The archive.** `scripts/pgxn-dist.sh` reads the version through the checker, refuses a dirty
-  working tree, and writes `pg_gcm-<version>.zip` with `git archive HEAD` and the prefix
-  `pg_gcm-<version>/`. It then opens the archive and requires `META.json`, `Makefile` and
-  `pg_gcm.control` at the prefix, exactly one top-level directory, and a version in the archive's
-  own `META.json` that matches its name. Observed: an archive of the tagged tree passed all of
-  that, and a working tree with an uncommitted change was refused.
+  working tree, makes the outdir absolute — so a relative path given from another directory lands in
+  the same place for the archive and for the layout check — and writes `pg_gcm-<version>.zip` with
+  `git archive HEAD` and the prefix `pg_gcm-<version>/`. It then opens the archive and requires
+  `META.json`, `Makefile` and `pg_gcm.control` at the prefix, exactly one top-level directory, and
+  a version in the archive's own `META.json` that matches its name. Observed: an archive of HEAD
+  passed all of that, a working tree with an uncommitted change was refused, and the pgxn client
+  (1.3.2) built and installed that archive in the PostgreSQL 17 build image, where
+  `CREATE EXTENSION pg_gcm` and the Korean `LIKE '%길%'` round trip then passed.
 - **The release step.** `release.yml`'s `publish` job builds the archive outside `dist/`, so it
-  never joins the checksummed assets, and uploads it to `manager.pgxn.org/upload` on a tag only,
-  before the GitHub release: `curl` with HTTP Basic authentication, the multipart field `archive`,
-  and `X-Requested-With: XMLHttpRequest` so success is `200` and a rejected distribution is `409`.
-  `PGXN_USER` and `PGXN_PASSWORD` are repository secrets. A `workflow_dispatch` run validates and
-  builds the archive and uploads nothing.
-- **What it does not show.** No archive has been extracted, built and installed, and no upload has
-  run: the archive's sources are the same tracked files the `build` and `regress` workflows
-  compile, and the upload is left for the first tag. The metadata has not yet been through PGXN
-  Manager's own validator. Distribution packages (Debian, RPM) are not built (Phase 5 keeps them
-  for demand).
+  never joins the checksummed assets. It creates the GitHub release first and uploads to
+  `manager.pgxn.org/upload` last — the reversible step before the irreversible one — and both are
+  idempotent, so a re-run finishes a partial release rather than failing on what is already done:
+  `gh release view` skips a release that is there, and a version already published
+  (`api.pgxn.org/dist/pg_gcm/<version>/META.json`) is left alone, one PGXN would refuse to take
+  twice. The upload is `curl` with HTTP Basic authentication, the multipart field `archive`, and
+  `X-Requested-With: XMLHttpRequest` so success is `200` and a rejected distribution is `409`.
+  `PGXN_USER` and `PGXN_PASSWORD` are secrets of the `release` environment, the one with required
+  reviewers. A `workflow_dispatch` run validates and builds the archive and uploads nothing.
+- **What it does not show.** No upload has run, and the archive's build and the round trip above
+  were done by hand on one major, not in CI: the archive's sources are the same tracked files the
+  `build` and `regress` workflows compile, so they are covered there, and the upload is left for the
+  first tag. The metadata has not yet been through PGXN Manager's own validator. Distribution
+  packages (Debian, RPM) are not built (Phase 5 keeps them for demand). Phase 5 was done with §8
+  Open O17 still open: the PGXN path does not pass through the two performance gates, so the
+  recording they wait for is not a prerequisite for it.
 
 ### Open
 

@@ -25,9 +25,13 @@ fi
 version="$(python3 "$ROOT/scripts/check-pgxn.py" --print-version)" ||
   die "META.json is not publishable (see above)"
 name="pg_gcm-$version"
+
+# git archive resolves --output against $ROOT, so make the outdir absolute first: a relative path
+# given from another directory would otherwise be written beside the repository, not under it.
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"
 archive="$out/$name.zip"
 
-mkdir -p "$out"
 git -C "$ROOT" archive --format=zip --prefix="$name/" --output="$archive" HEAD
 
 # The members PGXN Manager needs, the one top-level directory it expects, and the metadata inside

@@ -44,10 +44,13 @@ its file is on `main`.
   signed keyless, and the GitHub release is created last.
 - PGXN: `scripts/pgxn-dist.sh` validates `META.json` (`scripts/check-pgxn.py`) and writes the
   source archive `pg_gcm-<version>.zip` with `git archive HEAD` into a directory outside `dist/`,
-  so it never joins the checksummed assets. The `publish` job uploads it to PGXN Manager
-  (`curl`, HTTP Basic auth, the multipart field `archive`) on a tag only, before the GitHub
-  release; a dispatch run builds and validates it and uploads nothing. `PGXN_USER` and
-  `PGXN_PASSWORD` are repository secrets. Distribution packages (Debian, RPM) are not built.
+  so it never joins the checksummed assets. The `publish` job creates the GitHub release first and
+  uploads to PGXN Manager (`curl`, HTTP Basic auth, the multipart field `archive`) last, on a tag
+  only; both steps are idempotent, so a re-run finishes a partial release instead of failing on the
+  version already published. A dispatch run builds and validates the archive and uploads nothing.
+  `PGXN_USER` and `PGXN_PASSWORD` are secrets of the `release` environment, so its required
+  reviewers gate them and not only the repository. Distribution packages (Debian, RPM) are not
+  built.
 - The `server` and `publish` jobs run in the `release` environment; give it required reviewers
   and protect `v*` tags, because a tag push runs this workflow from the tagged commit and the
   guard cannot refuse whoever can push a tag.

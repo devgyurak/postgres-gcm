@@ -169,9 +169,20 @@ jobs:
             --output-signature dist/SHA256SUMS.sig \
             --output-certificate dist/SHA256SUMS.pem \
             dist/SHA256SUMS
-      # PGXN: `pgxn-dist.sh` validates META.json and builds the source archive outside dist/, so
-      # it never joins the checksummed assets; the upload itself is a tag only, after the signed
-      # checksums and before the GitHub release (scripts/check-pgxn.py, scripts/pgxn-dist.sh).
+      # A tag signs and publishes; a dispatch run stops after building every artifact above. The
+      # GitHub release is created before the PGXN upload — the reversible step first, the
+      # irreversible one last — and both are idempotent, so a re-run can finish a partial release.
+      - name: Publish the release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" --generate-notes
+      # PGXN: `pgxn-dist.sh` validates META.json and builds the source archive outside dist/, so it
+      # never joins the checksummed assets (scripts/check-pgxn.py, scripts/pgxn-dist.sh). A version
+      # already on PGXN cannot be re-uploaded, so an existing distribution is left as it is.
       - name: Build the PGXN source distribution
         run: |
           archive="$(scripts/pgxn-dist.sh "$RUNNER_TEMP/pgxn")"
@@ -181,17 +192,16 @@ jobs:
         env:
           PGXN_USER: ${{ secrets.PGXN_USER }}
           PGXN_PASSWORD: ${{ secrets.PGXN_PASSWORD }}
+          VERSION: ${{ needs.guard.outputs.version }}
         run: |
+          if curl --silent --fail --output /dev/null \
+              "https://api.pgxn.org/dist/pg_gcm/$VERSION/META.json"; then
+            echo "pg_gcm $VERSION is already on PGXN; nothing to upload"
+            exit 0
+          fi
           curl --fail-with-body --silent --show-error \
             --user "$PGXN_USER:$PGXN_PASSWORD" \
             --header 'Accept: application/json' \
             --header 'X-Requested-With: XMLHttpRequest' \
             --form "archive=@$PGXN_ARCHIVE" \
             https://manager.pgxn.org/upload
-      - name: Publish the release
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "$GITHUB_REF_NAME" --generate-notes

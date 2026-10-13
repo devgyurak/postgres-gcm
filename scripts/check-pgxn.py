@@ -39,6 +39,8 @@ OPTIONAL = (
 RELEASE_STATUS = {"stable", "testing", "unstable"}
 PHASES = {"configure", "build", "test", "runtime", "develop"}
 RELATIONS = {"requires", "recommends", "suggests", "conflicts"}
+# The lowest supported server (docs/design.md §0); a prereq range must admit at least this.
+POSTGRESQL_FLOOR = (15, 0, 0)
 LICENSES = {
     "agpl_3", "apache_1_1", "apache_2_0", "artistic_1", "artistic_2", "bsd", "freebsd", "gfdl_1_2",
     "gfdl_1_3", "gpl_1", "gpl_2", "gpl_3", "lgpl_2_1", "lgpl_3_0", "mit", "mozilla_1_0",
@@ -83,6 +85,28 @@ def is_version_range(value: str) -> bool:
         if not SEMVER.match(version):
             return False
     return True
+
+
+def version_tuple(text: str) -> tuple[int, int, int]:
+    """The numeric part of a version as a triple, a suffix dropped."""
+    parts = [int(part) for part in re.findall(r"\d+", text)][:3]
+    parts += [0] * (3 - len(parts))
+    return parts[0], parts[1], parts[2]
+
+
+def lowest_allowed(version_range: str) -> tuple[int, int, int] | None:
+    """The lowest version a prereq range allows, or None when it has no lower bound."""
+    lowest: tuple[int, int, int] | None = None
+    for part in version_range.split(","):
+        part = part.strip()
+        if not part or part == "0":
+            continue
+        operator = OPERATOR.match(part)
+        symbol = part[: operator.end()].strip() if operator else ">="
+        version = version_tuple(part[operator.end() :] if operator else part)
+        if symbol in (">", ">=", "==") and (lowest is None or version > lowest):
+            lowest = version
+    return lowest
 
 
 def unknown_keys(mapping: dict[str, Any], allowed: set[str], where: str) -> list[str]:
@@ -251,10 +275,10 @@ def check_prereqs(value: Any) -> list[str]:
     if postgresql is None:
         problems.append("prereqs.runtime.requires.PostgreSQL is required")
     elif isinstance(postgresql, str):
-        parts = [int(part) for part in re.findall(r"\d+", postgresql)][:3]
-        parts += [0] * (3 - len(parts))
-        if tuple(parts) < (15, 0, 0):
-            problems.append(f"PostgreSQL {postgresql!r} is below the supported floor 15.0.0")
+        bound = lowest_allowed(postgresql)
+        if bound is None or bound < POSTGRESQL_FLOOR:
+            floor = ".".join(str(part) for part in POSTGRESQL_FLOOR)
+            problems.append(f"PostgreSQL {postgresql!r} does not require at least {floor}")
     return problems
 
 
@@ -319,8 +343,10 @@ def validate(
             problems.append(f"{key} is not a key of the meta spec (custom keys begin with x_)")
 
     name = meta.get("name")
-    if name is not None and not (isinstance(name, str) and TERM.match(name)):
+    if not (isinstance(name, str) and TERM.match(name)):
         problems.append(f"name {name!r} is not a term (no space, slash or backslash, two or more)")
+    elif name != "pg_gcm":
+        problems.append(f"name {name!r} is not pg_gcm (scripts/pgxn-dist.sh names the archive)")
 
     version = meta.get("version")
     if not (isinstance(version, str) and SEMVER.match(version)):
@@ -396,6 +422,8 @@ def self_test() -> int:
     cases: dict[str, Callable[[dict[str, Any]], None]] = {
         "a missing name": lambda d: d.pop("name"),
         "a name with a space": lambda d: d.update(name="pg gcm"),
+        "a name that is null": lambda d: d.update(name=None),
+        "a name that is not pg_gcm": lambda d: d.update(name="other_gcm"),
         "a two-part version": lambda d: d.update(version="0.1"),
         "a version unlike the control file": lambda d: d.update(version="0.2.0"),
         "a missing abstract": lambda d: d.pop("abstract"),
@@ -446,6 +474,12 @@ def self_test() -> int:
         "a PostgreSQL floor below 15": lambda d: d["prereqs"]["runtime"]["requires"].update(
             PostgreSQL="14.0.0"
         ),
+        "a PostgreSQL range with an upper bound only": lambda d: d["prereqs"]["runtime"][
+            "requires"
+        ].update(PostgreSQL="< 19.0.0"),
+        "a PostgreSQL range that excludes the floor": lambda d: d["prereqs"]["runtime"][
+            "requires"
+        ].update(PostgreSQL="!= 15.0.0"),
         "a version range that is not one": lambda d: d["prereqs"]["runtime"]["requires"].update(
             PostgreSQL="=~15"
         ),
@@ -457,6 +491,9 @@ def self_test() -> int:
     allowed: dict[str, Callable[[dict[str, Any]], None]] = {
         "a custom x_ prereq phase": lambda d: d["prereqs"].update(x_extra={"requires": {}}),
         "a custom x_ resource": lambda d: d["resources"].update(x_docs="https://example.test/"),
+        "a PostgreSQL range above the floor": lambda d: d["prereqs"]["runtime"]["requires"].update(
+            PostgreSQL=">= 16.0.0"
+        ),
     }
 
     def exists(path: str) -> bool:

@@ -6,14 +6,16 @@ Notable changes per release. Envelope changes get their own entry with a compati
 
 ### Phase 5 — ecosystem (2026-10-13)
 - PGXN: `META.json` (PGXN Meta Spec 1.0.0), `scripts/check-pgxn.py` validates it against the
-  specification and cross-checks it against `pg_gcm.control`, the SQL install script, `README.md`
-  and the extension version (`--self-test` gives 36 verdicts over a valid document and its
-  single-fault mutations), and
+  specification and cross-checks it against `pg_gcm.control`, the SQL install script, `README.md`,
+  the extension version and the distribution name (`--self-test` gives 41 verdicts over a valid
+  document and its single-fault mutations), and
   `scripts/pgxn-dist.sh` writes the source archive `pg_gcm-<version>.zip` with `git archive HEAD`
-  and checks its layout. `release.yml` builds and validates the archive in the `publish` job and
-  uploads it to PGXN Manager on a tag only (HTTP Basic auth), before the GitHub release;
-  `workflow_dispatch` builds it and uploads nothing. The distribution is `release_status`
-  "testing" while 0.1.0 is pre-release.
+  and checks its layout (the pgxn client built and installed that archive in a `postgres:17` build
+  image, where the Korean `LIKE` round trip passed). `release.yml` builds and validates the archive
+  in the `publish` job, creates the GitHub release, then uploads to PGXN Manager on a tag only
+  (HTTP Basic auth); both steps are idempotent so a re-run finishes a partial release, and
+  `workflow_dispatch` uploads nothing. `PGXN_USER`/`PGXN_PASSWORD` are `release` environment
+  secrets. The distribution is `release_status` "testing" while 0.1.0 is pre-release.
 - Distribution packages (Debian, RPM) are not built; they follow if there is demand (design §4,
   Phase 5).
 

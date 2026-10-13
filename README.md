@@ -69,8 +69,10 @@ sudo make USE_PGXS=1 install
 psql -c 'CREATE EXTENSION pg_gcm'
 ```
 
-From [PGXN](https://pgxn.org/dist/pg_gcm/) (the distribution is labelled `testing` while 0.1.0 is
-pre-release, so it is not in the stable index and `--testing` is needed):
+Once 0.1.0 is tagged, from [PGXN](https://pgxn.org/dist/pg_gcm/). `pgxn install` builds the same
+source as the first method, so it needs the same things (the server's headers, a C compiler,
+`libssl-dev`). The distribution is labelled `testing` while 0.1.0 is pre-release, so it is not in
+the stable index and `--testing` asks for it:
 
 ```sh
 pgxn install --testing pg_gcm
