@@ -91,7 +91,10 @@ jobs:
   server:
     needs: [guard, images, package]
     # Push and sign happen here, after every tarball and its smoke, so a failed package never
-    # leaves an unsigned image in ghcr.io. No other job pushes.
+    # leaves an unsigned image in ghcr.io. No other job pushes. The `release` environment is the
+    # one place to require reviewers: a tag push runs this file from the tagged commit, so the
+    # guard cannot stop whoever can push a tag.
+    environment: release
     permissions:
       contents: read
       packages: write
@@ -128,6 +131,9 @@ jobs:
 
   publish:
     needs: [guard, package, server]
+    # The same protected environment as the push: configure it with required reviewers so a tag
+    # push alone cannot publish a release.
+    environment: release
     permissions:
       contents: write # create the GitHub release
       id-token: write # cosign keyless signing

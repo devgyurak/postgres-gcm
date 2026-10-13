@@ -41,4 +41,7 @@ its file is on `main`.
   image ahead of a failed package.
 - The SBOM is written before `SHA256SUMS`, which covers the SBOM's own file; the checksums are
   signed keyless, and the GitHub release is created last.
+- The `server` and `publish` jobs run in the `release` environment; give it required reviewers
+  and protect `v*` tags, because a tag push runs this workflow from the tagged commit and the
+  guard cannot refuse whoever can push a tag.
 - Secrets (registry credentials) are repository secrets; workflows never echo them.
