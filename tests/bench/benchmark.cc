@@ -44,6 +44,10 @@ constexpr uint8_t kVersion = GCM_V_AES256_RANDOM;
 // The plaintext sizes; larger than one AES block so the ratio is not all per-call overhead.
 const std::vector<int64_t> kSizes = {16, 256, 4096, 65536};
 
+// Repetitions per benchmark. One sample per cell let either side swing about 2x on a busy host,
+// which would trip a 1.3-1.5 ceiling on noise alone; the gate reads the median of these.
+constexpr int kRepetitions = 5;
+
 const EVP_CIPHER *g_bare = nullptr;
 
 [[noreturn]] void Fail(const std::string &why) {
@@ -188,33 +192,63 @@ bool Passes(double seal, double open, double det, const Ceilings &ceiling) {
   return seal <= ceiling.seal && open <= ceiling.open && det <= ceiling.det;
 }
 
-// Captures the CPU time of every run, per iteration, for the ratios.
+// The registered name with its argument, without the "/repeats:N" the library appends when a
+// benchmark is repeated ("gcm_seal_random/16/repeats:5" -> "gcm_seal_random/16"), which is the
+// key the gate looks up.
+std::string BaseName(const std::string &run_name) {
+  const std::string marker = "/repeats:";
+  const auto at = run_name.rfind(marker);
+  return at == std::string::npos ? run_name : run_name.substr(0, at);
+}
+
+// Captures every repetition's CPU time, per benchmark, so the gate can take a median.
 class Collector : public benchmark::BenchmarkReporter {
  public:
   bool ReportContext(const Context & /*context*/) override { return true; }
   void ReportRuns(const std::vector<Run> &runs) override {
-    // run_name.str() is the full name with the argument ("gcm_seal_random/16"), which is the
-    // key the gate looks up; the bare benchmark_name() has no argument.
-    for (const Run &run : runs) cpu_ns_[run.run_name.str()] = run.GetAdjustedCPUTime();
+    // run_name.str() carries the argument and the repetition count; BaseName recovers the name the
+    // gate looks up (the bare benchmark_name() has no argument). The library's own aggregate runs
+    // carry an aggregate_name and are skipped — the median is taken from the raw runs here.
+    for (const Run &run : runs) {
+      if (!run.aggregate_name.empty()) continue;
+      runs_[BaseName(run.run_name.str())].push_back(run.GetAdjustedCPUTime());
+    }
   }
   void Finalize() override {}
 
-  const std::map<std::string, double> &cpu_ns() const { return cpu_ns_; }
+  const std::map<std::string, std::vector<double>> &runs() const { return runs_; }
 
  private:
-  std::map<std::string, double> cpu_ns_;
+  std::map<std::string, std::vector<double>> runs_;
 };
 
-double Measure(const Collector &collector, const std::string &name) {
-  const auto &times = collector.cpu_ns();
-  const auto found = times.find(name);
-  Require(found != times.end(), "no measurement for " + name);
+// The per-name CPU times the gate reads, keyed by the full run name ("gcm_seal_random/16").
+using CpuTimes = std::map<std::string, double>;
+
+// The median of a benchmark's repetitions, so one noisy repetition cannot move the gate. Each
+// benchmark runs with ->Repetitions(5); a single sample per cell let either side swing 2x.
+double Median(std::vector<double> values) {
+  Require(!values.empty(), "no runs to take a median of");
+  std::sort(values.begin(), values.end());
+  return values[values.size() / 2];
+}
+
+// The gate's input from a collector: each benchmark's median CPU time.
+CpuTimes Medians(const Collector &collector) {
+  CpuTimes cpu_ns;
+  for (const auto &[name, values] : collector.runs()) cpu_ns.emplace(name, Median(values));
+  return cpu_ns;
+}
+
+double Lookup(const CpuTimes &cpu_ns, const std::string &name) {
+  const auto found = cpu_ns.find(name);
+  Require(found != cpu_ns.end(), "no measurement for " + name);
   return found->second;
 }
 
-double Ratio(const Collector &collector, const std::string &numerator,
+double Ratio(const CpuTimes &cpu_ns, const std::string &numerator,
              const std::string &denominator) {
-  return RatioOf(Measure(collector, numerator), Measure(collector, denominator));
+  return RatioOf(Lookup(cpu_ns, numerator), Lookup(cpu_ns, denominator));
 }
 
 std::map<int64_t, Ceilings> LoadCeilings() {
@@ -231,6 +265,49 @@ std::map<int64_t, Ceilings> LoadCeilings() {
   return ceilings;
 }
 
+// The verdict over every size, reading median CPU times. `log` prints the ratios; the self-test
+// passes nullptr. Pure over its inputs, so the fixed measurements below gate the name pairs too.
+bool GateVerdict(const CpuTimes &cpu_ns, const std::map<int64_t, Ceilings> &ceilings,
+                 std::ostream *log) {
+  bool passed = true;
+  for (const int64_t size : kSizes) {
+    const std::string at = "/" + std::to_string(size);
+    const auto found = ceilings.find(size);
+    Require(found != ceilings.end(), "no ceiling for " + std::to_string(size) + " bytes");
+    const Ceilings &ceiling = found->second;
+    const double seal = Ratio(cpu_ns, "gcm_seal_random" + at, "evp_seal" + at);
+    const double open = Ratio(cpu_ns, "gcm_open" + at, "evp_open" + at);
+    const double det = Ratio(cpu_ns, "gcm_seal_det" + at, "gcm_seal_random" + at);
+    passed = Passes(seal, open, det, ceiling) && passed;
+    if (log != nullptr) {
+      *log << size << " bytes: seal " << seal << " (<= " << ceiling.seal << "), open " << open
+           << " (<= " << ceiling.open << "), det " << det << " (<= " << ceiling.det << ")\n";
+    }
+  }
+  return passed;
+}
+
+// A fixed gate input for the self-test: every size carries the same three ratios, so a wrong
+// benchmark name pair (a lookup that should have found the other one) fails instead of passing.
+CpuTimes FakeRatios(double seal, double open, double det) {
+  CpuTimes cpu_ns;
+  for (const int64_t size : kSizes) {
+    const std::string at = "/" + std::to_string(size);
+    cpu_ns["evp_seal" + at] = 1.0;
+    cpu_ns["gcm_seal_random" + at] = seal;
+    cpu_ns["evp_open" + at] = 1.0;
+    cpu_ns["gcm_open" + at] = open;
+    cpu_ns["gcm_seal_det" + at] = det * seal;
+  }
+  return cpu_ns;
+}
+
+std::map<int64_t, Ceilings> FixedCeilings() {
+  std::map<int64_t, Ceilings> ceilings;
+  for (const int64_t size : kSizes) ceilings.emplace(size, Ceilings{1.5, 1.5, 2.0});
+  return ceilings;
+}
+
 int SelfTest() {
   const Ceilings ceiling{3.0, 3.0, 5.0};
   // name, the verdict Passes gives, and the verdict it must give.
@@ -241,6 +318,11 @@ int SelfTest() {
       {"the open ratio above its ceiling", Passes(0.5, 3.1, 0.5, ceiling), false},
       {"the det ratio above its ceiling", Passes(0.5, 0.5, 5.1, ceiling), false},
       {"every ratio above its ceiling", Passes(9.0, 9.0, 9.0, ceiling), false},
+      // The gate over a fixed measurement map: GateVerdict must read the right benchmark names.
+      {"the gate passes fixed measurements",
+       GateVerdict(FakeRatios(1.0, 1.0, 1.0), FixedCeilings(), nullptr), true},
+      {"the gate fails on a fixed seal regression",
+       GateVerdict(FakeRatios(2.0, 1.0, 1.0), FixedCeilings(), nullptr), false},
   };
   // name, the ratio RatioOf gives, and the ratio it must give. Swapping the gate's numerator and
   // denominator would turn 2.0 into 0.5 and let a regression pass, so the direction is pinned.
@@ -266,25 +348,6 @@ int SelfTest() {
   return wrong == 0 ? 0 : 1;
 }
 
-void Gate(const Collector &collector) {
-  const std::map<int64_t, Ceilings> ceilings = LoadCeilings();
-  bool passed = true;
-  for (const int64_t size : kSizes) {
-    const std::string at = "/" + std::to_string(size);
-    const auto found = ceilings.find(size);
-    Require(found != ceilings.end(), "no ceiling for " + std::to_string(size) + " bytes");
-    const Ceilings &ceiling = found->second;
-    const double seal = Ratio(collector, "gcm_seal_random" + at, "evp_seal" + at);
-    const double open = Ratio(collector, "gcm_open" + at, "evp_open" + at);
-    const double det = Ratio(collector, "gcm_seal_det" + at, "gcm_seal_random" + at);
-    passed = Passes(seal, open, det, ceiling) && passed;
-    std::cerr << size << " bytes: seal " << seal << " (<= " << ceiling.seal << "), open " << open
-              << " (<= " << ceiling.open << "), det " << det << " (<= " << ceiling.det << ")\n";
-  }
-  std::cerr << "bench: gate " << (passed ? "passed" : "failed") << "\n";
-  if (!passed) Fail("a ratio was above its ceiling");
-}
-
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -300,19 +363,33 @@ int main(int argc, char **argv) {
   for (const int64_t size : kSizes) {
     benchmark::RegisterBenchmark("gcm_seal_random", BM_GcmSealRandom)
         ->Arg(size)
-        ->Unit(benchmark::kMicrosecond);
+        ->Unit(benchmark::kMicrosecond)
+        ->Repetitions(kRepetitions);
     benchmark::RegisterBenchmark("gcm_seal_det", BM_GcmSealDet)
         ->Arg(size)
-        ->Unit(benchmark::kMicrosecond);
-    benchmark::RegisterBenchmark("gcm_open", BM_GcmOpen)->Arg(size)->Unit(benchmark::kMicrosecond);
-    benchmark::RegisterBenchmark("evp_seal", BM_EvpSeal)->Arg(size)->Unit(benchmark::kMicrosecond);
-    benchmark::RegisterBenchmark("evp_open", BM_EvpOpen)->Arg(size)->Unit(benchmark::kMicrosecond);
+        ->Unit(benchmark::kMicrosecond)
+        ->Repetitions(kRepetitions);
+    benchmark::RegisterBenchmark("gcm_open", BM_GcmOpen)
+        ->Arg(size)
+        ->Unit(benchmark::kMicrosecond)
+        ->Repetitions(kRepetitions);
+    benchmark::RegisterBenchmark("evp_seal", BM_EvpSeal)
+        ->Arg(size)
+        ->Unit(benchmark::kMicrosecond)
+        ->Repetitions(kRepetitions);
+    benchmark::RegisterBenchmark("evp_open", BM_EvpOpen)
+        ->Arg(size)
+        ->Unit(benchmark::kMicrosecond)
+        ->Repetitions(kRepetitions);
   }
 
   Collector collector;
   benchmark::RunSpecifiedBenchmarks(&collector);
   benchmark::Shutdown();
 
-  Gate(collector);
+  if (!GateVerdict(Medians(collector), LoadCeilings(), &std::cerr)) {
+    Fail("a ratio was above its ceiling");
+  }
+  std::cerr << "bench: gate passed\n";
   return 0;
 }
