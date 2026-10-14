@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: PostgreSQL
 // Core micro-benchmarks (Google Benchmark) for src/gcm.c and its envelope, against bare
-// OpenSSL EVP. What is measured is CPU time per call, but the gate is a ratio: the core's
-// seal and open over a hand-rolled EVP AES-256-GCM of the same shape, and the deterministic
-// seal over the random one. The ceilings live in tests/bench/baseline.json.
+// OpenSSL EVP. What is measured is CPU time per call, but the gate is a ratio: the core's seal
+// and open over a hand-rolled EVP AES-256-GCM of the same shape, and the deterministic seal over
+// a hand-rolled bare deterministic seal (the same HMAC-SHA256 nonce derivation and the same
+// AES-GCM). The deterministic seal over the random one is recorded, never gated: it compares two
+// different operations and moves with a runner's relative AES-GCM and SHA-256 throughput. The
+// ceilings live in tests/bench/baseline.json.
 //
 //     pg_gcm_bench              run every benchmark and gate the ratios
 //     pg_gcm_bench --self-test  check the gate itself, with fixed ratios and no crypto
@@ -10,7 +13,10 @@
 // No server and no PostgreSQL header: the core is linked in, as in the unit suite.
 #include <benchmark/benchmark.h>
 
+#include <openssl/core_names.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <openssl/params.h>
 #include <openssl/rand.h>
 
 extern "C" {
@@ -23,6 +29,7 @@ extern "C" {
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -40,6 +47,7 @@ const std::array<uint8_t, GCM_KEY_LEN_AES256> kKey = {
     0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
 };
 constexpr uint8_t kVersion = GCM_V_AES256_RANDOM;
+constexpr uint8_t kVersionDet = GCM_V_AES256_DET;
 
 // The plaintext sizes; larger than one AES block so the ratio is not all per-call overhead.
 const std::vector<int64_t> kSizes = {16, 256, 4096, 65536};
@@ -49,6 +57,7 @@ const std::vector<int64_t> kSizes = {16, 256, 4096, 65536};
 constexpr int kRepetitions = 5;
 
 const EVP_CIPHER *g_bare = nullptr;
+EVP_MAC *g_bare_hmac = nullptr;
 
 [[noreturn]] void Fail(const std::string &why) {
   std::cerr << "bench: " << why << "\n";
@@ -60,24 +69,80 @@ void Require(bool ok, const std::string &why) {
   if (!ok) Fail(why);
 }
 
-// A raw AES-256-GCM seal through EVP alone: a random nonce, a context, one byte of associated
-// data, the plaintext, the tag. The nonce is random so the seal ratio charges the core for its
-// own envelope and checks, not for RAND_bytes — the extension draws a random nonce and the
-// baseline now draws one too, so the two sides pay it alike. This is "bare EVP" for the seal.
-void EvpSeal(const EVP_CIPHER *cipher, const uint8_t *pt, size_t pt_len, uint8_t *ct,
-             uint8_t *tag, uint8_t *nonce) {
-  Require(RAND_bytes(nonce, GCM_NONCE_LEN) == 1, "RAND_bytes failed");
+// A raw AES-256-GCM seal through EVP alone — a context, the version byte as associated data, the
+// plaintext, the tag — with a nonce the caller supplies. Both bare seals below share it: the
+// random one draws its nonce with RAND_bytes, the deterministic one derives it by hand.
+void EvpSealWithNonce(const EVP_CIPHER *cipher, uint8_t version, const uint8_t *nonce,
+                      const uint8_t *pt, size_t pt_len, uint8_t *ct, uint8_t *tag) {
   EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
   Require(ctx != nullptr, "EVP_CIPHER_CTX_new failed");
   int n = 0;
   int fin = 0;
   Require(EVP_EncryptInit_ex2(ctx, cipher, kKey.data(), nonce, nullptr) == 1, "init");
-  Require(EVP_EncryptUpdate(ctx, nullptr, &n, &kVersion, 1) == 1, "associated data");
+  Require(EVP_EncryptUpdate(ctx, nullptr, &n, &version, 1) == 1, "associated data");
   n = 0;
   Require(EVP_EncryptUpdate(ctx, ct, &n, pt, static_cast<int>(pt_len)) == 1, "update");
   Require(EVP_EncryptFinal_ex(ctx, ct + n, &fin) == 1, "final");
   Require(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, GCM_TAG_LEN, tag) == 1, "get tag");
   EVP_CIPHER_CTX_free(ctx);
+}
+
+// The bare EVP seal for the random suite: a nonce drawn with RAND_bytes, exactly as the core's
+// random seal draws one, so the seal ratio charges the core for its own envelope and checks and
+// not for a draw only one side pays. This is "bare EVP" for the random seal.
+void EvpSeal(const EVP_CIPHER *cipher, const uint8_t *pt, size_t pt_len, uint8_t *ct,
+             uint8_t *tag, uint8_t *nonce) {
+  Require(RAND_bytes(nonce, GCM_NONCE_LEN) == 1, "RAND_bytes failed");
+  EvpSealWithNonce(cipher, kVersion, nonce, pt, pt_len, ct, tag);
+}
+
+// The deterministic nonce, re-derived by hand from spec 1.8 so the bare det baseline pays the
+// same two HMAC-SHA256 passes as the core:
+//   nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")
+//   nonce     = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[:12]
+// where A is version || aad. This benchmark seals without AAD, so A is the one version byte and
+// its length is 1. It must track src/nonce.c: the baseline's point is the same operation, never a
+// cheaper one. The key is the public 00..1f pattern and never leaves the process.
+void DetNonce(EVP_MAC *hmac, const uint8_t *pt, size_t pt_len, uint8_t *nonce) {
+  const char label[] = "pg_gcm/v1/det-nonce";
+  char digest[] = "SHA256";
+  OSSL_PARAM params[2];
+  params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, digest, 0);
+  params[1] = OSSL_PARAM_construct_end();
+
+  uint8_t a_len_be[8];
+  const uint64_t a_len = 1; /* len(version || aad), aad empty */
+  for (int i = 0; i < 8; i++) a_len_be[i] = static_cast<uint8_t>(a_len >> (56 - 8 * i));
+
+  uint8_t nonce_key[32];
+  uint8_t mac[32];
+  size_t out_len = 0;
+  EVP_MAC_CTX *ctx = EVP_MAC_CTX_new(hmac);
+  Require(ctx != nullptr, "EVP_MAC_CTX_new failed");
+  Require(EVP_MAC_init(ctx, kKey.data(), kKey.size(), params) == 1, "hmac init");
+  Require(EVP_MAC_update(ctx, reinterpret_cast<const uint8_t *>(label), sizeof(label) - 1) == 1,
+          "hmac label");
+  Require(EVP_MAC_final(ctx, nonce_key, &out_len, sizeof(nonce_key)) == 1 &&
+              out_len == sizeof(nonce_key),
+          "hmac nonce key");
+  Require(EVP_MAC_init(ctx, nonce_key, sizeof(nonce_key), nullptr) == 1, "hmac rekey");
+  Require(EVP_MAC_update(ctx, a_len_be, sizeof(a_len_be)) == 1, "hmac length");
+  Require(EVP_MAC_update(ctx, &kVersionDet, 1) == 1, "hmac version");
+  Require(EVP_MAC_update(ctx, pt, pt_len) == 1, "hmac plaintext");
+  Require(EVP_MAC_final(ctx, mac, &out_len, sizeof(mac)) == 1 && out_len == sizeof(mac),
+          "hmac mac");
+  std::memcpy(nonce, mac, GCM_NONCE_LEN);
+  EVP_MAC_CTX_free(ctx);
+  OPENSSL_cleanse(nonce_key, sizeof(nonce_key));
+  OPENSSL_cleanse(mac, sizeof(mac));
+}
+
+// The bare deterministic seal: the hand-rolled nonce derivation above, then the same EVP seal with
+// the det suite's version byte. The core's det gate is the core's det seal over this.
+void EvpSealDet(const EVP_CIPHER *cipher, EVP_MAC *hmac, const uint8_t *pt, size_t pt_len,
+                uint8_t *ct, uint8_t *tag, uint8_t *nonce) {
+  DetNonce(hmac, pt, pt_len, nonce);
+  EvpSealWithNonce(cipher, kVersionDet, nonce, pt, pt_len, ct, tag);
 }
 
 void EvpOpen(const EVP_CIPHER *cipher, const uint8_t *ct, size_t ct_len, uint8_t *tag,
@@ -149,6 +214,19 @@ void BM_EvpSeal(benchmark::State &state) {
   std::array<uint8_t, GCM_NONCE_LEN> nonce{};
   for (auto _ : state) {
     EvpSeal(g_bare, pt.data(), pt.size(), ct.data(), tag.data(), nonce.data());
+    benchmark::DoNotOptimize(ct.data());
+  }
+  state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(n));
+}
+
+void BM_EvpSealDet(benchmark::State &state) {
+  const size_t n = static_cast<size_t>(state.range(0));
+  std::vector<uint8_t> pt(n, 0xAA);
+  std::vector<uint8_t> ct(n);
+  std::array<uint8_t, GCM_TAG_LEN> tag{};
+  std::array<uint8_t, GCM_NONCE_LEN> nonce{};
+  for (auto _ : state) {
+    EvpSealDet(g_bare, g_bare_hmac, pt.data(), pt.size(), ct.data(), tag.data(), nonce.data());
     benchmark::DoNotOptimize(ct.data());
   }
   state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(n));
@@ -265,23 +343,48 @@ std::map<int64_t, Ceilings> LoadCeilings() {
   return ceilings;
 }
 
+// The three ratios the gate reads per size, plus the fourth it only records. `det` compares the
+// core's deterministic seal with a bare deterministic seal — the same two HMAC-SHA256 passes and
+// the same AES-GCM on both sides — so it means the same on any runner. `det_random` compares that
+// same deterministic seal with the random one, which is a different operation: its value moves
+// with a runner's relative AES-GCM and SHA-256 throughput and is not portable (the O17 probe
+// measured about 1.3-9.6 across sizes and runner CPUs), so it is recorded, never gated.
+struct SizeRatios {
+  double seal;
+  double open;
+  double det;
+  double det_random;
+};
+
+std::map<int64_t, SizeRatios> RatiosOf(const CpuTimes &cpu_ns) {
+  std::map<int64_t, SizeRatios> ratios;
+  for (const int64_t size : kSizes) {
+    const std::string at = "/" + std::to_string(size);
+    ratios.emplace(size,
+                   SizeRatios{
+                       Ratio(cpu_ns, "gcm_seal_random" + at, "evp_seal" + at),
+                       Ratio(cpu_ns, "gcm_open" + at, "evp_open" + at),
+                       Ratio(cpu_ns, "gcm_seal_det" + at, "evp_seal_det" + at),
+                       Ratio(cpu_ns, "gcm_seal_det" + at, "gcm_seal_random" + at),
+                   });
+  }
+  return ratios;
+}
+
 // The verdict over every size, reading median CPU times. `log` prints the ratios; the self-test
 // passes nullptr. Pure over its inputs, so the fixed measurements below gate the name pairs too.
 bool GateVerdict(const CpuTimes &cpu_ns, const std::map<int64_t, Ceilings> &ceilings,
                  std::ostream *log) {
   bool passed = true;
-  for (const int64_t size : kSizes) {
-    const std::string at = "/" + std::to_string(size);
+  for (const auto &[size, ratio] : RatiosOf(cpu_ns)) {
     const auto found = ceilings.find(size);
     Require(found != ceilings.end(), "no ceiling for " + std::to_string(size) + " bytes");
     const Ceilings &ceiling = found->second;
-    const double seal = Ratio(cpu_ns, "gcm_seal_random" + at, "evp_seal" + at);
-    const double open = Ratio(cpu_ns, "gcm_open" + at, "evp_open" + at);
-    const double det = Ratio(cpu_ns, "gcm_seal_det" + at, "gcm_seal_random" + at);
-    passed = Passes(seal, open, det, ceiling) && passed;
+    passed = Passes(ratio.seal, ratio.open, ratio.det, ceiling) && passed;
     if (log != nullptr) {
-      *log << size << " bytes: seal " << seal << " (<= " << ceiling.seal << "), open " << open
-           << " (<= " << ceiling.open << "), det " << det << " (<= " << ceiling.det << ")\n";
+      *log << size << " bytes: seal " << ratio.seal << " (<= " << ceiling.seal << "), open "
+           << ratio.open << " (<= " << ceiling.open << "), det " << ratio.det << " (<= "
+           << ceiling.det << "), det/random " << ratio.det_random << " (recorded)\n";
     }
   }
   return passed;
@@ -297,7 +400,9 @@ CpuTimes FakeRatios(double seal, double open, double det) {
     cpu_ns["gcm_seal_random" + at] = seal;
     cpu_ns["evp_open" + at] = 1.0;
     cpu_ns["gcm_open" + at] = open;
-    cpu_ns["gcm_seal_det" + at] = det * seal;
+    // The gated det ratio is the core det over the bare det, so `det` here is that ratio.
+    cpu_ns["evp_seal_det" + at] = 1.0;
+    cpu_ns["gcm_seal_det" + at] = det;
   }
   return cpu_ns;
 }
@@ -328,6 +433,11 @@ int SelfTest() {
        GateVerdict(FakeRatios(1.0, 2.0, 1.0), FixedCeilings(), nullptr), false},
       {"the gate fails on a fixed det regression",
        GateVerdict(FakeRatios(1.0, 1.0, 3.0), FixedCeilings(), nullptr), false},
+      // A runner whose AES-GCM is far faster than its SHA-256 shows a high det-over-random ratio
+      // (the reason the gate was redefined): here 5.0. The gate reads only the det-over-bare-det
+      // ratio, so the cell passes, and a gate that had gone on reading det-over-random would fail.
+      {"a high det-over-random does not fail the gate",
+       GateVerdict(FakeRatios(0.2, 1.0, 1.0), FixedCeilings(), nullptr), true},
   };
   // name, the ratio RatioOf gives, and the ratio it must give. Swapping the gate's numerator and
   // denominator would turn 2.0 into 0.5 and let a regression pass, so the direction is pinned.
@@ -363,6 +473,8 @@ int main(int argc, char **argv) {
   Require(gcm_init() == GCM_OK, "gcm_init failed: OpenSSL 3 has no AES-GCM provider");
   g_bare = EVP_CIPHER_fetch(nullptr, "AES-256-GCM", nullptr);
   Require(g_bare != nullptr, "EVP_CIPHER_fetch(AES-256-GCM) failed");
+  g_bare_hmac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
+  Require(g_bare_hmac != nullptr, "EVP_MAC_fetch(HMAC) failed");
 
   benchmark::Initialize(&argc, argv);
   for (const int64_t size : kSizes) {
@@ -379,6 +491,10 @@ int main(int argc, char **argv) {
         ->Unit(benchmark::kMicrosecond)
         ->Repetitions(kRepetitions);
     benchmark::RegisterBenchmark("evp_seal", BM_EvpSeal)
+        ->Arg(size)
+        ->Unit(benchmark::kMicrosecond)
+        ->Repetitions(kRepetitions);
+    benchmark::RegisterBenchmark("evp_seal_det", BM_EvpSealDet)
         ->Arg(size)
         ->Unit(benchmark::kMicrosecond)
         ->Repetitions(kRepetitions);
