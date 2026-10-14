@@ -21,6 +21,7 @@
 
 extern "C" {
 #include "gcm.h"
+#include "nonce.h"
 }
 
 #include <nlohmann/json.hpp>
@@ -104,7 +105,7 @@ void EvpSeal(const EVP_CIPHER *cipher, const uint8_t *pt, size_t pt_len, uint8_t
 // its length is 1. It must track src/nonce.c: the baseline's point is the same operation, never a
 // cheaper one. The key is the public 00..1f pattern and never leaves the process.
 void DetNonce(EVP_MAC *hmac, const uint8_t *pt, size_t pt_len, uint8_t *nonce) {
-  const char label[] = "pg_gcm/v1/det-nonce";
+  static const char label[] = GCM_DET_NONCE_LABEL;
   char digest[] = "SHA256";
   OSSL_PARAM params[2];
   params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, digest, 0);
@@ -143,6 +144,22 @@ void EvpSealDet(const EVP_CIPHER *cipher, EVP_MAC *hmac, const uint8_t *pt, size
                 uint8_t *ct, uint8_t *tag, uint8_t *nonce) {
   DetNonce(hmac, pt, pt_len, nonce);
   EvpSealWithNonce(cipher, kVersionDet, nonce, pt, pt_len, ct, tag);
+}
+
+// The hand-rolled derivation above must agree with the core's, or the det ratio would compare two
+// different operations and still print a number. Checked once, before the timed runs, against the
+// core's own gcm_nonce_derive (the core is linked into this binary) over one fixed input — the
+// public key, the AES-256 det version, no AAD. A drift in either side fails the run.
+void RequireDetNonceMatchesCore() {
+  const std::array<uint8_t, 16> pt = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                                      0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
+  std::array<uint8_t, GCM_NONCE_LEN> bare{};
+  std::array<uint8_t, GCM_NONCE_LEN> core{};
+  DetNonce(g_bare_hmac, pt.data(), pt.size(), bare.data());
+  Require(gcm_nonce_derive(g_bare_hmac, kKey.data(), kKey.size(), kVersionDet, nullptr, 0,
+                           pt.data(), pt.size(), core.data()) == GCM_OK,
+          "gcm_nonce_derive failed");
+  Require(bare == core, "the bare det nonce does not match the core's");
 }
 
 void EvpOpen(const EVP_CIPHER *cipher, const uint8_t *ct, size_t ct_len, uint8_t *tag,
@@ -391,9 +408,8 @@ bool GateVerdict(const CpuTimes &cpu_ns, const std::map<int64_t, Ceilings> &ceil
 }
 
 // The ratios and the raw medians of the run, as JSON: what docs/perf.md records and the CI
-// artifact carries. Written to PG_GCM_BENCH_JSON when that names a path, whether the gate passed
-// or not, so a failing run's numbers survive too.
-void WriteJson(const CpuTimes &cpu_ns, bool passed, const std::string &path) {
+// artifact carries. Pure over its inputs, so the self-test can assert on the document.
+nlohmann::json JsonReport(const CpuTimes &cpu_ns, bool passed) {
   nlohmann::json sizes = nlohmann::json::object();
   for (const auto &[size, ratio] : RatiosOf(cpu_ns)) {
     const std::string at = "/" + std::to_string(size);
@@ -416,9 +432,15 @@ void WriteJson(const CpuTimes &cpu_ns, bool passed, const std::string &path) {
   nlohmann::json document;
   document["gate"] = passed;
   document["sizes"] = sizes;
+  return document;
+}
+
+// Written to PG_GCM_BENCH_JSON when that names a path, whether the gate passed or not, so a
+// failing run's numbers survive too.
+void WriteJson(const CpuTimes &cpu_ns, bool passed, const std::string &path) {
   std::ofstream out(path);
   Require(out.good(), "cannot write " + path);
-  out << document.dump(2) << "\n";
+  out << JsonReport(cpu_ns, passed).dump(2) << "\n";
 }
 
 // A fixed gate input for the self-test: every size carries the same three ratios, so a wrong
@@ -469,6 +491,9 @@ int SelfTest() {
       // ratio, so the cell passes, and a gate that had gone on reading det-over-random would fail.
       {"a high det-over-random does not fail the gate",
        GateVerdict(FakeRatios(0.2, 1.0, 1.0), FixedCeilings(), nullptr), true},
+      // The JSON report carries the verdict, so the artifact of a failing run says so too.
+      {"the JSON report carries a failed verdict",
+       JsonReport(FakeRatios(1.0, 1.0, 1.0), false)["gate"].get<bool>(), false},
   };
   // name, the ratio RatioOf gives, and the ratio it must give. Swapping the gate's numerator and
   // denominator would turn 2.0 into 0.5 and let a regression pass, so the direction is pinned.
@@ -478,6 +503,13 @@ int SelfTest() {
       {"the core half the baseline", RatioOf(1.0, 2.0), 0.5},
       {"a zero denominator is infinite", RatioOf(1.0, 0.0),
        std::numeric_limits<double>::infinity()},
+      // The recorded det-over-random is the det seal over the random one, not its reciprocal, so
+      // the artifact's number is not quietly inverted.
+      {"the recorded det-over-random ratio", RatiosOf(FakeRatios(1.0, 1.0, 9.0)).at(16).det_random,
+       9.0},
+      // The JSON report carries the same det ratio the gate reads.
+      {"the JSON report's det ratio",
+       JsonReport(FakeRatios(1.0, 1.0, 2.0), true)["sizes"]["256"]["det"].get<double>(), 2.0},
   };
   const auto wrong_verdicts = std::count_if(
       verdicts.begin(), verdicts.end(), [](const std::tuple<std::string, bool, bool> &one) {
@@ -506,6 +538,8 @@ int main(int argc, char **argv) {
   Require(g_bare != nullptr, "EVP_CIPHER_fetch(AES-256-GCM) failed");
   g_bare_hmac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
   Require(g_bare_hmac != nullptr, "EVP_MAC_fetch(HMAC) failed");
+  // The bare det baseline must derive the same nonce as the core, or the det ratio is meaningless.
+  RequireDetNonceMatchesCore();
 
   benchmark::Initialize(&argc, argv);
   for (const int64_t size : kSizes) {
