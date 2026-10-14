@@ -10,5 +10,5 @@
   "recorded_ratio": null,
   "recorded_runs": [],
   "runner_cpu": "to be recorded from three CI runs",
-  "note": "A ratio, never milliseconds. `samples` is scans per query per cell, split across the two queries and the sessions. The 32-session cells are recorded, not gated: at 10k rows a whole scan is a few milliseconds, so under 32 concurrent sessions the p95 is scheduling tail rather than crypto and the ratio converges to 1.0 (local runs of the 10k x 32 cell ran 0.77-1.03). Refresh recorded_runs and recorded_ratio from three load.yml runs and lower max_ratio toward the observed worst gated ratio only when it holds across all three."
+  "note": "A ratio, never milliseconds. `samples` is scans per query per cell, split across the two queries and the sessions. The 32-session cells are recorded, not gated: at 10k rows a whole scan is a few milliseconds, so under 32 concurrent sessions the p95 is scheduling tail rather than crypto and the ratio converges to 1.0 (local runs of the 10k x 32 cell ran 0.77-1.03). Refresh recorded_runs and recorded_ratio from three load.yml runs and set max_ratio to the worst observed gated ratio across them times 1.2, rounded up to one decimal, never above 1.0 — the design's requirement that GCM not be slower than the pgcrypto scan it replaces."
 }

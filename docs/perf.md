@@ -6,11 +6,13 @@ from a command in this repository; a claim without one is not a fact (`docs/desi
 ## What the gates are
 
 Two, one at the code level and one at scale, and both are **ratios**, never a number of
-milliseconds, so they mean the same on a laptop and on a shared CI runner.
+milliseconds, so they mean the same on a laptop and on a shared CI runner. The micro-benchmarks
+compare like for like — each ratio is the core over a bare EVP operation of the same shape — and
+the load gate compares the same query shape over two ciphers.
 
 | Gate | Harness | Metric | Ceiling |
 |---|---|---|---|
-| Core micro-benchmarks | `tests/bench` — `scripts/bench.sh <major>` | CPU time of the core's seal and open over bare OpenSSL EVP | `tests/bench/baseline.json` |
+| Core micro-benchmarks | `tests/bench` — `scripts/bench.sh <major>` | CPU time of the core's seal, open and deterministic seal over a bare EVP operation of the same shape | `tests/bench/baseline.json` |
 | Load | `tests/load` — `scripts/load.sh <major>` | p95 of the decrypt + `LIKE` scan against the same scan in `pgcrypto` AES-CBC | `tests/load/baseline.json` |
 
 ## The load gate
@@ -43,10 +45,11 @@ Phase S measured the same query shape over 300k rows in one backend: the GCM que
 **0.49–0.63** of the pgcrypto CBC one (`docs/design.md` §8, step 7). With the plan shapes matched
 as in Phase S (no parallel workers, `VACUUM`, a discarded warm-up), a local measurement of the
 gated cells runs in the same neighbourhood, so `tests/load/baseline.json` keeps `max_ratio` at
-**1.0** — the design's requirement that GCM not be slower than the `pgcrypto` scan it replaces —
-rather than tightening it below the noise. The ratios from the CI runner, with the runner's CPU,
-are to be recorded here from three runs, and the ceiling lowered toward the observed worst gated
-ratio only when it holds across all three.
+**1.0** — the design's requirement that GCM not be slower than the `pgcrypto` scan it replaces.
+The ratios from the CI runner, with the runner's CPU, are to be recorded here from three runs; the
+ceiling is then set to the worst observed gated ratio across the three times 1.2, rounded up to one
+decimal, and never above 1.0 — so a worst ratio of 0.88 gives 0.88 × 1.2 = 1.056, rounded up to
+1.1 and then capped at 1.0, the design's requirement.
 
 | Runner CPU | Rows | Sessions | worst gated gcm/pgcrypto p95 | When |
 |---|---|---|---|---|
@@ -56,24 +59,32 @@ ratio only when it holds across all three.
 
 `tests/bench/benchmark.cc` (Google Benchmark) measures the core's `gcm_seal` (random and
 deterministic) and `gcm_open` against a hand-rolled EVP AES-256-GCM of the same shape, per
-plaintext size, and gates three ratios against `tests/bench/baseline.json`: the random seal and
-the open over bare EVP at the same size, and the deterministic seal over the random one — the
-last is where the two HMAC-SHA256 passes for the nonce show (`docs/design.md` §8, O15).
+plaintext size, and gates three like-for-like ratios against `tests/bench/baseline.json`: the
+random seal and the open over bare EVP at the same size, and the deterministic seal over a bare
+deterministic seal — a hand-rolled EVP seal with the same HMAC-SHA256 nonce derivation (spec 1.8)
+— so both sides of `det` pay the same two HMAC-SHA256 passes and the same AES-GCM (`docs/design.md`
+§8, O15). The deterministic seal over the random one is **recorded, never gated**: it compares a
+SHA-256-bound seal with an AES-bound one, and an O17 probe found it ranging from about 1.2 to 9.6
+across sizes (about 3.3 to 9.6 at 65536 bytes), because the two operations scale differently across
+runner CPU and libcrypto — the fastest 65536-byte AES-GCM cells were about five times the slowest —
+so it is not a property of this code.
 `scripts/bench.sh <major>` builds and runs it in the build image; the `bench` workflow runs it
 on a merge and nightly, one image per libcrypto. Each benchmark runs five times
 (`->Repetitions(5)`) and the gate reads the median, so one noisy repetition cannot move a ratio —
 a single sample per cell let either side swing about 2x on a busy host. The repetitions run in a
 random order (`--benchmark_enable_random_interleaving`), so both sides of a ratio meet the same
-load rather than one side a quiet moment and the other a busy one. The bare baseline draws
+load rather than one side a quiet moment and the other a busy one. The bare random baseline draws
 its nonce with `RAND_bytes`, exactly as the core's random seal does, so the seal ratio charges the
 core for its own envelope and checks rather than for a draw only one side pays — a fixed-nonce
 baseline made the seal ratio noisy at the smallest sizes. The ceilings are per size
 (`seal`, `open`, `det`), because the core's fixed per-call cost is a larger share of a small
-message; the placeholder values run from `1.5/1.5/3.0` at 16 bytes down to `1.3/1.3/4.5` at 65536.
+message; the placeholder values run from `1.5/1.5/1.5` at 16 bytes down to `1.3/1.3/1.3` at 65536.
+The binary writes the ratios and the raw medians to JSON (`PG_GCM_BENCH_JSON`), which the workflow
+uploads as an artifact.
 
-| Runner CPU | Size | seal | open | det | When |
-|---|---|---|---|---|---|
-| *(to be recorded from the `bench` workflow)* | 16, 256, 4096, 65536 | *(ratio)* | *(ratio)* | *(ratio)* | — |
+| Runner CPU | Size | seal | open | det (gated) | det/random (recorded) | When |
+|---|---|---|---|---|---|---|
+| *(to be recorded from the `bench` workflow)* | 16, 256, 4096, 65536 | *(ratio)* | *(ratio)* | *(ratio)* | *(ratio)* | — |
 
 ## What this does not measure
 
@@ -81,5 +92,12 @@ message; the placeholder values run from `1.5/1.5/3.0` at 16 bytes down to `1.3/
   through the function manager, and that cost is not measured before this gate
   (`docs/design.md` §8).
 - The `PG_TRY` block's cost: it is at the noise floor (§8, O12). It does not change a gate.
+- The `det` gate's own slack. A cost shared by both sides of `det` is invisible to it and shows only
+  in the recorded `det`/random ratio: the per-call resolution of the digest by name
+  (`docs/design.md` §8, O15) is on both sides, so it — and any saving a prepared context would give
+  — moves the record, not the gate. A per-call fixed cost added to the core's det path alone moves
+  the gate ratio, but not past its ceiling: a temporary patch to the core on an arm64 host (not a
+  command in this repository) put an extra `EVP_MAC_fetch` per call (about 100 ns) at a gate ratio
+  of 1.03–1.11, under the 1.5 ceiling.
 - arm64: CI compiles for it and does not run either gate there (§8). Both were quick on arm64
   while the ceiling was set.

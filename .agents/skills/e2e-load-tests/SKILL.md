@@ -55,8 +55,10 @@ Rules: `testing.md`, `stack-python.md`.
   (ANALYZE, FREEZE)`, and one warm-up scan of each query is discarded before the timed rounds.
   Without the parallel setting, `gcm_decrypt`'s `COST 50` earns it a gather that `decrypt_iv`'s
   `COST 1` does not, and the ratio flatters GCM.
-- The gate is a ratio, never milliseconds, written to `tests/load/baseline.json` from three CI runs and
-  recorded in `docs/perf.md` with the runner's CPU.
+- The gate is a ratio, never milliseconds, recorded in `docs/perf.md` with the runner's CPU from three
+  CI runs; `max_ratio` is then set to the worst observed gated ratio times 1.2, rounded up to one
+  decimal, never above the 1.0 the design requires. `PG_GCM_LOAD_JSON` names a host path for the
+  runner's JSON of every cell, which the workflow uploads as an artifact.
 
 ## Bench (`tests/bench`)
 - `scripts/bench.sh <major>` builds `benchmark.cc` (Google Benchmark) in the build image and runs it:
@@ -67,11 +69,18 @@ Rules: `testing.md`, `stack-python.md`.
   noisy repetition cannot move it. The exit status is the gate — 0 only when every ratio is at or
   under its ceiling in `tests/bench/baseline.json`; the binary's `--self-test` checks the verdict,
   the ratio's direction and the gate over a fixed measurement map (each of the three ratio pairs
-  gets a failing case), with no crypto.
-- The bare baseline draws a random nonce, exactly as the core's random seal does, so the `seal` ratio
-  charges the core for its own envelope and checks, not for a draw only one side pays; the ceilings
-  are per size (`seal`, `open`, `det`), because the core's fixed per-call cost is a larger share of a
-  small message. The gate is a ratio, never nanoseconds; the ceilings are a placeholder
-  (`docs/design.md` §8 O17). Lower one toward the observed worst only when it holds across three
-  `bench` runs and both libcryptos, and record it in `docs/perf.md`. No server and no PostgreSQL
-  header is involved.
+  gets a failing case, and a high det-over-random does not fail the gate), with no crypto.
+- The three gated ratios are like for like: the random seal and the open over bare EVP, and the
+  deterministic seal over a **bare deterministic seal** — a hand-rolled EVP seal with the same
+  HMAC-SHA256 nonce derivation (spec 1.8) — so both sides of `det` pay the same two HMAC-SHA256
+  passes and the same AES-GCM. The deterministic seal over the random one is recorded, never gated:
+  it compares a SHA-256-bound seal with an AES-bound one and moves with a runner's relative AES-GCM
+  and SHA-256 throughput (an O17 probe found 3.3–9.6 at 65536 bytes). The bare random baseline draws
+  a random nonce, as the core's random seal does, so the `seal` ratio charges the core for its own
+  envelope and checks, not for a draw only one side pays. The ceilings are per size (`seal`, `open`,
+  `det`), because the core's fixed per-call cost is a larger share of a small message; the gate is a
+  ratio, never nanoseconds, and the ceilings are a placeholder (`docs/design.md` §8 O17) until three
+  runs set them. Set each to the worst observed value across three `bench` runs times 1.2, rounded up
+  to one decimal, never above the placeholder, and record it in `docs/perf.md`. No server and no
+  PostgreSQL header is involved. `PG_GCM_BENCH_JSON` names a host path for the JSON of ratios and raw
+  medians, which the workflow uploads as an artifact.
