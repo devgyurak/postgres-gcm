@@ -25,21 +25,35 @@ Rules: `testing.md`. One `.sql` per behaviour under `test/sql/`, its output unde
 - Forcing a parallel plan: set `parallel_setup_cost = 0`, `parallel_tuple_cost = 0`,
   `min_parallel_table_scan_size = 0` and `max_parallel_workers_per_gather = 2`, which are spelt the
   same on every major. Not `debug_parallel_query`: it is `force_parallel_mode` on 15, and a test may
-  not branch on the version. Assert the plan shape in the same file (`EXPLAIN (COSTS OFF)`) so a
-  serial plan fails the test instead of passing vacuously.
+  not branch on the version. **A plan that says "Workers Planned" proves nothing**: with no worker
+  available the leader runs everything and the result is the same. Also set
+  `parallel_leader_participation = off`, and assert on one execution's own
+  `EXPLAIN (ANALYZE, FORMAT JSON)` — the top node is `Gather`, `Workers Launched` is above zero, and
+  the row count is the expected one — as `parallel_strict.sql` does through a small helper function.
 - The `vectors` file reads `spec/test-vectors.json` (`\set` from a backquoted `cat`, then
-  `jsonb_array_elements`) and asserts per `testing.md`: the plaintext where it is UTF-8, the
-  invalid-UTF-8 error where it is not.
+  `jsonb_array_elements`) and asserts per spec §2.8: `nist` vectors are skipped (they are not
+  envelopes); an `ok` vector gives its text when `plaintext_class` is `text` and `22021` otherwise; a
+  `det` vector of class `text` whose nonce is derived also seals to its `envelope_hex`, with
+  `SET LOCAL pg_gcm.min_key_bytes` at its key length; `bad_tag` is `XX001` with strict on and NULL
+  with it off; `bad_envelope` and `bad_key_length` are their errors either way. The path is relative
+  to the directory `make` runs in, so `scripts/verify.sh` copies `spec/` beside `test/`.
+- A test that needs one vector takes it from the file with `\gset` (`invalid_text.sql`); a known
+  answer is never pasted into a `.sql` file, and an expected file shows ids and outcomes, not bytes.
+- `min_key_bytes.sql` sets a placeholder before the library is loaded and reconnects (`\c -`) for
+  each case, so it needs a server that does not preload `pg_gcm` — the one `scripts/dev-up.sh`
+  starts without `--preload`.
 - Where output legitimately differs by major, use an alternative expected file
   (`name_1.out`), never a branch in the test.
 
 ## Running
-- `scripts/verify.sh <major>` builds, installs into `postgres:<major>`, runs `make installcheck`, and
-  prints `regression.diffs` on failure.
+- `scripts/verify.sh <major>` installs the build that `scripts/build-in-docker.sh <major>` left into
+  the `postgres:<major>` container that `scripts/dev-up.sh <major>` started, runs `make installcheck`,
+  and prints `regression.diffs` on failure (the `dev-container` skill).
 - Re-record only with `PG_GCM_RECORD=1 scripts/verify.sh <major>`, which copies `results/` over
-  `test/expected/`. Every changed line is explained in the PR.
+  `test/expected/`. Every changed line is explained in the PR. (`pg_regress` stops at the first test
+  with no expected file — seen on 17 — so the record mode gives a new test an empty one first.)
 
 ## Must always exist
 `korean_like` (`LIKE '%길%'` on a decrypted value), `strict_on_off`, `min_key_bytes`, `null_args`,
 `aad_forms`, `encoding_euc_kr`, `invalid_text` (non-UTF-8 and U+0000 plaintexts, no bytes in the
-message), `parallel_strict`, `volatility` (from `pg_proc`) and `vectors`.
+message), `conversion_lookup` (`42883`; `pg_catalog` alone, design O14), `parallel_strict`, `volatility` (from `pg_proc`) and `vectors`.

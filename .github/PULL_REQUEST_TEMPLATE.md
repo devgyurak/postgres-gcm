@@ -9,9 +9,12 @@
 - [ ] Envelope offsets/lengths match `spec/envelope.md`
 - [ ] Tag failure discards output; `pg_gcm.strict` semantics preserved (on = error, off = NULL)
 - [ ] Key length (32/24/16, selecting the suite) checked per call, `pg_gcm.min_key_bytes` on encryption; no key/plaintext in messages
-- [ ] Every copy of key and plaintext cleansed before `pfree`; no `ereport(ERROR)` reachable while an OpenSSL object is live
+- [ ] NULL in any argument gives NULL (`STRICT`); the empty string and maximum-length arguments handled
+- [ ] Text sealed as UTF-8, verified and converted on open through the `noError` forms only (`pg_verify_mbstr(..., true)`, `pg_do_encoding_conversion_buf(..., true)`)
+- [ ] Every copy of key and plaintext the extension made cleansed before `pfree`, on the `PG_FINALLY` paths too; no argument written to in place
+- [ ] No `ereport(ERROR)` reachable while an OpenSSL object is live; `_PG_init` fetches before it registers GUCs and never raises
 - [ ] Only `EVP_CIPHER_fetch` / `EVP_MAC_fetch` by name; libcrypto is the server's
-- [ ] SQL script: no `IMMUTABLE`; volatility and `PARALLEL SAFE` as designed; released scripts untouched, upgrade script added
+- [ ] SQL script: `VOLATILE` / `STABLE`, never `IMMUTABLE`; `STRICT`; `PARALLEL SAFE`; an explicit `COST`; AAD as two overloads, never `DEFAULT NULL`; released scripts untouched, upgrade script added
 
 ## Tests (GWT)
 - [ ] Unit tests added/updated, Given-When-Then in name and body, no branching in test bodies

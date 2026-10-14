@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: PostgreSQL
+# The SQL checks against a real server, for every image of docker/versions.json: the build
+# is installed into the official image, `make installcheck` runs the pg_regress suite (the
+# Korean LIKE case among it, and every envelope vector of spec/test-vectors.json), and
+# scripts/verify.sql runs with the library loaded lazily and preloaded.
+# These are the required checks, the pre-release image excepted. Never path-filtered.
+name: regress
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: regress-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      all: ${{ steps.list.outputs.all }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: list
+        run: echo "all=$(python3 scripts/ci-matrix.py all)" >>"$GITHUB_OUTPUT"
+
+  regress:
+    needs: images
+    name: regress (${{ matrix.entry.label }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.images.outputs.all) }}
+    env:
+      IMAGE: ${{ matrix.entry.image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build
+        run: scripts/build-in-docker.sh "$IMAGE"
+      - name: Start the server
+        run: scripts/dev-up.sh "$IMAGE"
+      # verify.sh fails unless every test file produced a result and korean_like is among them.
+      - name: Regression suite and scripts/verify.sql
+        run: scripts/verify.sh "$IMAGE"

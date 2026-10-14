@@ -1,0 +1,23 @@
+-- Given: 300,000 bytes of Korean text stored in a table, so that the server hands the
+--        functions a TOASTed value they must detoast into a copy of their own, and its
+--        envelope stored beside it
+-- When: the column is sealed, and the stored envelope is opened and searched
+-- Then: the round trip is exact and LIKE finds a fragment; the extension cleansed and freed
+--       its copies without touching the stored values, which a second read confirms
+\set VERBOSITY terse
+\set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
+CREATE TEMP TABLE documents (id int, body text, body_enc bytea);
+INSERT INTO documents VALUES (1, repeat('가나다라마바사아자차', 10000));
+UPDATE documents SET body_enc = gcm_encrypt(body, :k);
+SELECT octet_length(body) AS text_bytes,
+       pg_column_size(body) < octet_length(body) AS stored_toasted,
+       octet_length(body_enc) - 29 AS sealed_bytes,
+       gcm_decrypt(body_enc, :k) = body AS round_trip,
+       gcm_decrypt(body_enc, :k) LIKE '%차가나%' AS hit,
+       gcm_decrypt(body_enc, :k) = body AS round_trip_again
+FROM documents;
+ text_bytes | stored_toasted | sealed_bytes | round_trip | hit | round_trip_again 
+------------+----------------+--------------+------------+-----+------------------
+     300000 | t              |       300000 | t          | t   | t
+(1 row)
+

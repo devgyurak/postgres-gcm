@@ -18,9 +18,9 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
 
 | Module | Responsibility | Project dependencies allowed |
 |---|---|---|
-| `pg_gcm.c` | `PG_MODULE_MAGIC`, `_PG_init` (fetch, then GUC registration), the fetched-handle cache | `gcm` init, PostgreSQL headers |
-| `fn_encrypt.c`, `fn_decrypt.c` | SQL arguments, encoding conversion, GUC reads, error translation (NULL never reaches them: the functions are `STRICT`) | `gcm`, the shared byte and error types, PostgreSQL headers |
-| `gcm.{h,c}` | The encryption and decryption construction, the authentication result | `envelope`, `nonce`, OpenSSL |
+| `pg_gcm.{h,c}` | `PG_MODULE_MAGIC`, `_PG_init` (the core's fetch, then GUC registration), what the glue files share: the GUC variables, the conversion lookup in `pg_catalog`, argument release, error translation | `gcm` init, PostgreSQL headers |
+| `fn_encrypt.c`, `fn_decrypt.c` | SQL arguments, encoding conversion, GUC reads, error translation (NULL never reaches them: the functions are `STRICT`) | `gcm`, `pg_gcm.h`, the shared byte and error types, PostgreSQL headers |
+| `gcm.{h,c}` | The encryption and decryption construction, the authentication result, the fetched handles (`gcm_init`), `gcm_cleanse` | `envelope`, `nonce`, OpenSSL |
 | `nonce.{h,c}` | Domain separation and nonce derivation | The shared types, OpenSSL |
 | `envelope.{h,c}` | Version, length, offset and field parsing; the shared types | The C standard library |
 
@@ -29,7 +29,9 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
   tests without a server.
 - `envelope` does not depend on OpenSSL either. Do not duplicate envelope byte interpretation into the
   glue.
-- `scripts/check-architecture.py` (Phase S) enforces the include boundary per line.
+- The glue includes no OpenSSL header: it reaches OpenSSL through `gcm.h` alone, `gcm_cleanse`
+  included.
+- `scripts/check-architecture.py` enforces the include boundary per line.
 
 ## 2. Errors cross the boundary as values
 
@@ -47,7 +49,8 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
 - **The server never composes a message from our data.** Encoding checks use the forms that return a
   result (`pg_verify_mbstr(..., true)`, `pg_do_encoding_conversion_buf(..., true)`), into buffers the
   glue owns; the glue raises afterwards (design §5.7). The conversion procedure is looked up
-  (`FindDefaultConversionProc`, which can raise) before any secret copy exists.
+  in `pg_catalog` (`FindDefaultConversion`; the glue raises `42883` when there is none) before any
+  secret copy exists.
 - A key-length or envelope error is never hidden by strict.
 
 ## 3. Ownership and lifetimes
@@ -55,7 +58,7 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
 | Lifetime | Resource and responsibility |
 |---|---|
 | backend (library load) | The fetched `EVP_CIPHER` and `EVP_MAC` handles, the GUC variables. Created in `_PG_init`, handles first (design §5.8). PostgreSQL never unloads a library and the handles are never released: no `on_proc_exit` callback, which would not run in a backend forked from a preloading postmaster anyway |
-| call site (`flinfo->fn_extra`) | Only after the A11-equivalent amendment: a scheduled cipher context and the key copy it was scheduled for, allocated in `fn_mcxt`, cleansed by a memory-context reset callback. An `FmgrInfo` is **not** bounded by one statement — PL/pgSQL keeps a simple expression's state to the end of the transaction — so that amendment sets its own bound |
+| call site (`flinfo->fn_extra`) | Only after a design amendment (design §4): a scheduled cipher context and the key copy it was scheduled for, allocated in `fn_mcxt`, cleansed by a memory-context reset callback. An `FmgrInfo` is **not** bounded by one statement — PL/pgSQL keeps a simple expression's state to the end of the transaction — so that amendment sets its own bound |
 | operation | The EVP operation, the nonce, MAC output and scratch copies. Released on every path before returning or raising |
 
 - Input `bytea`/`text` comes from the caller's datum. Detoasting may make a copy (`PG_GETARG_BYTEA_PP`);
@@ -81,6 +84,11 @@ crypto safety `crypto-safety.md`, and for tests `testing.md`.
 
 ## 6. Test boundaries
 
-- An internal entry point for vector tests (`gcm_encrypt_with_nonce`) is never declared in the
-  extension's SQL script. `check-architecture.py` lists every such seam.
+- An internal entry point for vector tests (`gcm_seal_with_nonce`, `gcm_aead_seal_raw`) is never
+  declared in the extension's SQL script or called by the glue. `check-architecture.py` lists every
+  such seam.
+- Nothing but the SQL-callable functions and the loader's entry points is a dynamic symbol of
+  `pg_gcm.so`: the project's headers declare everything else with hidden visibility, because PGXS
+  hides symbols by itself only from PostgreSQL 16 and an exported core function can be interposed.
+  `scripts/build-in-docker.sh` fails unless the dynamic symbols are exactly those.
 - No experimental code that skips encryption or returns plaintext under a GUC or a debug build.

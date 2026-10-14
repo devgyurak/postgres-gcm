@@ -102,7 +102,7 @@ def main() -> None:
     ):
         deny(
             "turning on statement logging writes keys and plaintext to the server log "
-            "(docs/design.md §6). Denied."
+            "(docs/ops-constraints.md). Denied."
         )
 
     cwd = os.getcwd()
@@ -137,7 +137,7 @@ def main() -> None:
             )
             if forced:
                 deny(
-                    "force-push is blocked in this repo (stack-ci-docker.md). "
+                    "force-push is blocked in this repo (CLAUDE.md). "
                     "Use --force-with-lease only with explicit user approval."
                 )
         elif sub == "add":

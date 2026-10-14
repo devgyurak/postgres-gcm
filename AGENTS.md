@@ -15,7 +15,7 @@ extension **registers new SQL functions**, **takes the key as a SQL argument** a
 working through PostgreSQL's own `LIKE`, `ILIKE` and collations. It supports PostgreSQL 15–18 on a
 server that links **OpenSSL 3.0 or later** (design §0).
 
-## 2. Public surface (planned — a change updates `docs/design.md`, `spec/` and the regression tests in the same PR)
+## 2. Public surface (a change updates `docs/design.md`, `spec/` and the regression tests in the same PR)
 
 ```
 gcm_encrypt(plaintext text, key bytea [, aad bytea])      -> bytea  VOLATILE  random nonce (RAND_bytes, 12 B)
@@ -30,8 +30,9 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
   `[, aad bytea]` is **two overloads per function, never
   `DEFAULT NULL`**, so that omitting `aad` encrypts and an explicit NULL propagates. A NULL default
   cannot do both: under `STRICT` it makes the two-argument call return NULL, and without `STRICT` an
-  explicit NULL would seal silently without AAD — under one deterministic key, the nonce-reuse
-  condition. (`DEFAULT ''` would also work; overloading is the choice — design §2.1.)
+  explicit NULL would seal silently without AAD — the value would then open without the binding it
+  was meant to carry, and nothing would say so. (`DEFAULT ''` would also work; overloading is the
+  choice — design §2.1.)
 - `key`: 32 bytes (AES-256), 24 (AES-192) or 16 (AES-128). Any other length is an error. **The key
   length selects the suite and nothing else does.** Keys are never folded, padded or hashed to fit.
 - Plaintext is sealed as **UTF-8** whatever the database encoding, so an envelope does not
@@ -40,12 +41,15 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
   Verification and conversion use the forms that report by return value (`pg_verify_mbstr(...,
   true)`, `pg_do_encoding_conversion_buf(..., true)`): `pg_any_to_server` and `pg_server_to_any` put
   the offending bytes — decrypted plaintext — into the error message (design §5.7).
+- The associated data given to GCM is `A = version || aad`: every byte of an envelope is
+  authenticated, the version byte included (design §8 O13).
 - Deterministic nonce: `nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")`,
-  `nonce = HMAC-SHA256(nonce_key, plaintext)[:12]`.
-- Envelope (normative definition: `spec/envelope.md`, written in Phase 1):
+  `nonce = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[:12]` — the AAD is an input, so one
+  key may be used with any number of AAD values (design §8 O16).
+- Envelope (normative definition: `spec/envelope.md`):
 
 ```
-0x01  legacy AES-256-CBC (dual-read only; never produced) — semantics to confirm in Phase S
+0x01  legacy AES-256-CBC — reserved; never produced and not opened in 0.1 (design §8 O6)
 0x02  AES-256-GCM random        : 0x02 || nonce(12) || ciphertext || tag(16)
 0x03  AES-256-GCM deterministic : 0x03 || nonce(12) || ciphertext || tag(16)
 0x04  AES-128-GCM random        : same layout
@@ -61,7 +65,7 @@ gcm_decrypt(ciphertext bytea, key bytea [, aad bytea])    -> text   STABLE    UT
 - Out of scope from the start: keyring or KMS integration, key ids, a key stored in a GUC or a table.
   If asked for one, turn it back into a proposal to amend the design.
 
-## 3. Repository layout (planned; Phase S creates the first of it)
+## 3. Repository layout
 
 ```
 AGENTS.md / CLAUDE.md          Agent instructions (this file is the source)
@@ -70,16 +74,18 @@ AGENTS.md / CLAUDE.md          Agent instructions (this file is the source)
 docs/design.md                 The design document — rationale, decisions, open questions, phases
 docs/design-KO.md              Its Korean translation. The English file above is canonical
 LICENSE                        The PostgreSQL License (design §7)
-docs/ops-constraints.md        Operational constraints — also duplicated on the README's first screen (Phase 4)
-spec/envelope.md               The envelope and failure semantics (Phase 1)
-spec/test-vectors.json         NIST CAVP GCM KAT plus the project's own vectors (Phase 1)
+docs/ops-constraints.md        Operational constraints — also summarised on the README's first screen
+docs/perf.md                   The load baseline and both performance gates
+spec/envelope.md               The envelope (Part 1) and its PostgreSQL binding with the failure semantics (Part 2)
+spec/test-vectors.json         NIST CAVP GCM KAT plus the project's own vectors, reproduced by scripts/check-vectors.py
 src/                           The extension (C11)
-  pg_gcm.c                     _PG_init, GUC registration, the fetched-handle cache
+  pg_gcm.{h,c}                 _PG_init, GUC registration, what the glue files share
   fn_encrypt.c fn_decrypt.c    The SQL-callable glue — argument checks, encoding, error translation only
-  gcm.{h,c}                    The OpenSSL EVP wrapper (no PostgreSQL header → unit testable)
+  gcm.{h,c}                    The OpenSSL EVP wrapper and the fetched handles (no PostgreSQL header → unit testable)
   envelope.{h,c}               Envelope encoding and decoding (no OpenSSL either)
   nonce.{h,c}                  The synthetic nonce and the nonce_key derivation (EVP_MAC HMAC-SHA256)
 pg_gcm.control                 Extension control file
+META.json                      The PGXN distribution metadata (PGXN Meta Spec 1.0.0)
 sql/pg_gcm--0.1.0.sql          The extension's install script (function declarations)
 Makefile                       PGXS build (`make USE_PGXS=1`)
 test/sql/, test/expected/      pg_regress suites — the real-server SQL scenarios (`make installcheck`)
@@ -87,8 +93,12 @@ tests/unit/                    GoogleTest — gcm/envelope/nonce, linking libcry
 tests/e2e/                     compose: primary + streaming replica + a Python SQL runner
 tests/load/                    Load: decrypt + LIKE over 10k/100k/300k rows, gated against pgcrypto
 tests/bench/                   Core micro-benchmarks (Google Benchmark) — ratios against bare EVP
-scripts/                       dev-up.sh, build-in-docker.sh, verify.sh, agents-sync.sh, check-architecture.py
-docker/                        build.Dockerfile (postgres:<major> + server-dev headers) + versions.json
+scripts/                       dev-up.sh, build-in-docker.sh, verify.sh (+ verify.sql), unit-in-docker.sh, e2e.sh, load.sh,
+                               bench.sh, server-image.sh, smoke-image.sh, smoke-tarball.sh, package.sh (+ sbom.py, release-guard.py),
+                               pgxn-dist.sh (+ check-pgxn.py), agents-sync.sh, check-architecture.py, check-action-pins.py,
+                               check-vectors.py, ci-matrix.py, lib.sh
+scripts/spike/                 The Phase S measurements (measure.sh, ldd.sh, a never-shipped probe module)
+docker/                        build.Dockerfile, server.Dockerfile, initdb.d/, versions.json
 .github/workflows/             CI — added per phase (ci-release skill)
 ```
 
@@ -98,14 +108,19 @@ docker/                        build.Dockerfile (postgres:<major> + server-dev h
 |---|---|---|
 | Start a development server | `scripts/dev-up.sh 17` | `dev-container` |
 | Build the extension | `scripts/build-in-docker.sh 17` | `pg-extension` |
-| Unit tests | `cmake -S tests/unit -B build/unit && cmake --build build/unit && ctest --test-dir build/unit` | `unit-tests` |
-| Regression tests | `scripts/verify.sh 17` (installs into a container, runs `make installcheck`) | `regress-tests` |
-| E2E | `docker compose -f tests/e2e/compose.yml up --exit-code-from runner` | `e2e-load-tests` |
-| Load | `python tests/load/run.py --rows 300000 --baseline pgcrypto` | `e2e-load-tests` |
+| Unit tests | `cmake -S tests/unit -B build/unit && cmake --build build/unit && ctest --test-dir build/unit` (in the Linux build image: `scripts/unit-in-docker.sh 17`) | `unit-tests` |
+| Regression tests | `scripts/verify.sh 17` (after the two rows above: installs the build into the dev container, runs `make installcheck`, then `scripts/verify.sql`) | `regress-tests` |
+| E2E | `scripts/e2e.sh 17` (after the build: a primary, a streaming replica and the SQL runner of `tests/e2e/compose.yml`) | `e2e-load-tests` |
+| Load | `scripts/load.sh 17` (after the build: the dev server, then the rows × sessions matrix of `tests/load/run.py` in a runner; the worst gcm/pgcrypto ratio is the gate) | `e2e-load-tests` |
+| Core benchmarks | `scripts/bench.sh 17` (after the build image: the core's seal and open against bare OpenSSL EVP, gated as ratios) | `e2e-load-tests` |
+| Distribution image | `scripts/server-image.sh 17 [tag]` then `scripts/smoke-image.sh <tag>` (before anything is pushed) | `ci-release` |
+| Release artifacts | `scripts/package.sh 17 arm64 [outdir]`, `scripts/smoke-tarball.sh 17 <tarball>`, `python3 scripts/sbom.py …`, `python3 scripts/release-guard.py …` | `ci-release` |
+| PGXN source distribution | `scripts/check-pgxn.py`, `scripts/pgxn-dist.sh [outdir]` | `ci-release` |
+| Spec vectors | `python3 scripts/check-vectors.py`, and `--self-test` (needs `pip install -r scripts/requirements-lint.txt`) | `unit-tests` |
 | Architecture boundaries | `python3 scripts/check-architecture.py` | `.agents/rules/architecture.md` |
 | Agent adapters | `scripts/agents-sync.sh [--check]` | this file, §7 |
 
-If a command does not exist yet (Phase S), **create it as that skill prescribes**. Do not introduce a
+Every command exists as of Phase 4. A new one is created **as that skill prescribes**; do not introduce a
 different build method on your own.
 
 ## 5. Absolute rules (the full text is in `.agents/rules/`)
@@ -128,7 +143,7 @@ different build method on your own.
   fixture (the spec vectors excepted) or any DDL.
 - No document may promise more than the trust boundary allows: keys and plaintext cross the client
   connection and exist in the server, so the connection must be protected (a local socket, or TLS with
-  the server verified) and the server's administrators trusted (design §5.4, §6 item 12).
+  the server verified) and the server's administrators trusted (design §5.4, docs/ops-constraints.md item 12).
 
 **Architecture (`architecture.md`)**
 - The direction is SQL glue → core (`gcm` → `envelope`/`nonce`). The core does not include a
@@ -160,8 +175,21 @@ different build method on your own.
 
 ## 6. Current phase and roadmap
 
-Current: **Phase 0 — planning.** The agent workflow and `docs/design.md` exist; no code yet. Next is
-Phase S.
+Current: **Phase 5 — ecosystem: the PGXN packaging is in place; Phase 4's completion criterion is
+still open (2026-10-13).** The extension implements `spec/envelope.md`: the three suites by key
+length, the AAD overloads, `pg_gcm.strict` and `pg_gcm.min_key_bytes`. The unit suite runs all 78
+vectors of `spec/test-vectors.json`, the regression suite the 63 envelope vectors, and the
+end-to-end suite its scenarios on a primary and on a streaming replica, on 15–18; the `unit`,
+`build`, `regress` and `e2e` workflows run them. A load gate watches the decrypt-and-`LIKE` scan
+against `pgcrypto` and core micro-benchmarks watch the seal and the open against bare OpenSSL EVP
+(`docs/perf.md`), the distribution image and the release pipeline exist, and the operational
+constraints are `docs/ops-constraints.md`. The PGXN metadata (`META.json`) and the source-distribution
+pipeline (`scripts/check-pgxn.py`, `scripts/pgxn-dist.sh`, the `publish` job of `release.yml`) are in
+place, and nothing has been uploaded. **The completion criterion is not met yet:** both
+performance gates are placeholders — the bench gate has run from `develop` twice, the load gate
+only in a throwaway probe, and neither from the default branch — so design §8 Open O17 stays
+open. **Nothing is
+released and it is not for use yet**: no tag has been cut and the format may change until 0.1.0.
 
 | Phase | Deliverable | Done when |
 |---|---|---|
@@ -169,8 +197,8 @@ Phase S.
 | 1 spec | `spec/envelope.md`, `spec/test-vectors.json` | Byte format, vectors and PostgreSQL failure semantics (SQLSTATEs, NULL handling, encoding) settled |
 | 2 implementation | `src/`, `tests/unit`, `test/sql` | CI green, including the nonce collision boundary test |
 | 3 SQL E2E | `tests/e2e` | Round trip, Korean `LIKE` and streaming replication pass |
-| 4 distribution | Build matrix, README, `docs/ops-constraints.md`, load baseline | Release artifacts plus checksums and an SBOM; a server image with the extension preinstalled |
-| 5 ecosystem | PGXN, distribution packages | Optional |
+| 4 distribution | Build matrix, packaging and the release pipeline, the distribution image, the load gate and the core micro-benchmarks (`docs/perf.md`), `docs/ops-constraints.md` and the README | Release artifacts plus checksums, a signature and an SBOM; a server image with the extension preinstalled; both performance gates run in CI |
+| 5 ecosystem | The PGXN metadata and source distribution — `META.json`, `scripts/check-pgxn.py`, `scripts/pgxn-dist.sh` and the PGXN upload in `release.yml`; distribution packages await demand | `META.json` valid against the PGXN Meta Spec and cross-checked with the control file and the tree; the archive is the PGXN layout; a tag uploads it to PGXN Manager |
 
 ## 7. Where each tool's agent configuration lives
 

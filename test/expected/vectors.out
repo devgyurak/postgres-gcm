@@ -1,0 +1,173 @@
+-- Given: every envelope vector of spec/test-vectors.json, read from the file — no value is
+--        copied into this test. The nist vectors are the unit suite's: no SQL function takes a
+--        nonce. pg_regress runs psql in the directory make runs in, which holds spec/.
+-- When: each is opened with pg_gcm.strict on and off; each whose aad is empty is opened by the
+--       two-argument form as well; each deterministic one whose nonce is derived is sealed
+--       again from its inputs, with pg_gcm.min_key_bytes lowered for the shorter keys
+-- Then: every outcome is the one spec/envelope.md §2.5 and §2.8 give for the vector
+\set VERBOSITY terse
+\set vectors `cat spec/test-vectors.json`
+CREATE TEMP TABLE vector AS
+SELECT n, id, kind, expect, plaintext_class, coalesce(nonce_derived, true) AS nonce_derived,
+       decode(key_hex, 'hex') AS key, decode(aad_hex, 'hex') AS aad,
+       decode(plaintext_hex, 'hex') AS plaintext, decode(envelope_hex, 'hex') AS envelope
+FROM jsonb_array_elements(:'vectors'::jsonb -> 'vectors') WITH ORDINALITY AS e(v, n),
+     jsonb_to_record(v) AS r(id text, kind text, expect text, plaintext_class text,
+                             nonce_derived boolean, key_hex text, aad_hex text,
+                             plaintext_hex text, envelope_hex text)
+WHERE kind <> 'nist';
+-- spec §2.5 and §2.8: what gcm_decrypt gives for each outcome of Part 1.
+CREATE TEMP TABLE specified (expect text, plaintext_class text, strict_on text, strict_off text);
+INSERT INTO specified VALUES
+  ('ok', 'text', 'the text', 'the text'),
+  ('ok', 'not_utf8', '22021', '22021'),
+  ('ok', 'contains_nul', '22021', '22021'),
+  ('bad_tag', NULL, 'XX001', 'NULL'),
+  ('bad_envelope', NULL, '22P03', '22P03'),
+  ('bad_key_length', NULL, '22023', '22023');
+-- What opening gave: 'the text' when it is the vector's plaintext, 'NULL', or the SQLSTATE.
+-- A NULL aad asks for the two-argument form.
+CREATE FUNCTION pg_temp.opened(envelope bytea, key bytea, aad bytea, plaintext bytea, strict text)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  t text;
+BEGIN
+  PERFORM set_config('pg_gcm.strict', strict, true);
+  t := CASE WHEN aad IS NULL THEN gcm_decrypt(envelope, key) ELSE gcm_decrypt(envelope, key, aad) END;
+  RETURN CASE WHEN t IS NULL THEN 'NULL'
+              WHEN convert_to(t, 'UTF8') = plaintext THEN 'the text'
+              ELSE 'another text' END;
+EXCEPTION WHEN OTHERS THEN
+  RETURN SQLSTATE;
+END $$;
+SELECT v.id, o.strict_on, o.strict_off,
+       o.strict_on = s.strict_on AND o.strict_off = s.strict_off AS as_specified
+FROM vector v
+JOIN specified s ON s.expect = v.expect AND s.plaintext_class IS NOT DISTINCT FROM v.plaintext_class,
+LATERAL (SELECT pg_temp.opened(v.envelope, v.key, v.aad, v.plaintext, 'on') AS strict_on,
+                pg_temp.opened(v.envelope, v.key, v.aad, v.plaintext, 'off') AS strict_off) AS o
+ORDER BY v.n;
+                   id                   | strict_on | strict_off | as_specified 
+----------------------------------------+-----------+------------+--------------
+ random-256-korean                      | the text  | the text   | t
+ det-256-korean                         | the text  | the text   | t
+ random-192-korean                      | the text  | the text   | t
+ det-192-korean                         | the text  | the text   | t
+ random-128-korean                      | the text  | the text   | t
+ det-128-korean                         | the text  | the text   | t
+ random-256-empty                       | the text  | the text   | t
+ det-256-empty                          | the text  | the text   | t
+ random-256-aad                         | the text  | the text   | t
+ det-256-aad                            | the text  | the text   | t
+ random-192-aad                         | the text  | the text   | t
+ det-128-aad                            | the text  | the text   | t
+ det-256-ascii                          | the text  | the text   | t
+ random-256-long-aad                    | the text  | the text   | t
+ det-256-long-aad                       | the text  | the text   | t
+ det-256-300-byte-aad                   | the text  | the text   | t
+ random-256-empty-aad                   | the text  | the text   | t
+ det-256-empty-aad                      | the text  | the text   | t
+ det-256-nonce-not-derived              | the text  | the text   | t
+ random-256-four-byte-char              | the text  | the text   | t
+ random-256-15-bytes                    | the text  | the text   | t
+ random-256-16-bytes                    | the text  | the text   | t
+ random-256-17-bytes                    | the text  | the text   | t
+ det-256-64-bytes                       | the text  | the text   | t
+ random-256-not-utf8                    | 22021     | 22021      | t
+ random-256-contains-nul                | 22021     | 22021      | t
+ random-256-nul-inside                  | 22021     | 22021      | t
+ random-256-overlong                    | 22021     | 22021      | t
+ random-256-surrogate                   | 22021     | 22021      | t
+ random-256-truncated-utf8              | 22021     | 22021      | t
+ tag-last-bit-flipped                   | XX001     | NULL       | t
+ ciphertext-first-bit-flipped           | XX001     | NULL       | t
+ nonce-first-bit-flipped                | XX001     | NULL       | t
+ version-02-as-03                       | XX001     | NULL       | t
+ version-03-as-02                       | XX001     | NULL       | t
+ version-04-as-05                       | XX001     | NULL       | t
+ version-06-as-07                       | XX001     | NULL       | t
+ tag-last-bit-flipped-192               | XX001     | NULL       | t
+ tag-last-bit-flipped-empty             | XX001     | NULL       | t
+ aad-missing                            | XX001     | NULL       | t
+ aad-different                          | XX001     | NULL       | t
+ aad-unexpected                         | XX001     | NULL       | t
+ key-different                          | XX001     | NULL       | t
+ last-byte-dropped                      | XX001     | NULL       | t
+ one-byte-appended                      | XX001     | NULL       | t
+ envelope-empty                         | 22P03     | 22P03      | t
+ envelope-one-byte                      | 22P03     | 22P03      | t
+ envelope-12-bytes                      | 22P03     | 22P03      | t
+ envelope-28-bytes                      | 22P03     | 22P03      | t
+ version-00                             | 22P03     | 22P03      | t
+ version-01-reserved                    | 22P03     | 22P03      | t
+ version-08                             | 22P03     | 22P03      | t
+ version-ff                             | 22P03     | 22P03      | t
+ key-empty                              | 22023     | 22023      | t
+ key-15-bytes                           | 22023     | 22023      | t
+ key-31-bytes                           | 22023     | 22023      | t
+ key-33-bytes                           | 22023     | 22023      | t
+ key-16-bytes-for-aes-256               | 22023     | 22023      | t
+ key-24-bytes-for-aes-256               | 22023     | 22023      | t
+ key-32-bytes-for-aes-128               | 22023     | 22023      | t
+ precedence-key-length-before-envelope  | 22023     | 22023      | t
+ precedence-short-envelope-before-suite | 22P03     | 22P03      | t
+ precedence-envelope-before-suite       | 22P03     | 22P03      | t
+(63 rows)
+
+-- Every envelope vector was joined to a specified outcome: none fell out of the query above.
+SELECT count(*) AS envelope_vectors,
+       count(s.expect) AS with_a_specified_outcome
+FROM vector v
+LEFT JOIN specified s ON s.expect = v.expect AND s.plaintext_class IS NOT DISTINCT FROM v.plaintext_class;
+ envelope_vectors | with_a_specified_outcome 
+------------------+--------------------------
+               63 |                       63
+(1 row)
+
+-- The two-argument form is the three-argument form with an empty aad (spec §2.1).
+SELECT count(*) AS vectors_with_an_empty_aad,
+       count(*) FILTER (WHERE pg_temp.opened(v.envelope, v.key, NULL, v.plaintext, 'on') = s.strict_on
+                          AND pg_temp.opened(v.envelope, v.key, NULL, v.plaintext, 'off') = s.strict_off)
+         AS as_specified_by_the_two_argument_form
+FROM vector v
+JOIN specified s ON s.expect = v.expect AND s.plaintext_class IS NOT DISTINCT FROM v.plaintext_class
+WHERE v.aad = '';
+ vectors_with_an_empty_aad | as_specified_by_the_two_argument_form 
+---------------------------+---------------------------------------
+                        52 |                                    52
+(1 row)
+
+-- Sealing: only a deterministic vector can be compared — a random nonce is drawn inside.
+BEGIN;
+SET LOCAL pg_gcm.min_key_bytes = 16;
+SELECT id, octet_length(key) AS key_bytes,
+       gcm_encrypt_det(convert_from(plaintext, 'UTF8'), key, aad) = envelope AS seals_to_the_vector
+FROM vector
+WHERE kind = 'det' AND expect = 'ok' AND plaintext_class = 'text' AND nonce_derived
+ORDER BY n;
+          id          | key_bytes | seals_to_the_vector 
+----------------------+-----------+---------------------
+ det-256-korean       |        32 | t
+ det-192-korean       |        24 | t
+ det-128-korean       |        16 | t
+ det-256-empty        |        32 | t
+ det-256-aad          |        32 | t
+ det-128-aad          |        16 | t
+ det-256-ascii        |        32 | t
+ det-256-long-aad     |        32 | t
+ det-256-300-byte-aad |        32 | t
+ det-256-empty-aad    |        32 | t
+ det-256-64-bytes     |        32 | t
+(11 rows)
+
+SELECT count(*) AS det_vectors_with_an_empty_aad,
+       count(*) FILTER (WHERE gcm_encrypt_det(convert_from(plaintext, 'UTF8'), key) = envelope)
+         AS sealed_to_the_vector_by_the_two_argument_form
+FROM vector
+WHERE kind = 'det' AND expect = 'ok' AND plaintext_class = 'text' AND nonce_derived AND aad = '';
+ det_vectors_with_an_empty_aad | sealed_to_the_vector_by_the_two_argument_form 
+-------------------------------+-----------------------------------------------
+                             6 |                                             6
+(1 row)
+
+COMMIT;

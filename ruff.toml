@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: PostgreSQL
+# Python is used for internal tools and SQL test runners only (.agents/rules/stack-python.md).
+line-length = 100
+target-version = "py310"

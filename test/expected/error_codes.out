@@ -1,0 +1,29 @@
+-- Given: one input for each failure class a UTF8 database can reach
+-- When: each is given to the extension with psql reporting the SQLSTATE alone
+-- Then: a key length that names no suite, one below pg_gcm.min_key_bytes and one of another
+--       suite than the envelope's are 22023; a malformed envelope is 22P03; a forged tag and
+--       a wrong aad are XX001; an authenticated value that is not text is 22021 — a class
+--       each, so a client can tell them apart (spec §2.5)
+\set VERBOSITY sqlstate
+\set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
+\set vectors `cat spec/test-vectors.json`
+SELECT v ->> 'envelope_hex' AS not_utf8, v ->> 'key_hex' AS not_utf8_key
+FROM jsonb_array_elements(:'vectors'::jsonb -> 'vectors') AS v
+WHERE v ->> 'id' = 'random-256-not-utf8' \gset
+SELECT gcm_encrypt('홍길동', :k) AS sealed \gset
+SELECT gcm_encrypt('x', decode(repeat('00', 31), 'hex'));
+ERROR:  22023
+SELECT gcm_encrypt('x', decode(repeat('00', 16), 'hex'));
+ERROR:  22023
+SELECT gcm_decrypt(:'sealed'::bytea, decode(repeat('00', 16), 'hex'));
+ERROR:  22023
+SELECT gcm_decrypt(substring(:'sealed'::bytea FROM 1 FOR 28), :k);
+ERROR:  22P03
+SELECT gcm_decrypt(set_byte(:'sealed'::bytea, 0, 1), :k);
+ERROR:  22P03
+SELECT gcm_decrypt(set_byte(:'sealed'::bytea, 37, get_byte(:'sealed'::bytea, 37) # 1), :k);
+ERROR:  XX001
+SELECT gcm_decrypt(:'sealed'::bytea, :k, 'patients.name');
+ERROR:  XX001
+SELECT gcm_decrypt(decode(:'not_utf8', 'hex'), decode(:'not_utf8_key', 'hex'));
+ERROR:  22021

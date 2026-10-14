@@ -4,10 +4,25 @@
 
 > 이 문서는 `docs/design.md` 의 번역이다. 두 문서가 다르면 영어 문서가 맞고, 이 번역을 고친다.
 
-상태: **Phase 0, 기획** (2026-10-10). 여기 적힌 것은 아직 하나도 구현되지 않았다. 설계가 기대는
-PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 "확인됨" 에 기록되어 있거나,
-Phase S 에서 확인할 §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식
-이미지와 대조했고, 거기서 확인된 것을 §8 에 적었다.
+상태: **Phase 5 — 생태계: PGXN 패키징을 갖췄고, Phase 4 의 완료 기준은 아직 미충족** (2026-10-13).
+확장이 명세 — `spec/envelope.md` 와 `spec/test-vectors.json` — 를
+구현한다. 세 가지 키 길이, AAD 가 있는 형태와 없는 형태, `pg_gcm.strict` 와 `pg_gcm.min_key_bytes` 까지다.
+코어는 단위 테스트에서 모든 벡터를, SQL 함수는 회귀 테스트에서 모든 봉투 벡터를 실행하고, E2E 스위트는
+primary 와, primary 가 봉인한 것을 재생만 한 스트리밍 replica 에서 그 함수들을 실행한다. PostgreSQL
+15~18 에서다 (§4, §8). 부하 게이트는 복호화 + `LIKE` 스캔을 `pgcrypto` 와 비교해 감시하고, 코어
+마이크로 벤치마크는 봉인과 열기를 bare OpenSSL EVP 와 비교해 감시한다 ([`docs/perf.md`](perf.md)).
+운영 제약은 별도 문서 [`docs/ops-constraints.md`](ops-constraints.md) 에 있고, 릴리스 파이프라인이
+tarball 과 그 체크섬, SBOM, 그리고 extension 을 미리 설치한 `postgres:<major>` 이미지를 만든다.
+PGXN 메타데이터와 소스 배포 파이프라인도 갖춰져 있다 (§4, Phase 5). 이것 역시 연습만 되고 끝에서
+끝까지 관찰되지는 않았다: 아무것도 업로드되지 않았다. **두 성능 게이트는 아직 placeholder 이다: bench
+게이트는 `develop` 에서 두 번 돌았고 (§8 에 이 작업이 설명하는 2026-10-14 실패가 있다), load 게이트는
+일회성 프로브에서만 돌았으며, 둘 다 기본 브랜치 `main` 에서는 돌지 않았다** (§8 O17). 따라서 완료
+기준은 충족되지 않았다. **릴리스된 것은 없고
+아직 쓸 수 있는 단계가 아니다**: tag 를 자르지 않았고 0.1.0 까지 형식이 바뀔 수 있다. 설계가 기대는
+PostgreSQL 동작에 관한 주장은 모두 §9 에 출처가 있거나, 근거와 함께 §8 에
+기록되어 있거나, §8 "미확인" 목록에 있다. 이 계획은 2026-10-10 에 PostgreSQL 15~18 소스, 공식 이미지와
+대조했고, 스파이크 실행, 명세 작성, 구현을 명세에 맞추는 일은 2026-10-12 에, E2E 스위트 실행과 배포는
+2026-10-13 에 했으며, 각각에서 확인된 것을 §8 에 적었다.
 
 ## 0. 목표와 범위
 
@@ -81,8 +96,8 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
   NULL 은 전파되게 하려는 것이다. **NULL 기본값으로는 둘을 함께 얻을 수 없다.** `STRICT` 아래에서 기본값 NULL 은
   2 인자 호출이 아무것도 암호화하지 않고 NULL 을 돌려주게 만든다 (15~18 에서 재현, §8). 그렇다고 NULL
   을 "AAD 없음"으로 읽으려고 `STRICT` 를 빼면, 명시한 NULL — NULL 을 허용하는 컬럼, 바인딩하지 않은
-  파라미터 — 이 조용히 AAD *없이* 봉인된다. 결정적 키 하나에서 같은 평문을 "AAD 있음"과 "AAD 없음"으로
-  섞어 쓰는 것이고 spec 이 금지하는 nonce 재사용 조건이다. 오버로드 둘이면 2 인자 형태가 "AAD
+  파라미터 — 이 조용히 AAD *없이* 봉인된다. 그 값은 원래 묶으려던 것 없이도 열리게 되고, 그 사실을
+  알려 주는 것은 아무것도 없다. 오버로드 둘이면 2 인자 형태가 "AAD
   없음"이고, 3 인자 형태의 NULL `aad` 는 NULL 을 주며, 빈 `aad` (`''`) 는 2 인자 형태와 똑같이
   봉인한다.
   NULL 이 아닌 기본값으로도 둘을 함께 얻을 수 있다. `STRICT` 와 함께 쓴 `aad bytea DEFAULT ''` 는
@@ -91,21 +106,28 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
   남기지 않는다.
 - `STRICT` 의 귀결 하나를 함수를 문서화하는 모든 곳에 적는다. **키가 빠지면 오류가 아니라 NULL 이다.**
   평문이 NULL 일 수 없는 암호화 컬럼에는 `NOT NULL` 을 선언해, 바인딩하지 않은 키 파라미터가 NULL 을
-  저장하는 대신 문장을 실패시키게 한다 (§6, 11 번).
-- 함수마다 `COST` 를 명시하고, 값은 Phase S 에서 잰 호출당 비용으로 정한다. C 함수의 기본 비용은 1 이고
-  플래너는 한 스캔의 조건을 비용 순으로 배열하므로, 명시하지 않으면 `gcm_decrypt(...) LIKE ...` 가
-  §6 4 번이 기대는 값싼 조건들 뒤에 놓이지 않는다.
+  저장하는 대신 문장을 실패시키게 한다 (docs/ops-constraints.md 11 번).
+- 함수마다 `COST` 를 명시한다: `gcm_decrypt` 50, `gcm_encrypt` 100, `gcm_encrypt_det` 200 으로, Phase S
+  측정에서 나온 둥근 값이다 (§8). C 함수의 기본 비용은 1 이고 플래너는 한 스캔의 조건을 비용 순으로
+  배열하므로, 명시하지 않으면 `gcm_decrypt(...) LIKE ...` 가 docs/ops-constraints.md 4 번이 기대는 값싼 조건들 뒤에 놓이지
+  않는다.
 - 이진 평문(`bytea` 입력, `bytea` 출력)은 0.1 에 일부러 넣지 않는다. 첫 인자에서 `text` 와 `bytea` 를
   오버로드하면 타입 없는 리터럴이 모호해진다. 필요하면 개정을 거쳐 별도 이름(`gcm_encrypt_bytes`,
   `gcm_decrypt_bytes`)으로 넣는다.
 
 ### 2.2 봉투
 
-봉투는 `version || nonce(12) || 암호문 || tag(16)` 이고, version 바이트 `0x02`~`0x07` 이 suite 와
-변형을 나타낸다 (`AGENTS.md` §2). Phase 1 에서 쓰는 `spec/envelope.md` 가 규범 정의다. 바이트 오프셋
+봉투는 `version || nonce(12) || ciphertext || tag(16)` 이고, version 바이트 `0x02`~`0x07` 이 suite 와
+변형을 나타낸다 (`AGENTS.md` §2). `spec/envelope.md` 가 규범 정의다. 바이트 오프셋
 표, nonce 유도, hex 예시, 벡터 스키마를 담고, 어떤 구현이든 이 형식을 읽고 쓸 수 있도록 PostgreSQL
 용어 없이 쓴다. PostgreSQL 바인딩 — SQLSTATE, 인코딩 규칙, 아래의 예외 — 은 같은 파일 안에 명확히
 표시한 별도 부분이다.
+
+**봉투의 모든 바이트가 인증된다.** GCM 에 주는 associated data 는 version 바이트 뒤에 호출자의 AAD 를
+붙인 `version || aad` 다 (명세 §1.5; Phase 1 에서 결정, §8 O13). 그렇지 않으면 version 바이트가 tag
+밖에 있는 유일한 바이트가 되고, 키 없이도 `0x03` 을 `0x02` 로 고쳐 같은 평문의 다른 봉투를 만들 수
+있다. 결정적 nonce 는 바로 그 associated data 와 평문에서 유도하므로 (명세 §1.8; §8 O16), 결정적 키
+하나로 AAD 값을 몇 가지든 쓸 수 있다.
 
 봉투 안의 평문은 **UTF-8** 이다. `gcm_encrypt` 는 봉인 전에 인자를 DB 인코딩에서 UTF-8 로 변환하고,
 `gcm_decrypt` 는 열린 바이트가 올바른 UTF-8 인지 확인한 뒤 DB 인코딩으로 변환한다 (어떻게 하는지,
@@ -120,11 +142,13 @@ gcm_decrypt(ciphertext bytea, key bytea, aad bytea)    RETURNS text   STABLE   S
 2. UTF-8 이 아닌 평문.
 3. UTF-8 이 아닌 DB 에서, DB 인코딩이 담을 수 없는 문자.
 
-`0x01` 은 인증이 없는 레거시 AES-256-CBC dual-read 봉투 (`0x01 || iv(16) || CBC 암호문`) 용으로
-예약되어 있고 §8 O6 으로 남는다. 결과는 둘 중 하나이고, Phase S 가 호환성과 보안 정책이라는 두 근거로
-고른다. `pgcrypto` 에서 32 바이트 키로 만든 `'\x01' || iv || encrypt_iv(data, key, iv, 'aes-cbc')` 가
-제대로 열리면 구현하고, 그러면 기존 pgcrypto 컬럼에 재암호화 없는 이관 경로가 생긴다. 아니면
-구현하지 않으며, 그 경우 할당됐지만 구현하지 않은 version 바이트로서 `bad_envelope` 로 실패한다.
+`0x01` 은 인증이 없는 레거시 AES-256-CBC dual-read 봉투 (`0x01 || iv(16) || CBC ciphertext`) 용으로
+예약되어 있다. **0.1 은 이를 구현하지 않는다** (§8 O6, Phase S 에서 결정): 바이트는 할당된 채로 남고,
+이 바이트를 가진 봉투는 잘못된 봉투로 실패한다. 걸림돌은 호환성이 아니다. `pgcrypto` 에서 32 바이트
+키로 쓴 `encrypt_iv(data, key, iv, 'aes-cbc')` 는 PKCS#7 패딩의 AES-256-CBC 그대로라서,
+`'\x01' || iv || …` 는 기존 pgcrypto 컬럼에 재암호화 없는 이관 경로를 줄 수 있다. 걸림돌은 보안
+정책이다. 인증이 목적인 함수 뒤에 인증 없는 형식을 두게 된다. 나중에 구현하는 것은 이 문서의
+개정이며, 이미 쓰인 어떤 봉투도 바꾸지 않는다.
 
 구현한다면 두 조건이 따라오고, `0x01` 을 드러내는 모든 곳에 적는다.
 
@@ -213,16 +237,34 @@ preload 하지 않으면 라이브러리는 backend 에서 함수를 처음 부�
 
 모든 답을 그것을 만든 명령과 함께 §8 에 기록한다.
 
+2026-10-12 에 15~18, 19beta4, 그리고 서버가 OpenSSL 3.0 을 링크하는 이미지에서 마쳤고, 답은 §8
+"Phase S 에서 확인됨" 에 있다. 위에 적힌 단계와 다르게 한 것이 셋 있고, 이유는 §8 에 있다.
+스파이크에 `gcm_encrypt_det` 가 들어 있다. 그 nonce 가 SQL 에서 HMAC 결과를 볼 수 있는 유일한
+곳이기 때문이다 (5 단계). `CRYPTO_set_mem_functions` probe 와 `PG_TRY` 시간 측정은 extension 의
+`_PG_init` 이 아니라 측정 전용 모듈에 있다 (6, 7 단계). 그리고 6 단계의 할당 카운터가 닿는 것은
+할당 실패와 tag 불일치가 지나는 경로이지, EVP 호출이 겪을 수 있는 모든 실패가 아니다. 나머지는
+구조로 보였다.
+
 ### Phase 1 — spec
 
 `spec/envelope.md` 를 쓰고 `spec/test-vectors.json` 을 만든다. NIST CAVP GCM known-answer 테스트에 이
 프로젝트의 자체 벡터를 더한 것이고, `scripts/check-vectors.py` 로 재현할 수 있다. PostgreSQL 바인딩을
 별도 부분으로 더한다 (§2.2): 실패 종류별 SQLSTATE, 인코딩 규칙과 그것이 거부하는 평문, Phase S 에서
-정한 `0x01` 결정, 그리고 평문이 UTF-8 이 아닌 벡터에 대해 SQL 계층이 기대하는 것. NIST 평문은 임의의
-바이트다. 코어는 그것들을 열고 단위 테스트가 바이트를 비교한다. SQL 로는 `gcm_decrypt` 가 `text` 를
-돌려주므로 기대 결과가 "인증은 통과하고, 그다음 잘못된 UTF-8 오류" 다.
+정한 `0x01` 결정, 그리고 평문이 UTF-8 이 아닌 벡터에 대해 SQL 계층이 기대하는 것.
+
+2026-10-12 에 마쳤고, 답은 §8 "Phase 1 에서 확인됨" 에 있다. 처음 쓴 이 절과 다르게 된 것이 둘 있다.
+version 바이트를 인증하면 (§2.2) NIST 벡터는 봉투가 아니다 — 그 associated data 는 `version || aad` 가
+아니라 NIST 의 것이다 — 그래서 NIST known answer 는 단위 테스트에서 primitive 를 시험하고, SQL 은 이를
+보지 않는다. "인증은 통과하고, 그다음 잘못된 UTF-8 오류" 는 평문이 UTF-8 이 아니거나 U+0000 을 담은
+프로젝트 자체 벡터들이 대신 맡는다. 그리고 이 phase 는 넘겨받은 구성을 받아 적기만 하지 않았다. 명세
+리뷰가 구성을 두 번 바꿨다: O13 과 O16.
 
 ### Phase 2 — 구현과 테스트
+
+Phase 2 는 스파이크를 명세에 맞췄다 (이슈 #19). version 바이트를 associated data 에 넣었고, 결정적
+nonce 도 associated data 에서 유도하며, 코어에 AAD 인자와 24 바이트, 16 바이트 suite 를, glue 에
+`pg_gcm.min_key_bytes` 를 더했고, 스파이크 테스트의 인라인 known answer 를 단위 테스트와 회귀 테스트가
+읽는 `spec/test-vectors.json` 으로 바꿨다. 관찰한 것은 §8 "Phase 2 에서 확인된 것" 에 있다.
 
 코어(`gcm.c`, `envelope.c`, `nonce.c`)는 C11 이고 PostgreSQL 헤더를 포함하지 않는다. glue
 (`fn_*.c`)는 인자, 인코딩, GUC, 오류를 다룬다. 단위 테스트는 서버 없이 모든 벡터로 코어를 돌리고,
@@ -235,16 +277,38 @@ preload 하지 않으면 라이브러리는 backend 에서 함수를 처음 부�
 ### Phase 3 — SQL E2E
 
 primary, 스트리밍 replica, Python 러너로 된 compose 파일: 왕복, 한국어 `LIKE`, 복제 (replica 가 자신이
-암호화하지 않은 암호문을 읽는다), 그리고 NULL 인자가 NULL 을 주는 것.
+암호화하지 않은 암호문을 읽는다), 그리고 NULL 인자가 NULL 을 주는 것. `tests/e2e` 가 그것이고
+`scripts/e2e.sh <major>` 로 실행한다. 거기서 본 것은 §8 "Phase 3 에서 확인된 것" 에 있다.
 
 ### Phase 4 — 배포
 
-메이저 × 아키텍처 빌드 매트릭스, 체크섬과 SBOM 이 붙은 tarball, extension 을 미리 설치한
-`postgres:<major>` 이미지, README 와 `docs/ops-constraints.md`, 그리고 `docs/perf.md` 의 부하 기준선.
+메이저 × 아키텍처 빌드 매트릭스는 `build.yml` 이다 (§4, Phase 2). 이 phase 는 패키징, 배포 이미지,
+그리고 두 성능 게이트를 더한다. `scripts/package.sh` 가 `pg_gcm-<version>-pg<major>-<arch>.tar.gz` 와
+그 체크섬을, `scripts/sbom.py` 가 CycloneDX SBOM 을 쓰고, `release.yml` 이 tag (SemVer, `main` 위,
+`pg_gcm.control` 과 일치, CHANGELOG 에 `## <version>` 절) 를 검사한 뒤 tarball, `SHA256SUMS`, 그
+keyless 서명, SBOM 을 게시한다. `workflow_dispatch` 실행은 dry run 이다. `docker/server.Dockerfile`
+은 빌드한 extension 을 `postgres:<major>` 위에 얹고 init 스크립트에서 `CREATE EXTENSION pg_gcm` 을
+실행한다. `scripts/server-image.sh` 가 그것을 만들고 `scripts/smoke-image.sh` 가 이미지 자체의 init 에
+대해 한국어 `LIKE` 왕복을 푸시 전에 확인한다. 운영 제약은 `docs/ops-constraints.md` 이고, 부하 기준선과
+두 성능 게이트는 `docs/perf.md` 다. 게이트와 이미지가 실제로 무엇을 하는지, 무엇이 아직 기록되지
+않았는지는 §8 "Phase 4 에서 확인된 것" 에 있다.
 
-### Phase 5 — 생태계 (선택)
+### Phase 5 — 생태계
 
-PGXN, 수요가 있으면 배포판 패키징.
+PGXN, 그다음 수요가 있으면 배포판 패키징. `META.json` 은 배포본의 메타데이터다 (PGXN Meta Spec
+1.0.0). `scripts/check-pgxn.py` 는 그것을 그 명세 — 필수 필드, 그 값에 대한 규칙, 그리고 맵이 자기
+키나 사용자 정의 `x_` 키만 담아야 한다는 규칙 — 에 대해 검증하고, 명세가 할 수 없는 교차 검사를
+더한다: 버전이 `pg_gcm.control` 과 일치하는지, 제공하는 `file` 과 `docfile` 이 존재하는지,
+extension 버전이 배포본 버전과 같은지, PostgreSQL 하한이 지원 범위인지. `scripts/pgxn-dist.sh`
+는 소스 아카이브 `pg_gcm-<version>.zip` 을 `git archive HEAD` 로 쓴다 — 최상위 디렉터리 하나가
+`pg_gcm-<version>/` 인, PGXN Manager 가 기대하는 배치다 — 그리고 `dist/` 바깥의 디렉터리에 쓰므로
+체크섬이 붙는 릴리스 산출물에 끼지 않는다. `release.yml` 의 `publish` job 은 메타데이터를 검증하고
+아카이브를 만든 뒤, tag 일 때만 HTTP Basic 인증으로 PGXN Manager 에 업로드한다. `workflow_dispatch`
+는 아카이브를 검증·생성만 하고 업로드하지 않는다. 배포본은 0.1.0 이 pre-release 인 동안
+`release_status` 가 "testing" 이다: 봉투 형식이 아직 바뀔 수 있고 프로젝트가 아직 쓸 수 있는 단계가
+아니므로, PGXN 이 그것을 stable 설치로 제공해서는 안 된다. 배포판 패키징 (Debian, RPM) 은 수요를
+기다리며 만들지 않는다. 검사기와 아카이브가 실제로 무엇을 하는지, 무엇이 아직 기록되지 않았는지는
+§8 "Phase 5 에서 확인된 것" 에 있다.
 
 ## 5. 설계 결정과 근거
 
@@ -271,8 +335,10 @@ PostgreSQL 메모리 컨텍스트가 추적하지 않으므로, 그것이 살아
   0 이 되거나 테이블 페이지가 망가진다. 사본인지는 `PG_FREE_IF_COPY` 가 쓰는 방법
   (`PG_GETARG_POINTER` 와 포인터가 다른지)으로 판별한다.
 - 결과 `text`, 호출자의 datum, 그리고 플래너가 `STABLE` 호출을 평가하며 만드는 사본 (§5.3) 은
-  extension 의 손이 닿지 않는다. 지우기는 우리 버퍼에 대한 심층 방어이지, backend 메모리에 키 사본이
-  남지 않는다는 보장이 아니다.
+  extension 의 손이 닿지 않는다. 서버가 우리를 위해 값을 detoast 할 때 쓰는 중간 버퍼 — 가져온
+  조각들과 압축된 형태 — 도 마찬가지이고, 서버는 호출이 성공해도 이것들을 0 으로 지우지 않고
+  해제한다. 지우기는 우리 버퍼에 대한 심층 방어이지, backend 메모리에 키 사본이 남지 않는다는
+  보장이 아니다.
 - 우리 자신의 비밀 사본을 쥔 채 아직 오류를 올릴 수 있는 glue 구간 — 이를테면 메모리 부족 때의
   `palloc` — 은 `PG_TRY` / `PG_FINALLY` 로 감싸서, 오류 경로에서도 사본이 지워지게 한다. 그런 블록
   안에는 살아 있는 OpenSSL 컨텍스트가 없다.
@@ -293,19 +359,19 @@ immutable 함수는 인덱스 표현식, 인덱스 조건절, 생성 컬럼, 파
   `gcm_decrypt` 오류가 단순한 `EXPLAIN` 이나 Bind 단계에서 나올 수 있고, 그 순간 플래너가 인자의 자기
   사본을 쥐고 있다.
 - 장벽이 아니다. PostgreSQL 은 래퍼의 volatility 선언을 믿으므로, `gcm_decrypt` 를 `IMMUTABLE` SQL
-  함수로 감싼 사용자는 그것에 인덱스를 걸 수 있다. 이것은 운영 제약 (§6, 2 번) 이고 extension 이 막을
+  함수로 감싼 사용자는 그것에 인덱스를 걸 수 있다. 이것은 운영 제약 (docs/ops-constraints.md 2 번) 이고 extension 이 막을
   수 있는 일이 아니다.
 
 ### 5.4 키는 SQL 인자이고, 설정이 아니다
 
 `postgresql.conf`, GUC, 테이블, 환경 변수에 키를 두지 않는다. 그 대가 —
-문장이 있는 곳 어디서나 키가 보인다 — 는 운영 제약(§6)이며, 완화책은 extension 의 코드가 아니라 바인드
+문장이 있는 곳 어디서나 키가 보인다 — 는 운영 제약(docs/ops-constraints.md)이며, 완화책은 extension 의 코드가 아니라 바인드
 파라미터다.
 
 서버 안에서 암호화하면 extension 이 옮길 수 없는 신뢰 경계가 그어진다. `pgcrypto` 가 스스로에 대해
 문서화한 것과 같은 경계다 ("Security Limitations", §9). 키와 평문은 클라이언트 연결을 건너고, 관리자가
 통제하는 서버의 메모리에 존재한다. 이 설계가 지키는 것은 저장된 컬럼, 백업, 그리고 암호문만 가진
-replica 다. 보호되지 않은 연결, DB superuser, 서버의 OS 관리자로부터는 지키지 못한다 (§6, 12 번).
+replica 다. 보호되지 않은 연결, DB superuser, 서버의 OS 관리자로부터는 지키지 못한다 (docs/ops-constraints.md 12 번).
 
 ### 5.5 tag 불일치는 기본값에서 NULL 로 내려가지 않는다
 
@@ -335,8 +401,14 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 - `pg_do_encoding_conversion_buf(proc, src, dest, in, inlen, out, outlen, true)` 로 glue 가 할당한
   버퍼 (`inlen * MAX_CONVERSION_GROWTH + 1`, `MaxAllocSize` 에 대해 오버플로 검사) 에 변환한다. 검증에
   성공한 뒤에 반환한 개수가 `inlen` 보다 작으면 대상 인코딩이 담을 수 없는 문자가 있다는 뜻이다.
-- 변환 프로시저는 `FindDefaultConversionProc` 로 얻는다. 카탈로그 조회라서 오류를 올릴 수 있다
-  (메시지에 데이터는 없다). 비밀 사본이 생기기 전에 실행한다.
+  봉인할 때는 앞서는 검증이 없으므로 — 확장은 인자를 DB 인코딩에 대해 검증하지 않는다 — 변환을 멈춘
+  원인이 무엇이든 짧은 개수는 변환할 수 없는 문자로 보고한다 (명세 §2.4). 변환된 텍스트의 길이는 `strlen` 으로
+  구한다. 서버 자신의 `convert` 함수들처럼 glue 도 변환 프로시저가 출력을 NUL 로 끝낸다는 데
+  기댄다. 조회가 `pg_catalog` 로 한정되어 있으므로, 이를 깰 수 있는 것은 superuser 가 거기에 넣은
+  프로시저뿐이다.
+- 변환 프로시저는 `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` 로 얻는다. 카탈로그 조회이고, 변환이
+  없으면 glue 가 두 인코딩의 이름을 담아 `42883` 을 올린다. 비밀 사본이 생기기 전에 실행한다.
+  `pg_catalog` 에서만 찾고 `search_path` 를 따라가지 않는다 (§8 O14).
 
 | DB 인코딩 | `gcm_encrypt*` | `gcm_decrypt` |
 |---|---|---|
@@ -355,57 +427,20 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 것으로 표시되지 않으므로, `DefineCustom*Variable` 뒤의 `ERROR` 는 이후 모든 호출이 `_PG_init` 을 다시
 돌려 "attempt to redefine parameter" 로 실패하게 만들고 진짜 원인을 가린다.
 
+핸들은 코어 (`gcm.c`) 안의 static 이고 `gcm_init()` 이 fetch 한다. `_PG_init` 이 이를 부르고, 단위
+테스트는 `main` 에서 부른다. 호출마다 여전히 찾는 것이 하나 있다. `EVP_MAC` 는 digest 를 이름으로
+받으므로, 결정적 호출은 매번 `EVP_MAC_init` 에 SHA-256 이라는 이름을 넘긴다 (§8 O15).
+
 핸들은 프로세스의 수명 동안 살고 해제하지 않는다. preload 중에 등록한 `on_proc_exit` 콜백은 backend
 에서 실행되지 않고 — 자식이 postmaster 의 콜백을 버린다 — 어차피 프로세스가 끝나는 중이다.
 
-## 6. 운영 제약 (초안 — Phase 4 에서 `docs/ops-constraints.md` 와 README 로 옮긴다)
+## 6. 운영 제약
 
-1. **키와 평문이 로그와 통계에 나올 수 있다.** `log_statement`, `auto_explain`,
-   `pg_stat_activity.query`, 그리고 — `log_min_error_statement` 의 기본값이 `error` 이므로 — 실패한
-   모든 문장의 로그 줄, 위조된 tag 오류도 포함해서. 키는 **바인드 파라미터**로 보내 문장 텍스트에
-   `$1` 만 남게 하고 — **`log_parameter_max_length = 0` 도 설정한다.** 기본값 -1 은 `log_statement`,
-   `log_min_duration_statement`, 샘플링 설정이 쓰는 줄에 모든 바인드 값을 전부 남기므로, 바인드
-   파라미터만으로는 키가 느린 문장 로그에 남는 것을 막지 못한다. `log_parameter_max_length_on_error`
-   는 기본값 0 으로 둔다. 키가 실린 문장을 받는 DB 에서는 `auto_explain` 을 돌리지 않는다. 16 부터
-   "Query Parameters" 를 찍고, 모든 메이저에서 custom plan 의 텍스트에 파라미터 값이 들어간다. `LIKE`
-   패턴도 평문 조각이다.
-2. **DDL 에 키 리터럴을 절대 넣지 않는다.** 뷰, 컬럼 기본값, check 제약, 규칙, 트리거, 함수 본문,
-   정책은 카탈로그에 저장되고 `pg_dump` 에 찍힌다. 인덱스를 걸려고 이 함수들을 `IMMUTABLE` 로 선언한
-   함수로 감싸지 않는다 (§5.3).
-3. **복호화한 값이 디스크에 닿을 수 있다.** `gcm_decrypt(...)` 에 대한 정렬이나 해시가 `work_mem` 을
-   넘으면 평문을 임시 파일에 쓴다 (언제 그런지는 Phase S 에서 잰다). `temp_tablespaces` 가 있는
-   볼륨을 암호화한다.
-4. **함수는 플래너에게 불투명하다.** `WHERE gcm_decrypt(col, $1) LIKE ...` 는 후보 집합을 스캔한다.
-   선택도는 다른 조건에서 나와야 한다. 복호화한 값에 대한 인덱스는 설계상 없다 (§5.3).
-5. **`gcm_encrypt_det` 는 같음, 빈도, 길이를 드러내고 무작위 변형보다 비싸다** (nonce 에 HMAC-SHA256
-   을 두 번 돈다). 조인 키, UNIQUE 제약, 정확히 일치하는 조회에만 쓰고 자유 텍스트에는 쓰지 않는다.
-   **결정적 키마다 AAD 규칙은 하나다.** nonce 가 평문에서만 나오므로, 한 키로 같은 평문을 서로 다른
-   두 AAD 로 봉인하면 (키, nonce) 쌍을 재사용한다. 한 키의 모든 결정적 호출은 같은 AAD 바이트를
-   쓰거나 항상 AAD 를 쓰지 않는다. AAD 영역이 다르면 키도 달라야 한다.
-6. **자체 운영 PostgreSQL 만.** 관리형 서비스는 이 extension 을 올리지 않는다.
-7. **복호화하는 모든 노드에 설치한다.** 스트리밍 replica 는 extension 의 카탈로그 항목을 WAL 로 받지만
-   공유 라이브러리는 디스크에 따로 설치해야 한다. 논리 복제 구독자는 둘 다 필요하다.
-8. **`pg_gcm.min_key_bytes` 가 잘린 키를 막는다.** 키 길이가 suite 를 고르므로, 24 나 16 바이트로
-   잘린 32 바이트 키는 더 약한 suite 의 올바른 키이고 아무 말 없이 봉인된다. 기본값 32 가 그것을
-   거부한다. 더 작은 suite 를 의도적으로 쓸 때만 낮춘다. 복호화는 이 값을 보지 않으므로, 다시 올려도
-   낮았던 동안 쓴 데이터가 잠기지 않는다.
-9. **사용 예산, 교체, 복구는 운영자의 책임이다.** 배포 전에, 한 키의 모든 사용을 서버·컬럼·
-   애플리케이션에 걸쳐 합산하는 사용 예산과 교체 기준을 정한다. extension 은 아무것도 세지 않고,
-   교체하지 않고, 반복된 nonce 를 탐지하지 않으며, 이 프로젝트는 보편적으로 안전한 한도를 제시하지
-   않는다. suite 와 보안 영역마다 독립적인 전체 길이 무작위 키를 쓴다. 교체하면 결정적 암호문이
-   바뀌므로 조인·UNIQUE 컬럼의 이관을 계획하고, 옛 데이터와 백업을 위해 옛 키를 보관한다. 백업을
-   복원해도 사용량은 되돌아가지 않는다. 사용 이력이나 어느 writer 의 난수 상태가 불확실하면 그 키로
-   쓰기를 멈추고 새 키로 재개한다 (NIST SP 800-38D §8).
-10. **서버가 OpenSSL 3.0 이상을 링크해야 한다.** 공식 `postgres` 이미지는 그렇다. RHEL/Rocky 8 용 PGDG
-    패키지는 1.1.1 을 링크하며 지원하지 않는다. OpenSSL 3.0 자체도 2026-09-07 에 상위 지원이 끝났으니
-    3.5 를 쓰는 플랫폼을 권한다.
-11. **NULL 인자는 조용히 NULL 을 준다.** 바인딩하지 않은 키 파라미터는 실패하는 대신 NULL 을 저장한다.
-    평문이 NULL 일 수 없는 암호화 컬럼에는 `NOT NULL` 을 건다.
-12. **연결을 보호하고, 서버의 관리자를 신뢰해야 한다.** 모든 키와 평문은 클라이언트에서 서버로
-    이동한다. 보호된 로컬 소켓으로 접속하거나, **서버 인증서를 검증하는** TLS (`sslmode=verify-full`)
-    로 접속한다. 그렇지 않으면 바인드 파라미터와 1 번의 로그 설정을 적용해도 키와 평문이 네트워크에서
-    읽히거나 가짜 서버로 넘어갈 수 있다. 복호화하는 모든 노드의 DB superuser 와 OS 관리자는 그것을 볼
-    수 있으므로 신뢰할 수 있어야 한다 — `pgcrypto` 가 문서화한 것과 같은 한계다.
+운영자가 지켜야 할 제약은 여기서 확정되어 [`docs/ops-constraints.md`](ops-constraints.md) 에
+유지된다. 그 모두는 [`README.md`](../README.md) 첫 화면에도 있다. 그것은 이 코드가 아니라 배포에
+속한다. extension 이 보호할 수 있는 것과 없는 것은 §5.4 의 신뢰 경계로 정해져 있고, `postgresql.conf`
+의 어떤 설정도 그것을 옮기지 못한다. 배포 전에 그 문서를 읽고, 정확하게 유지한다 — SQL 함수만큼이나
+이 프로젝트의 결과물이다.
 
 ## 7. 라이선스 — PostgreSQL License (2026-10-10 확정)
 
@@ -452,7 +487,7 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
 - **O8 — 누수 게이트.** `CRYPTO_set_mem_functions` 는 OpenSSL 이 무엇이든 할당한 뒤에는 0 을 돌려주고
   (`crypto/mem.c`, `allow_customize`), postmaster 는 preload 라이브러리를 올리기 전에 `RAND_bytes` 를
   부르므로, backend 안에서는 할당 카운터를 설치할 수 없다. `USE_VALGRIND` 없이 빌드한 서버의 valgrind
-  는 거짓 양성을 낸다 (`pg_config_manual.h`). 공식 이미지는 그렇게 빌드되어 있지 않다. 게이트는 단위
+  는 거짓 양성을 낸다 (`pg_config_manual.h`). 공식 이미지는 `USE_VALGRIND` 로 빌드되어 있지 않다. 게이트는 단위
   테스트의 할당 카운터다. (소스; OpenSSL 3.0 과 3.5.)
 - **O9 — 병렬 워커.** 워커는 리더의 라이브러리를 로드한 다음 기본값이 아닌 모든 GUC 를 복원하며,
   사용자 정의, `PGC_SUSET`, `SET LOCAL` 값도 포함한다 (`parallel.c:1446-1457`; `guc.c` 의
@@ -498,21 +533,400 @@ sequence for encoding "UTF8": 0x…`, `character with byte sequence 0x… has no
   "Leakproof?" 를 더한다 (`describe.c`). volatility 테스트는 대신 `pg_proc` 을 읽는다. (소스.)
 - **`pg_regress` 와 `\c`.** `pg_regress` 는 `--encoding` 을 주지 않으면 `PGCLIENTENCODING` 을 지우고,
   psql 은 `\c` 뒤에 새 DB 의 인코딩을 클라이언트 인코딩으로 삼는다. `--load-extension` 은
-  `pg_regress` 가 만드는 DB 에만 적용된다. (소스: `pg_regress.c`, `psql/command.c`; 실행하지는
-  않았다.)
+  `pg_regress` 가 만드는 DB 에만 적용된다. (소스: `pg_regress.c`, `psql/command.c`; Phase S 에서 17 로
+  실행했다, 아래.)
 
-### 미확인 (Phase S 에서 답한다)
+### Phase S 에서 확인됨 (2026-10-12)
 
-번호는 다시 쓰지 않는다. O2, O3, O5, O8, O9, O10 은 위의 "확인됨"으로 옮겼다.
+여기서 "실행"은 linux/arm64 에서 이 저장소의 스크립트를 `docker/versions.json` 의 digest 고정
+이미지에 돌린 것이다: `postgres:15`~`18` (15.19, 16.15, 17.11, 18.6; OpenSSL 3.5.7),
+`postgres:19beta4`, `postgres:17-bookworm` (17.11; OpenSSL 3.0.22). 따로 적지 않으면 여섯 이미지에서
+결과가 같았다. 이미지 `M` 마다 명령은 `scripts/build-in-docker.sh M`, `scripts/unit-in-docker.sh M`,
+`scripts/dev-up.sh M`, `scripts/verify.sh M` (1~6 단계), `scripts/spike/measure.sh M` (7 단계, O6,
+O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
+
+- **1~4 단계 통과.** PGXS 빌드는 `-Wall -Wextra -Werror` 에서 경고가 없고, `ldd` 로 보면 서버와
+  `pg_gcm.so` 가 같은 `libcrypto.so.3` 을 쓴다. `CREATE EXTENSION` 은 0.1.0 을 설치한다.
+  `pg_regress` 파일 14 개가 통과하고, `scripts/verify.sql` 의 점검 35 개도 라이브러리를 지연
+  로드했을 때와 preload 했을 때 각각 통과한다. 32 바이트가 아닌 키는 오류다. 위조된 tag 는
+  `pg_gcm.strict` 가 on 이면 오류, off 면 NULL 이고, 잘린 봉투, 구현하지 않은 version 바이트, 인증은
+  되지만 텍스트가 아닌 평문 (GCM 명세의 테스트 케이스 14: 0 바이트 16 개) 은 off 에서도 오류다.
+  복호화한 값에 대한 `LIKE '%길%'` 은 UTF8 DB 와 `EUC_KR` DB 에서 모두 참이다. `EUC_KR` DB 는 6
+  바이트 텍스트를 UTF-8 9 바이트로 봉인하고 같은 결정적 nonce 를 유도하며, 두 DB 는 서로가 봉인한
+  것을 열고, `EUC_KR` 이 담을 수 없는 문자는 그 바이트가 메시지에 없는 오류다. SQL_ASCII DB 는 UTF-8
+  이 아닌 바이트의 봉인을 거부한다. `pg_gcm.strict = off` 인 병렬 스캔은 모든 워커에서 NULL 을
+  돌려준다 (O9, 이제 실제 변수로 확인).
+- **O4 — fork 뒤의 핸들.** 동작한다. `shared_preload_libraries = 'pg_gcm'` 이면 backend 의 첫 호출
+  전부터 `pg_gcm.strict` 가 실제 변수이고 (라이브러리를 postmaster 가 로드했다), 두 backend 각각에서
+  AES-256-GCM 왕복이 성공하며 `00..1f` 키로 `'홍길동'` 의 결정적 nonce 가 Python `hmac` 이 내는 값
+  `f55369153b2a94fcbc9b633f` 이다. backend 가 상속하는 것은 fetch 한 `EVP_CIPHER` 와 `EVP_MAC` 이다.
+  backend 가 직접 라이브러리를 로드할 때도 같다.
+- **O3, 실행.** preload 여부와 관계없이 모든 실행에서 두 backend 의 첫 랜덤 nonce 가 달랐다.
+- **O6 — `0x01`.** 호환성: 맞는다. `pgcrypto` 의 `encrypt_iv(convert_to('홍길동','UTF8'), key32, iv,
+  'aes-cbc')` 는 16 바이트를 내고, `openssl enc -d -aes-256-cbc -K … -iv …` 가 그것을 `홍길동` 으로
+  연다. PKCS#7 패딩을 쓴 AES-256-CBC 그대로다. (extension 의 CBC 경로가 아니라 OpenSSL 자체 명령으로
+  열었다.) 결정: 0.1 에서는 구현하지 않고 바이트는 예약으로 둔다 (§2.2). 이를 뒤집는 것은 설계
+  개정이며 어떤 봉투도 깨지 않는다.
+- **O7 — SQLSTATE, 스파이크가 정한 데까지.** 스파이크는 키 길이에 `22023`, 잘못된 봉투에 `22P03`,
+  tag 불일치에 `XX001`, UTF-8 이 아닌 텍스트에 `22021`, 변환할 수 없는 문자에 `22P05`, 너무 긴 값에
+  `54000`, OpenSSL 실패에 `XX000` 을 올린다. 모두 15~18 의 `errcodes.txt` 에 있고, 회귀 테스트가
+  그중 넷을 되읽는다. 하나는 여기서 미결로 두었다가 아래 Phase 1 에서 확정했다: `XX001` 은 가장 흔한
+  운영 실패인 틀린 키를 내부 오류 분류에 넣는다.
+- **O8, 실행.** `CRYPTO_set_mem_functions` 는 preload 하는 postmaster 에서도, 첫 호출에 로드하는
+  backend 에서도 0 을 돌려줬다 (probe 모듈의 `_PG_init`; 로그에 남고 SQL 로 읽을 수 있다). 단위
+  테스트에서는 `main` 에서 가장 먼저 불러 1 을 돌려준다. 한 번의 호출은 봉인에 2 번, 열기에 2 번,
+  결정적 봉인에 13 번 (3.0.22 에서는 19 번) OpenSSL 할당을 한다. 테스트는 처음 32 번의 할당을 하나씩
+  거부한다: 모든 호출이 가져간 것을 전부 돌려주고, 그 실패를 tag 불일치로 보고하지 않으며, 올바른
+  출력이나 지워진 버퍼만 남긴다. **이것이 실행하지 못하는 것:** 컨텍스트가 살아 있는 동안 다른
+  이유로 실패하는 EVP 호출. 그 출구들은 구조에 기댄다 — 함수마다 `done:` 레이블 하나, 컨텍스트
+  획득과 그 레이블 사이에 `return` 없음 — 이것은 `scripts/check-architecture.py` 가 강제한다. 6
+  단계는 거기까지만 보인 것이다.
+- **O11 — amd64.** amd64 에서도 15~18 과 19beta4 의 `postgres` 는
+  `/lib/x86_64-linux-gnu/libcrypto.so.3` 을 링크하고 `openssl version` 은 3.5.7 로 arm64 와 같다.
+  `17-bookworm` 은 양쪽 모두 3.0.22 다.
+- **O12 — `PG_TRY`.** `PG_TRY` / `PG_FINALLY` 블록 하나는 호출당 수 ns 다. 열 번의 실행 대부분에서
+  2~7 ns 였고 (블록이 있는 함수와 블록이 없는 같은 함수를 300만 번씩 호출), 한 번은 0 보다 작게
+  읽혔다 — 차이가 잡음 수준이다. 복호화 + `LIKE` 한 행의 많아야 2% 정도다. 부하 게이트를 바꾸지
+  않는다.
+- **7 단계 — 비용.** 10~15 바이트 한글 이름 30만 행, backend 하나, JIT 끔: `gcm_decrypt(...) LIKE
+  '%길%'` 은 맨 스캔 위에 행당 0.30~0.41 µs, `gcm_encrypt` 는 0.64~1.00 µs, `gcm_encrypt_det` 는
+  0.99~1.18 µs, `pgcrypto` 의 `convert_from(decrypt_iv(..., 'aes-cbc'), 'UTF8') LIKE` 는 0.58~0.68
+  µs 다. GCM 쿼리는 CBC 쿼리의 0.49~0.63 배가 든다. 비용 1 짜리 연산자 단위로는 답이 거칠다.
+  `int4ge` 조건 하나는 수 ns 로 이 실행들의 잡음 수준이라 (1~11 ns 로 읽혔다) 비율은 2~3 배까지만
+  믿을 수 있다 — 잣대가 버틴 네 번의 실행에서 복호화 37~65, 암호화 64~111, 결정적 변형 88~190.
+  그래서 선언한 `COST` 는 둥근 값이다: 50, 100, 200. 이 값이 있으면 `gcm_decrypt(...) LIKE '%길%'
+  AND id % 2 = 0` 으로 쓴 쿼리가 `id % 2 = 0` 을 먼저 평가하도록 계획된다.
+- **7 단계 — 임시 파일.** `work_mem` 이 기본값 4MB 일 때, 복호화한 이름으로 `ORDER BY` 하면 30,000
+  행에서는 모든 메이저에서 메모리에 남고, 15 는 60,000 행, 16 은 100,000 행, 17~19 는 300,000 행에서
+  external merge 가 된다. `GROUP BY` 는 15~17 에서 100,000 행, 18~19 에서 300,000 행에 디스크로
+  넘친다. 정렬된 30만 행에 커서를 열어 둔 동안 `base/pgsql_tmp` 에는 약 7 MB 파일 하나가 있고 그
+  안에 `길동` 조각이 약 37,500 번 나온다. 테이블 파일에는 한 번도 없다.
+- **OpenSSL, 3.0 과 3.5 소스에서.** `EVP_*Init_ex2` 에 넘긴 `ivlen` 파라미터는 3.0.12 / 3.1.4 전까지
+  IV 를 복사한 뒤에 적용됐다 (CVE-2023-5363). 12 는 AES-GCM 의 기본값이므로 코어는 파라미터를 넘기지
+  않고 `EVP_CIPHER_CTX_get_iv_length` 를 검사한다. `EVP_DecryptFinal_ex` 의 tag 불일치는 오류 큐에
+  아무것도 넣지 않고, 그 경로에서 키, IV, tag 가 빠진 경우도 마찬가지다. `ERR_clear_error` 는 항목의
+  데이터 버퍼를 재사용하려고 남겨 두고, OpenSSL 은 DRBG 와 스레드의 오류 상태를 프로세스 수명 동안
+  유지하므로, 단위 테스트는 기준선을 잡기 전에 모든 경로를 한 번씩 돌린다.
+- **PostgreSQL, 15~18 소스에서.** `pg_do_encoding_conversion_buf` 는 소비한 원본 바이트 수를
+  돌려주고, 출력을 NUL 로 끝내며, 대상 크기가 `srclen * MAX_CONVERSION_GROWTH + 1` 이면 입력 전체를
+  변환에 넘긴다. 빈 입력에서는 0 이 모호하므로 glue 는 빈 입력을 변환하지 않는다.
+  `FindDefaultConversionProc` 는 `search_path` 를 따라간다 (O14, Phase 2 에서 결정). `-Wextra` 는 서버 자신의
+  헤더 (static inline 의 쓰지 않는 파라미터) 에서 실패하므로, `-Werror` 빌드는 그 헤더를 `-isystem`
+  으로 받는다.
+- **`pg_regress` 와 `\c`, 17 에서 실행.** `PGCLIENTENCODING` 이 없는 상태에서 `EUC_KR` DB 로 `\c`
+  하면 `SHOW client_encoding` 이 `EUC_KR` 이고 UTF-8 리터럴은 `invalid byte sequence for encoding
+  "EUC_KR"` 로 실패한다. `SET client_encoding = 'UTF8'` 로 해결된다. `pg_regress` 는 expected 파일이
+  없는 첫 테스트에서 멈춘다.
+- **공식 이미지, 실행.** 초기화 중의 임시 서버는 진짜 서버가 뜨기 전에 소켓으로 `pg_isready` 에
+  응답한다. TCP 로 검사하면 그렇지 않다. preload 하는 서버는 시작 전에 라이브러리가 디스크에 있어야
+  한다 (`docker create`, `docker cp`, `docker start`).
+- **O1, 지금까지.** 스파이크는 `postgres:19beta4` 에서 `postgresql-server-dev-19` 로 빌드되고 위의
+  모든 것을 통과한다. 19 는 릴리스 이미지가 나올 때까지 지원 목록 밖에 둔다.
+- **무엇이 어디에 있나** (만들면서 정했다; `AGENTS.md` §3 과 `architecture.md` 도 같게 적었다).
+  fetch 한 핸들은 코어 안의 static 이고 `gcm_init()` 뒤에 있다. 단위 테스트가 서버 없이 핸들을 써야
+  하기 때문이다. glue 는 OpenSSL 헤더를 include 하지 않고 `gcm_cleanse` 로 지운다. 스파이크에는 2
+  인자 `gcm_encrypt_det` 가 들어 있다. 그 nonce 가 SQL 에서 HMAC 결과를 볼 수 있는 유일한 곳이기
+  때문이다 (5 단계). `CRYPTO_set_mem_functions` probe 와 `PG_TRY` 시간 측정은 extension 이 아니라
+  측정 전용 모듈 `scripts/spike/pg_gcm_probe` 에 있다.
+
+### Phase 1 에서 확인됨 (2026-10-12)
+
+- **O13 — version 바이트를 인증한다.** 결정: GCM 에 주는 associated data 는 `version || aad` 다
+  (§2.2; 명세 §1.5). 다른 선택은 이 약점을 받아들인다고 기록하는 것이었다. 택하지 않은 이유는 약점이
+  구체적이기 때문이다 — 키 없이도 봉투 하나를 같은 평문으로 열리는 다른 봉투로 바꿀 수 있었다 —
+  그리고 막는 비용은 associated data 1 바이트이고 전송되는 바이트는 그대로다. 이것으로 막지 못하는
+  것은 옮겨 심기다. `gcm_decrypt` 는 두 변형을 모두 열므로, 같은 키와 AAD 로 봉인한 같은 값의 무작위
+  nonce 봉투는 여전히 두 번째 봉투가 된다. 결정적 컬럼이 이에 대해 할 일은 docs/ops-constraints.md 5 번에 있다. 이 phase
+  에 미친 영향이 하나 있다. NIST 벡터는 더 이상 봉투가 아니므로 (그 associated data 는 NIST 의
+  것이다) NIST known answer 는 primitive 의 벡터이고 SQL 은 이를 보지 않는다.
+- **O16 — 결정적 nonce 도 associated data 에서 유도한다.** Phase 1 암호 리뷰에서 제기되어 같은 날
+  결정했다: `A = version || aad` 일 때 `nonce = HMAC-SHA256(nonce_key, be64(len(A)) || A ||
+  P)[0:12]` (명세 §1.8). AAD 는 입력이 아니라던 이전 규칙을 뒤집는 것이다. 그 규칙에서는 한 평문을
+  두 AAD 로 봉인하면 (키, nonce) 쌍 하나를 두 번 쓰게 되는데, GCM 에서 이는 국소적인 실패가 아니다.
+  두 tag 의 차이는 인증 부분키에 대한 다항식이고 그 계수는 두 associated data 이므로, 두 AAD 를 아는
+  사람은 부분키를 풀어낼 수 있다 (Joux; SP 800-38D 부록 A). 그러면 그 키로 이미 봉인된 모든 봉투를
+  (변형과 무관하게) 고칠 수 있다 — ciphertext, version 바이트, 그리고 봉투가 응답하는 AAD 까지 —
+  그리고 검증되는 tag 를 붙일 수 있다. 이전의 답은 운영 규칙 — 결정적 키마다 AAD 규칙은 하나 —
+  이었지만, 함수의 시그니처 자체가 호출자에게 이를 어기도록 권했다. 행마다 다른 AAD 는 그 인자의
+  자연스러운 쓰임이고 바로 그것이 금지된 경우였다. 잃는 것은 없다. AAD 가 다른 봉투는 tag 가 달라서
+  원래도 같다고 비교되지 않았다. 길이 접두가 HMAC 메시지를 모호하지 않게 만든다. 지금 바꾸면 비용이
+  없고, 나중이었다면 저장된 모든 결정적 봉투가 비용이었다.
+- **O7 — SQLSTATE 확정** (명세 §2.5). 스파이크의 표를 그대로 두고 tag 불일치의 `XX001` 도 유지하며,
+  UTF-8 과의 기본 변환이 없는 DB 인코딩에 대한 `42883` 을 더한다 (스파이크가 이미 올리는 코드다).
+  자체 코드보다 기존 코드를 택했다. 22 분류의 분류 수준 코드가 대안이었고, 이를 기각한 근거는 15~18
+  에서 실행해 확인했다 (`scripts/spike/sqlstate-handlers.sql`). PL/pgSQL 에서 `WHEN SQLSTATE
+  '22000'` 과 `WHEN data_exception` 은 둘 다 `22023` 을 잡는다. `WHEN data_corrupted` 는 `XX001` 을
+  잡고 `XX000` 과 `XX002` 는 잡지 않는다. `WHEN internal_error` 는 분류 전체이므로 `XX001` 도
+  잡는다. `XX001` 은 이 extension 만의 코드가 아니다 — 서버가 손상된 저장소에 대해 올린다 — 그리고
+  가장 흔한 원인이 틀린 키인데도 내부 오류 분류에 있는 것은, 형식상 틀린 키와 변조된 봉투를 구분할
+  수 없기 때문이다.
+- **벡터.** `spec/test-vectors.json` 에는 77 개가 있다. 15 개는 AES-GCM 의 NIST CAVP known answer
+  로, 키 크기마다 5 개씩 NIST 의 `gcmtestvectors.zip` (URL 은 파일 안에 있다; SHA-256
+  `f9fc479e134cde2980b3bb7cddbcb567b2cd96fd753835243ed067699f26a023`, 2026-10-12 에 받음) 의
+  `gcmEncryptExtIV128/192/256.rsp` 에서 그대로 가져왔다: IV 96 비트, tag 128 비트이고 (평문, AAD)
+  길이가 (0, 0), (128, 0), (0, 128), (104, 160), (408, 720) 비트인 파라미터 세트의 `Count = 0`. 62
+  개는 이 프로젝트의 것이다. 30 개는 열린다: 여섯 version 바이트 전부, AAD 가 있는 것과 없는 것
+  (하나는 300 바이트다), 블록 경계 주변, 빈 텍스트, 4 바이트 문자, UTF-8 이 아닌 평문 (다른 인코딩의
+  바이트 쌍, overlong 형태, surrogate, 잘린 문자) 이나 U+0000 을 담은 평문, 그리고 결정적이라고
+  표시됐지만 nonce 가 유도된 값이 아닌 봉투 하나. 32 개는 열리지 않는다 (`bad_tag` 14,
+  `bad_envelope` 10, `bad_key_length` 8). 각각 유효한 벡터에서 명시된 변경으로 만들었고, 그중 넷은
+  유효한 봉투에서 version 바이트만 바꾼 것으로 (`version-02-as-03`, `version-03-as-02`,
+  `version-04-as-05`, `version-06-as-07`) 모두 `bad_tag` 다 — 바이트로 본 O13 이다. 키는 공개된
+  것이다: suite 길이로 자른 `00..1f` 패턴, 0 바이트 32 개, 그리고 NIST 의 키.
+- **어디까지 검사되나.** `python3 scripts/check-vectors.py` (`cryptography` 50.0.2 와 표준
+  라이브러리의 HMAC) 는 모든 NIST 벡터를 primitive 로 다시 계산하고, 모든 봉투를 열어 기대 결과와
+  맞추고, 유효한 봉투를 다시 봉인해 같은 바이트가 나오는지 보고, 결정적 nonce 를 다시 유도한다.
+  문서들이 이름으로 가리키는 벡터가 있고 각각이 그 이름이 말하는 경우여야 하며, 모든 suite, 결과,
+  평문 분류에 대해 적어도 하나의 벡터를 요구한다. 그리고 `spec/envelope.md` 의 예시를 각 예시가
+  가리키는 벡터와 대조한다 — 12 자리 이상의 hex 문자열은 그 벡터의 멤버 하나 전체여야 하고, 필드
+  표의 행은 해당 오프셋의 필드 전체여야 하며, suite 표와 결과 표는 행이 다 있어야 한다.
+  `--self-test` 는 파일과 명세를 메모리에서 35 가지 방법으로 망가뜨리고 하나라도 잡히지 않으면
+  실패한다. 이는 그 손상들을 잡는다는 것을 보일 뿐 가능한 모든 손상을 잡는다는 뜻은 아니다. lint
+  워크플로가 둘 다 실행한다. 한계가 셋 있다. 프로젝트의 벡터는 이 검사 스크립트 자신의 함수로
+  *생성*했으므로, 스크립트가 벡터와 일치한다는 것은 독립적인 증거가 아니다. 독립적인 것은 이렇다.
+  스파이크 코어의 임시 사본에 O13 과 O16 의 두 변경을 넣고 EVP 를 직접 호출하게 했더니 (OpenSSL
+  3.6.4), AAD 가 없는 AES-256 벡터 16 개를 정확히 같은 바이트로 봉인하고 열었으며 그중 `bad_tag` 9
+  개를 거부했다. 그리고 암호 리뷰가 77 개 중 76 개를 — 나중에 추가한 `det-256-300-byte-aad` 를 뺀
+  전부이고, 그 벡터의 nonce 는 `openssl` 명령으로 다시 유도했다 — 그 목적으로 작성한 AES-GCM 과 HMAC
+  으로 다시 계산했다. 그 코어 사본은 저장소에 없다: **Phase 2 까지는 커밋된 C 코드가 벡터를 하나도
+  돌리지 않는다** (이슈 #19). 그리고 명세 검사가 보는 것은 hex 문자열과 표의 행이지 산문이 아니다.
+- **열 때의 검사 순서** (명세 §1.7) 를 고정했고 전용 벡터가 있다: suite 를 가리키지 않는 키 길이,
+  봉투의 길이와 version 바이트, suite 에 대한 키 길이, tag 순이다. 스파이크의 glue 가 이미 따르는
+  순서다. opener 는 결정적 nonce 를 다시 계산하지 않는다 (벡터 `det-256-nonce-not-derived`). 다시
+  계산하면 부하 게이트가 재는 경로인 `gcm_decrypt` 마다 HMAC 두 번이 드는데, 그것으로 막는 상대는
+  키를 가진 사람이다.
+- **벡터 스키마가 바뀌었다.** `docs.md` 에 처음 적은 것과 다르다. `nist` 벡터는 봉투 대신 ciphertext
+  와 tag 를 갖는다. `expect` 에 `bad_key_length` 가 추가됐다. 유효한 벡터는 `plaintext_class`
+  (`text`, `not_utf8`, `contains_nul`) 를 가지며, SQL 계층은 이것을 보고 텍스트를 기대할지 `22021`
+  을 기대할지 안다. 실패하는 벡터는 `derived_from` 으로 원본 벡터를 가리킨다. `nonce_derived: false`
+  는 sealer 가 재현할 수 없는 결정적 벡터 하나를 표시한다.
+
+### Phase 2 에서 확인된 것 (2026-10-12)
+
+- **코드가 명세를 구현한다.** 코어는 여섯 version 바이트 모두를 `A = version || aad` 로 봉인하고 열며,
+  결정적 nonce 를 `be64(len(A)) || A || P` 에서 유도한다. glue 는 인자 세 개짜리 형태와
+  `pg_gcm.min_key_bytes` 를 더한다. 단위 테스트는 `spec/test-vectors.json` 을 읽고, 77 개 벡터 중 어느
+  스위트도 소비하지 않는 것이 있으면 실패하는 테스트가 있다. NIST 벡터 15 개는 테스트 seam 을 통해
+  프리미티브에서, 모든 봉투 벡터는 open 으로, 유효한 벡터는 자기 nonce 로 seal 해서 (결정적 벡터는
+  스스로 유도하고, `gcm_nonce_derive` 만 따로 불러 유도된 nonce 각각과도 비교한다) 실행하고, 실패하는 벡터는 출력 버퍼가 0 으로 지워졌는지까지 본다. 회귀 테스트도 같은
+  파일을 읽는다. 봉투 벡터 62 개가 `pg_gcm.strict` on 과 off 에서 `gcm_decrypt` 를 거치고, nonce 가
+  유도되는 결정적 벡터 11 개는 바이트 단위로 같은 봉투로 봉인된다. 이제 테스트에 직접 적힌 known
+  answer 는 없다. PostgreSQL 15.19, 16.15, 17.11, 18.6 (OpenSSL 3.5.7), 17.11 (OpenSSL 3.0.22),
+  19beta4 에서 관찰했다: 단위 테스트 302 개, 회귀 파일 18 개, 그리고 라이브러리를 지연 로드한 경우와
+  preload 한 경우의 `scripts/verify.sql`.
+- **nonce 충돌 테스트.** 한 키와 한 AAD 로 서로 다른 평문 100 만 개를 결정적으로 봉인하면 서로 다른
+  nonce 100 만 개가 나온다 (PR 에서는 10 만 개). 이는 유도 과정이 제대로 연결됐는지 보는 점검이다 —
+  너무 적은 바이트로 잘리거나 입력이 상수면 실패한다 — 96 비트 nonce 의 birthday bound 에 대해서는
+  아무것도 말해 주지 않으며, 어떤 테스트도 거기에 닿을 수 없다. docs/ops-constraints.md 의 9 번 항목이 그대로 규칙이다.
+- **O14 — 변환은 `pg_catalog` 에서만 찾는다.** `FindDefaultConversion(PG_CATALOG_NAMESPACE, …)` 를 쓴다.
+  17.11 에서 관찰한 것: superuser 가 아니어도 스키마에 `CREATE` 권한이 있는 role 은 거기에 기본 변환을
+  만들 수 있고, `search_path` 를 따라가면 내장 변환보다 먼저 발견된다. 다만 이미 있는 함수만 묶을 수
+  있다. `CREATE CONVERSION` 은 내장 함수를 그 함수가 대상으로 하지 않는 인코딩 쌍에 묶는 것을
+  거부했고, 그 role 은 C 함수도 internal 함수도 만들 수 없었다. 따라서 노출은 superuser 가 설치한 변환
+  함수가 호출자의 `search_path` 에 따라 선택되는 경우였다. `pg_catalog` 에서 찾으면 결과가
+  `search_path` 와 무관해진다. 대가는, 사이트가 DB 인코딩에 대해 따로 둔 기본 변환을 이 함수들이 쓰지
+  않는다는 것이다. 회귀 테스트 `conversion_lookup` 이 15~18 과 19beta4 에서 그 차이를 보인다. 내장
+  변환의 기본 표시를 지운 일회용 EUC_KR DB 에서 모든 함수가 `42883` 을 내고, `search_path` 의
+  스키마에 기본 변환을 두어 서버 자신의 `SET client_encoding` 이 그것을 찾게 된 뒤에도 계속 `42883`
+  을 낸다. `scripts/check-architecture.py` 도 `src/` 의 `FindDefaultConversionProc` 를 거부한다. 기본
+  상태의 서버에서 `42883` 은 거의 도달할 수 없다. 17.11 에서 UTF-8 로의 변환이 없는 서버 인코딩은
+  MULE_INTERNAL 하나였고, 19beta4 에는 그 인코딩이 없다.
+- **O15 — 호출마다 찾는 형태를 유지하고, 하한도 3.0.0 그대로다.** 17.11, OpenSSL 3.5.7 (arm64 노트북 한
+  대, 두 번 실행, 잘해야 2 배 이내의 정밀도) 에서 `gcm_encrypt_det` 는 호출당 약 1.1 µs,
+  `gcm_encrypt` 는 0.6 µs, `LIKE` 를 붙인 `gcm_decrypt` 는 0.3 µs 다. 앞의 둘 사이 0.5 µs 에는 digest 를
+  이름으로 찾는 비용뿐 아니라 HMAC-SHA256 두 번도 들어 있으므로, 미리 준비한 컨텍스트로 아낄 수 있는
+  양의 상한이다. 절감분 자체는 따로 재지 않았다. 그 반대편에는 3.0.0 에서 실패하는 컨텍스트가 있다.
+  결정적 변형은 조인 키와 정확 일치 조회용이지 대량 텍스트용이 아니므로, 이것 때문에 하한을 올리지
+  않는다. bench 게이트가 무작위 봉인에 대한 결정적 봉인을 기록하고, 다시 열 자리는 그 기록된 비율이다
+  (`docs/perf.md`); load 게이트는 `gcm_encrypt_det` 를 부르지 않는다.
+- **`pg_gcm.min_key_bytes` 와 placeholder**, 15~18 과 19beta4 (회귀 테스트 `min_key_bytes`). 라이브러리가
+  로드되기 전에 superuser 가 설정한 값은 로드될 때 유지된다. 16, 24, 32 가 아닌 값은 경고와 함께
+  버려지고 기본값이 적용된다. 이 파라미터를 설정할 수 없는 role 이 설정한 값은 라이브러리가 로드될 때
+  "permission denied to set parameter" 와 함께 버려지므로, placeholder 는 `PGC_SUSET` 을 우회하는
+  길이 아니다. `GRANT SET ON PARAMETER` 로 위임한다. 설정보다 짧은 키는 `22023` 과 전용 메시지로
+  거부되고, 어떤 suite 에도 해당하지 않는 길이는 설정과 무관하게 키 길이 메시지를 유지한다.
+- **라이브러리는 SQL 함수만 내보낸다.** PGXS 는 PostgreSQL 16 부터만 `-fvisibility=hidden` 으로
+  컴파일한다. 15 용 빌드의 `nm -D` 에는 테스트 seam 둘을 포함한 코어 함수 전부가 나왔고, 각각 동적
+  링커를 통해 호출할 수 있으며 먼저 로드된 라이브러리가 가로챌 수 있었다. SQL 에서 닿는 것은 없었다.
+  이제 프로젝트 헤더가 SQL 에서 호출하는 함수 외의 모든 것을 hidden visibility 로 선언하고,
+  `scripts/build-in-docker.sh` 는 동적 심볼이 정확히 그 함수들, 그 fmgr 레코드, `_PG_init`,
+  `Pg_magic_func` 가 아니면 실패한다. pragma 를 뺀 빌드에서 실제로 실패하는 것을 확인했다.
+- **CI.** `unit.yml` 은 libcrypto 마다 빌드 이미지 하나 (가장 새로운 지원 메이저, 그리고 OpenSSL 하한)
+  에서 sanitizer 를 켜고 단위 테스트를 실행한다. `build.yml` 은 `docker/versions.json` 의 모든 이미지를
+  amd64 와 arm64 에서 `-Werror` 로 빌드하고, `pg_gcm.so` 가 서버 자신의 `libcrypto.so.3` 로 해석되지
+  않으면 실패한다. `regress.yml` 은 모든 이미지에서 `make installcheck` 와 `scripts/verify.sql` 을
+  실행한다. 셋 다 이미지 목록을 그 파일을 읽는 `scripts/ci-matrix.py` 에서 받는다.
+  `continue-on-error` 인 job 은 없다. 그 설정에서는 실패해도 실행이 실패하지 않아 놓치기 쉽기 때문이다.
+  프리릴리스 이미지는 눈에 보이게 실패하고, 그 job 만 required check 로 삼지 않는다 (O1). GitHub 는
+  schedule 을 기본 브랜치에서만 실행하므로, nightly 실행은 이 파일들이 `main` 에 들어갈 때 시작된다.
+  그때까지 100 만 평문 실행은 `develop` 에 push 할 때마다 일어난다.
+- **Phase 전체 리뷰 이후 (2026-10-13).** `gcm_decrypt` 는 결과를 평문 길이에 맞춰 할당하므로, 코어는
+  항상 정확히 암호문 길이만큼의 버퍼를 받는다 — 빈 텍스트면 버퍼가 없다 — 그리고 단위 테스트는 모든
+  봉투 벡터를 그렇게, 버퍼 뒤에 가드 바이트를 두고 연다. EVP 가 그 이상 쓰지 않는다고 약속하는 것은
+  블록 크기가 1 인 cipher 뿐이고 AES-GCM 이 그렇다. `gcm_init` 은 fetch 한 cipher 마다 이를 요구하고,
+  cipher 가 보고하는 키 길이가 그 이름이 뜻하는 길이일 것도 요구한다. EVP 가 키에서 그만큼의 바이트를
+  읽기 때문이다. 다르게 보고하는 cipher 는 없는 것으로 취급한다. 저장소 안에 그 거부에 닿는 테스트는
+  없다. 다른 블록 크기나 키 길이를 보고하는 프로바이더가 있어야 하기 때문이다. 벡터 파일에는 78 번째 벡터 `tag-last-bit-flipped-empty` — 빈
+  텍스트의 29 바이트 봉투에서의 tag 실패 — 가 추가되어, 단위 테스트는 78 개, 회귀 테스트는 63 개를
+  실행한다. `54000` 테스트는 길이를 집합 반환 함수로 넘긴다. 상수였을 때는 플래너가 `repeat()` 를
+  접어 사본을 하나 더 들고 있었고, 백엔드 피크가 285 MB 가 아니라 547 MB 였다.
+- **어떤 테스트도 다루지 않는 것.** `54000` 은 변환 버퍼가 한계인 경우 — EUC_KR DB 에서 256 MB 텍스트를
+  봉인할 때 — 만 테스트하고, 1 GB 근처의 한계와 여는 쪽은 테스트하지 않는다. tag 불일치나 거부된
+  할당이 아닌 EVP 호출 실패 (O8, 변함없음). 백엔드 밖에서는 관찰할 수 없는 `PG_FINALLY` 의 cleanse.
+  UTF-8 이 아닌 DB 에서는 호출마다 카탈로그에서 변환을 찾고 함수 관리자를 통해 호출하는데, 그 비용은
+  Phase 4 의 부하 게이트 전에는 측정하지 않는다. 스위트는 CI 에서는 amd64 로, 개발 장비에서는 arm64 로
+  실행된다. arm64 에서 CI 는 컴파일만 하고 실행하지 않는다.
+
+### Phase 3 에서 확인된 것 (2026-10-13)
+
+- **스위트.** `tests/e2e/compose.yml` 은 공식 이미지로 primary 와 replica 를 띄우고 — 빌드는 각 컨테이너가
+  시작할 때 그 안에 설치된다 — SQL 만 보내며 키를 bind 파라미터로 넘기는 러너 (Python, `psycopg`) 를
+  띄운다. replica 는 primary 의 `pg_basebackup` 이고 primary 로부터 스트리밍한다. 시나리오는 21 개이고,
+  PostgreSQL 15.19, 16.15, 17.11, 18.6 (OpenSSL 3.5.7), 17.11 (OpenSSL 3.0.22), 19beta4 에서 관찰했다.
+  셋은 두 번째 노드가 말한 그대로의 것임을 확인한다. recovery 중이고 WAL receiver 가 primary 로부터
+  스트리밍하고 있으며, 쓰기를 거부하고, `CREATE EXTENSION` 을 primary 에서만 실행했는데도 확장의
+  카탈로그 항목이 있다. 아홉은 각 노드에서 실행한다. 모든 이름이 돌아온다. 인자 두 개짜리 형태로
+  봉인한 메모는 그 형태로 열린다. 복호화한 값에 대한
+  `LIKE '%길%'` 이 그 글자가 든 두 이름을 찾는다. primary 에서 결정적으로 봉인한 값은 어느 노드에서든
+  거기서 다시 봉인해 찾을 수 있다. 같은 값이라도 AAD 가 다르면 찾지 못한다. 두 테이블이 쿼리에 키가
+  전혀 없이 결정적 봉투로 조인된다. 위조된 tag 는 `pg_gcm.strict` on 에서 `XX001`, off 에서 NULL 이다.
+  열다섯 인자 위치 각각의 NULL 은 NULL 을 준다. 러너는 첫 시나리오 전에 replica 가 primary 의 마지막
+  WAL 위치까지 재생하기를 기다리고, 30 초 안에 되지 않으면 실패한다. 종료 상태가 0 인 것은 unittest 가
+  실행한 모든 시나리오가 통과로 기록되고, 하나 이상 실행됐고, 두 노드가 같은 공유 시나리오를 실행했을
+  때뿐이다. lint 워크플로의 `run.py --self-test` 는 이 게이트가 실패, 오류, skip, 실패한 subtest,
+  예상된 실패, 예상 밖의 성공, 빈 실행을 거부하는지, 그리고 시나리오가 서로 다르거나 하나도 없는 두
+  클래스를 거부하는지 확인한다. 첫 시나리오 전의 대기는 WAL receiver 의 상태도 포함하므로,
+  `streaming` 을 단정하는 시나리오가 막 연결된 receiver 를 만나지 않는다.
+- **docs/ops-constraints.md 의 7 번 항목을 관찰했다.** replica 의 디스크에서 라이브러리를 뺀 경우 (17.11 에서 21 개
+  시나리오를 손으로 실행), 카탈로그 항목은 그대로 있었고 봉투에 대한 조인도 그대로 동작했으며, 거기서
+  함수를 호출하는 일곱 시나리오는 `could not access file "$libdir/pg_gcm"` 로 실패했다. 21 개 중 14 개가
+  통과했고 게이트는 닫혔다. NULL 시나리오는 거기서도 통과했다.
+  `STRICT` 함수는 NULL 인자에 대해 호출되지 않으므로 라이브러리가 로드되지도 않는다.
+- **보여 주지 않는 것.** 스위트의 네트워크는 러너와 서버 사이에서 키와 평문을 암호화 없이 나른다.
+  공개된 테스트 키를 쓰는 테스트용 네트워크이지 배포 형태가 아니다 (docs/ops-constraints.md 의 12 번 항목). 논리 복제
+  구독자, 승격된 replica, 나중에 복원한 base backup, 서로 다른 메이저 사이나 확장의 서로 다른 빌드
+  사이의 복제는 테스트하지 않는다. CI 에서는 amd64 로, 개발 장비에서는 arm64 로 실행된다.
+- **CI.** `e2e.yml` 은 `main` 이나 `develop` 으로의 push 때, 그리고 확장이나 스위트나 그것을 빌드하는 것을 바꾸는 PR 에서
+  `docker/versions.json` 의 모든 이미지로 스위트를 실행한다. required check 가 아니다. 그것은
+  `regress.yml` 에 있다.
+
+### Phase 4 에서 확인된 것 (2026-10-13)
+
+여기서 "실행" 은 개발 장비에서 이 저장소의 스크립트를 돌린 것과, 게이트를 받아 갈 워크플로를
+뜻한다. tag 는 자르지 않았고 아무것도 릴리스하지 않았다.
+
+- **부하 게이트.** `tests/load/run.py` 는 한국어 이름 N 행을 한 테이블에 두 번 봉인한다 —
+  `gcm_encrypt` 와 `pgcrypto` `encrypt_iv(..., 'aes-cbc')`, 같은 키로. 그리고 `sessions` 에
+  걸쳐 교차로, 어느 쿼리도 기계를 독점하지 않게, `gcm_decrypt(...) LIKE '%김%'` 스캔과 CBC 스캔을
+  시간 재어 각각의 p95 와 그 비율을 보고한다. Phase S 와 같이 JIT 와 병렬 워커를 끄어 두 플랜의
+  모양을 같게 하고, 테이블을 `VACUUM (ANALYZE, FREEZE)` 하며, 쿼리별 워밍업 한 번을 버리고, 각
+  셀이 쿼리당 `samples` 번의 스캔을 모아 한 세션에서도 p95 가 백분위수가 되게 한다. 게이트는
+  `tests/load/baseline.json` 에 대한 게이트 대상 셀 — baseline 의 `gated_sessions`, 즉 낮은 동시성
+  셀 — 의 최악의 비율이고 밀리초가 아니라서 이식 가능하다. 10k 행의 높은 세션 셀은 암호가 아니라
+  스케줄링에 묶여 기록만 하고 게이트하지 않는다. `run.py --self-test` 는 답이 알려진 케이스에 대해
+  판정과 게이트 대상 규칙, 비율의 방향을 확인하고 lint 워크플로에서 실행된다. Phase S 의 네 번의
+  실행이 기대값이고 (GCM 쿼리가 CBC 쿼리의 0.49~0.63 을 차지했다, 위 step 7), 상한은 1.0 — GCM 이 더
+  느리지 않다는 설계의 요구다.
+- **마이크로 벤치마크.** `tests/bench/benchmark.cc` (Google Benchmark) 는 코어의 `gcm_seal` (무작위와
+  결정적) 과 `gcm_open` 을 같은 모양의 직접 짠 EVP AES-256-GCM 과 16, 256, 4096, 65536 바이트에서
+  재고, `tests/bench/baseline.json` 의 같은 것끼리의 세 비율을 게이트로 삼는다 — bare EVP 에 대한
+  무작위 봉인과 열기, 그리고 같은 두 번의 HMAC-SHA256 과 같은 AES-GCM 을 치르는 bare 결정적 봉인에
+  대한 결정적 봉인. 각 벤치마크는 무작위 순서로 다섯 번 돌고 게이트는 중앙값을 읽어, 시끄러운 한 번의
+  반복이 비율을 움직이지 못한다. 기준선의 nonce 는 코어의 무작위 봉인과 같이 무작위라, 봉인 비율이
+  한쪽만 내는 비용이 아니라 코어 자체의 봉투와 점검을 재게 되고, 상한은 크기별이다 — 코어의 고정된 호출
+  비용은 작은 메시지에서 더 큰 몫이다. 무작위 봉인에 대한 결정적 봉인은 기록만 하고 게이트하지 않는다:
+  O17 프로브가 그것이 이식 가능하지 않음을 찾았다 (아래 bullet). 바이너리의 `--self-test` 가 판정과 비율의
+  방향, 고정 측정값에 대한 게이트를 확인한다. 서버도 PostgreSQL 헤더도 관여하지 않는다.
+- **배포 이미지.** `docker/server.Dockerfile` 은 공식 `postgres:<major>` (base 는 digest 로 고정) 이고,
+  빌드한 `pg_gcm.so`, `pg_gcm.control`, SQL 을 그 이미지 자체의 `pg_config` 가 이르는 디렉터리에
+  설치하며, `docker/initdb.d/00-pg_gcm.sql` 이 `/docker-entrypoint-initdb.d` 에 있어 처음 init 때
+  `CREATE EXTENSION pg_gcm` 이 실행된다. `scripts/smoke-image.sh` 가 이미지를 띄워 `HEALTHCHECK` 를
+  기다리고 — 스스로 `CREATE EXTENSION` 을 하지 않고 — `홍길동` 을 봉인·개방하고 `LIKE '%길%'` 을
+  확인한다: 실패나 extension 부재는 0 이 아닌 종료다.
+- **릴리스 파이프라인.** `scripts/package.sh` 는 빌드를 `pg_gcm-<version>/…` 로 펼쳐
+  `pg_gcm-<version>-pg<major>-<arch>.tar.gz` 와 그 체크섬을 쓴다. `scripts/release-guard.py` 는
+  `vMAJOR.MINOR.PATCH` 가 아닌 tag, `pg_gcm.control` 의 `default_version` 과 다른 tag, `main` 의
+  조상이 아닌 tag, `## <version>` CHANGELOG 절이 없는 tag 를 거부한다. `scripts/sbom.py` 는
+  extension, 그 PostgreSQL 과 libcrypto 의존성, 모든 산출물의 SHA-256 을 담은 CycloneDX 1.5 문서를
+  쓴다 — extension 은 `metadata.component` 에만 두어 `bom-ref` 가 중복되지 않는다. `release.yml` 은
+  지원 major 를 amd64 와 arm64 로 패키징하고, `scripts/smoke-tarball.sh` 가 각 tarball 을 공식
+  이미지에 얹어 라운드 트립을 실행하므로 배포되는 바이트가 모든 아키텍처에서 로드된다. `server` job 은
+  배포 이미지를 빌드·smoke 한 뒤에야 모든 tarball 이 통과했고 tag 일 때만 keyless cosign 으로 서명해
+  푸시한다. `publish` job 은 SBOM 과 `SHA256SUMS` (SBOM 파일 자체 포함) 를 쓰고, 체크섬을 서명하고
+  GitHub release 를 만든다. `workflow_dispatch` 실행은 푸시·서명·릴리스만 빼고 모든 것을 연습한다. 두
+  헬퍼 스크립트의 `--self-test` 는 lint 워크플로에서 실행된다.
+- **아직 기록되지 않은 것, 그리고 O17 프로브가 찾은 것.** bench 게이트는 `develop` 에서 돌아 본 적이
+  있었다 (2026-10-13, 런 `38380818627`, 통과; 2026-10-14, 런 `38496259310`, 실패). load 게이트는 일회성
+  프로브 전까지 CI 러너에서 돌아 본 적이 없었다. `tests/load/baseline.json` 과
+  `tests/bench/baseline.json` 의 상한은 Phase S 의 기대값이고 §8 Open O17 의 placeholder 이지 러너의
+  측정이 아니었다. 그 프로브 (2026-10-14, `ci/perf-probe`; bench 런 `38497426020`, `38497735934`,
+  `38497746227`, load 런 `38497426196`, `38498234824`, `38498245407`; O17 의 세 번에는 포함되지 않는다) 가 GitHub
+  러너에서 둘 다 돌려 게이트 하나를 바꿨다. load 게이트는 매 실행 통과했다 — 최악 gated 비율 0.84~0.88 로
+  설계가 요구하는 1.0 아래였고, 약 4분이 걸렸다. bench 게이트는 어떤 러너에서는 통과하고 어떤 러너에서는
+  실패했다: `seal` 과 `open` 은 어디서나 약 1.0 이었지만, 무작위 봉인에 대한 결정적 봉인의 비율은 약
+  1.2~9.6 이었다 (65536 바이트에서 약 3.3~9.6). 그 비율은 SHA-256 에 묶인 봉인을 AES 에 묶인 봉인과
+  비교하는데, 두 연산은 러너 CPU 와 libcrypto 에 따라 다르게 확장된다: 가장 빠른 65536 바이트 AES-GCM
+  셀 (AMD EPYC 9V45, Intel Xeon 8573C — 둘 다 AVX-512, OpenSSL 3.5.7) 은 가장 느린 셀 (AMD EPYC 7763,
+  EPYC 9V74, OpenSSL 3.0.22 포함) 의 약 5배였다. 따라서 그 비율은 이 코드의 속성이 아니며 게이트가 될 수
+  없다. §8 Open O17 은 같은 모양의 bare 결정적 봉인에 대한 결정적 봉인을 게이트하도록 재정의된다. tag 를
+  자른 적이 없고 릴리스도 게시하지 않았으므로 파이프라인은 연습만 되고 끝에서 끝까지 관찰되지는 않았으며,
+  배포 이미지는 smoke 테스트만 됐다.
+
+### Phase 5 에서 확인된 것 (2026-10-13)
+
+여기서 "실행" 은 개발 장비에서 이 저장소의 스크립트를 돌린 것이다. 아무것도 업로드하지 않았고 tag 도
+자르지 않았으므로, PGXN 경로는 연습만 되고 끝에서 끝까지 관찰되지는 않았다.
+
+- **`META.json`.** 배포본 메타데이터는 PGXN Meta Spec 1.0.0 이다: `name` 은 `pg_gcm`, SemVer
+  `version` 은 `pg_gcm.control` 과 일치하고, `license` 는 `postgresql`, `provides` 는 extension 을
+  지목하며 그 `file` 은 버전이 붙은 SQL 스크립트, `docfile` 은 `README.md` 다.
+  `prereqs.runtime.requires.PostgreSQL` 하한은 15.0.0 이고, 저장소·버그 트래커·홈페이지는
+  `resources` 에, `tags` 는 검색을 위해 있다. `release_status` 는 `testing` 이다: 0.1.0 은
+  pre-release 이고 — 봉투 형식이 아직 바뀔 수 있으며 아직 쓸 수 있는 단계가 아니므로 — PGXN 이
+  그것을 stable 설치로 제공해서는 안 된다. `no_index` 는 에이전트 설정, CI 파일, 개발 스크립트를
+  PGXN 문서 색인에서 제외한다.
+- **검사기.** `scripts/check-pgxn.py` 는 그 명세의 규칙 — 필수 필드, 값에 대한 규칙, 사용자 정의
+  `x_` 예외를 둔 미지의 키 규칙, prereq phase·relation·버전 범위 — 을 구현하고, 명세가 할 수 없는
+  교차 검사를 더한다: 제어 파일에 대한 버전, 작업 트리에 대한 제공 `file`·`docfile`, 배포본 이름과
+  extension 버전을 `pg_gcm` 과 배포 스크립트가 만드는 아카이브에 대고, 15.0.0 이상을 요구하는
+  PostgreSQL 하한. `--self-test` 는 41 가지 판정을 낸다 — 한 번에 한 가지씩 깨뜨린 37 개 문서, 검사기가
+  받아들여야 하는 세 문서, 유효한 문서 자신 — 그리고 각각이 기대대로이기를 요구한다. 관측: 41 가지
+  모두. lint 워크플로가 검사기, 그 `--self-test`, 그리고 아카이브 배치에 대한
+  `scripts/pgxn-dist.sh` 를 실행한다.
+- **아카이브.** `scripts/pgxn-dist.sh` 는 검사기를 통해 버전을 읽고, 더러운 작업 트리를 거부하며,
+  출력 디렉터리를 절대 경로로 바꾸고 — 다른 디렉터리에서 준 상대 경로가 아카이브와 배치 검사에서
+  같은 곳을 가리키게 — `git archive HEAD` 와 접두사 `pg_gcm-<version>/` 로
+  `pg_gcm-<version>.zip` 을 쓴다. 그런 다음 아카이브를 열어 접두사 아래에 `META.json`, `Makefile`,
+  `pg_gcm.control` 이 있는지, 최상위 디렉터리가 정확히 하나인지, 아카이브 자체의 `META.json` 버전이
+  이름과 맞는지 요구한다. 관측: HEAD 의 아카이브는 그 모두를 통과했고, 커밋되지 않은 변경이 있는
+  작업 트리는 거부됐으며, pgxn 클라이언트 (1.3.2) 가 그 아카이브를 PostgreSQL 17 빌드 이미지에서
+  빌드·설치했고 거기서 `CREATE EXTENSION pg_gcm` 과 한국어 `LIKE '%길%'` 왕복이 통과했다.
+- **릴리스 단계.** `release.yml` 의 `publish` job 은 아카이브를 `dist/` 바깥에 만들어 체크섬이 붙는
+  산출물에 끼지 않게 한다; 그 빌드는 릴리스보다 앞서므로 업로드가 거부할 메타데이터는 거기서
+  실패한다. GitHub release 를 만든 뒤 `manager.pgxn.org/upload` 로는 마지막에 업로드한다 — 되돌릴 수
+  있는 단계를 되돌릴 수 없는 단계보다 앞에 — 그리고 릴리스와 업로드는 멱등하므로 재실행이 이미 된
+  일에서 실패하지 않고 부분 릴리스를 마무리한다: `gh release view` 는 이미 있는 release 를
+  건너뛰고, 이미 게시된 버전 (`api.pgxn.org/dist/pg_gcm/<version>/META.json`) 은 PGXN 이 두 번 받지
+  않으므로 그대로 둔다. 업로드는 `curl` 에 HTTP Basic 인증, multipart 필드 `archive`, 그리고
+  `X-Requested-With: XMLHttpRequest` — 성공은 `200`, 거부된 배포본은 `409` 다. `PGXN_USER` 와
+  `PGXN_PASSWORD` 는 required reviewer 가 있는 `release` environment 의 secret 이다.
+  `workflow_dispatch` 실행은 아카이브를 검증·생성만 하고 아무것도 업로드하지 않는다.
+- **보여주지 않는 것.** 업로드는 실행된 적이 없고, 위의 아카이브 빌드와 왕복은 CI 가 아니라 한 메이저
+  에서 손으로 했다: 아카이브의 소스는 `build` 와 `regress` 워크플로가 컴파일하는 바로 그 추적
+  파일들이므로 거기서 커버되고, 업로드는 첫 tag 를 위해 남겨 둔다. 메타데이터는 아직 PGXN Manager
+  자체 검증기를 거친 적이 없다. 배포판 패키징 (Debian, RPM) 은 만들지 않는다 (Phase 5 는 수요를 위해
+  남겨 둔다). Phase 5 는 §8 Open O17 이 열린 채로 했다: PGXN 경로는 두 성능 게이트를 지나지 않으므로,
+  그 게이트가 기다리는 기록은 이 작업의 전제가 아니다.
+
+### 미확인
+
+번호는 다시 쓰지 않는다. O2~O16 은 위에서 답했다. O7, O13, O16 은 Phase 1 에서, O14 와 O15 는 Phase 2
+에서 답했다.
 
 | # | 질문 | 확인 방법 |
 |---|---|---|
-| O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28) | 릴리스 이미지가 나오면 `docker/versions.json` 에 추가; 그때까지는 `19beta4` 로 스파이크를 빌드 |
-| O4 | postmaster 에서 fetch 한 `EVP_MAC` 핸들이 fork 된 backend 에서 동작하나? `EVP_CIPHER` 는 선례가 있다 — postmaster 의 `SSL_CTX` 가 fork 전에 cipher 를 fetch 한다 — 하지만 어느 쪽도 문서화되어 있지 않다 | Phase S 5 단계: preload 한 뒤 두 backend 에서 HMAC known-answer |
-| O6 | `0x01`(AES-256-CBC, PKCS#7, IV 앞붙임)을 구현하나, 한다면 어떤 조건으로 (§2.2)? 호환성: 32 바이트 키를 쓴 `pgcrypto` 의 `encrypt_iv(..., 'aes-cbc')` 와 맞나? 보안 정책: 인증이 없고 `pg_gcm.strict` 가 변조를 볼 수 없으므로, 채택한다는 것은 그 예외를 명시하고 이관 뒤 `0x01` 을 어떻게 거부할지 정한다는 뜻이다 | pgcrypto 로 암호화하고 스파이크로 열기; 그다음 호환성만이 아니라 두 부분을 함께 결정 |
-| O7 | 실패 종류(틀린 키 길이, 잘못된 봉투, 잘못된 tag, 잘못된 UTF-8, 변환할 수 없는 문자, OpenSSL 실패)마다 어떤 SQLSTATE 가 맞나? 다른 곳에서 쓰이는 후보: `22023`, `XX001`, `22021`, `22P05`. `pgcrypto` 는 전부 `39000` 으로 올린다 | `errcodes.txt`; 사용자 정의보다 기존 분류 우선, 그리고 클라이언트가 위조된 tag 와 틀린 키 길이를 구분할 수 있게 실패마다 분류 하나 |
-| O11 | amd64 이미지가 O2 에서 확인한 arm64 이미지와 같은 OpenSSL 을 링크하나? | amd64 에서 `ldd` 와 `openssl version` |
-| O12 | 호출마다 `PG_TRY` 블록을 두면 30만 행에서 얼마가 들고, 부하 게이트가 달라지나? | Phase S 7 단계, 블록이 있을 때와 없을 때 |
+| O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 확장은 `19beta4` 에서 빌드되고 모든 스위트를 통과하며, 그 CI job 은 pre-release 라고 표시되고 required check 로 삼지 않는다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
+| O17 | CI 러너에서의 부하와 마이크로 벤치마크 비율은 얼마이고 상한은 얼마나 타이트해도 되나? `tests/load/baseline.json` (1.0) 과 `tests/bench/baseline.json` (크기별: 봉인·열기·det 1.3~1.5) 의 상한은 그 러너의 측정이 아니라 placeholder 이다. O17 프로브 (2026-10-14) 는 옛 det 비율 — 무작위 봉인에 대한 결정적 봉인 — 이 러너의 AES-GCM 대 SHA-256 상대 처리량에 의존하며 65536 바이트에서 약 3.3~9.6 이었음을 찾았다. 그래서 그 비율은 기록만 하고 게이트하지 않는다 | 세 번씩 돌린 `load.yml` 과 `bench.yml` 의 최악 비율과 러너 CPU 를 `docs/perf.md` 에 기록한다; bench 의 det 게이트는 이제 같은 것끼리 비교한다 (bare 결정적 봉인에 대한 결정적 봉인). 각 상한은 세 번 실행의 관측 최악값 곱하기 1.2 를 소수 첫째 자리로 올림한 값으로 정하고, placeholder 보다 높이지 않는다; 그런 다음 O17 을 Established 로 옮긴다 |
 
 ## 9. 참고 자료
 

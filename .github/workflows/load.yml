@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: PostgreSQL
+# The load gate, nightly and on demand: rows of Korean names sealed by gcm_encrypt and by
+# pgcrypto AES-CBC, and the p95 of the decrypt + LIKE scan measured against pgcrypto at
+# 10k/100k/300k rows and 1/8/32 sessions (tests/load, scripts/load.sh). The gate is the worst
+# ratio, never milliseconds, against tests/load/baseline.json.
+#
+# No push or pull_request trigger: a load run needs a quiet machine, so it is nightly and
+# dispatched, never a required check. GitHub runs a schedule from the default branch only.
+name: load
+
+on:
+  schedule:
+    # Nightly, after the unit suite.
+    - cron: "37 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      unit: ${{ steps.list.outputs.unit }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: list
+        run: echo "unit=$(python3 scripts/ci-matrix.py unit)" >>"$GITHUB_OUTPUT"
+
+  load:
+    needs: images
+    name: load (${{ matrix.entry.label }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.images.outputs.unit) }}
+    env:
+      IMAGE: ${{ matrix.entry.image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build
+        run: scripts/build-in-docker.sh "$IMAGE"
+      # load.sh starts the development server, installs the build and runs the runner, whose
+      # exit status is the gate; it writes the runner's JSON to PG_GCM_LOAD_JSON for the artifact.
+      - name: Load gate
+        env:
+          PG_GCM_LOAD_JSON: ${{ runner.temp }}/load-${{ matrix.entry.label }}.json
+        run: scripts/load.sh "$IMAGE"
+      - name: Record the runner's CPU beside the ratio
+        if: always()
+        run: |
+          {
+            echo "### load (${{ matrix.entry.label }}) on ${{ runner.os }} ${{ runner.arch }}"
+            echo '```'
+            grep -m1 'model name' /proc/cpuinfo || true
+            echo "accelerators: $(grep -m1 '^flags' /proc/cpuinfo | grep -oE 'sha_ni|vaes|avx512f|avx512vl|aes' | sort -u | tr '\n' ' ')"
+            nproc
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload the cells
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: load-${{ matrix.entry.label }}
+          path: ${{ runner.temp }}/load-${{ matrix.entry.label }}.json
+          if-no-files-found: warn

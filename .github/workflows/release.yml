@@ -1,0 +1,208 @@
+# SPDX-License-Identifier: PostgreSQL
+# The release pipeline: guard the tag, build and package the supported majors on both
+# architectures, smoke each tarball, build and smoke the distribution server image and sign it,
+# then checksum, SBOM, sign the checksums and publish. A workflow_dispatch run is a dry run — it
+# runs every step except signing and publishing (.agents/skills/ci-release/SKILL.md). Tags are
+# SemVer vMAJOR.MINOR.PATCH on main.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch main
+        if: github.event_name == 'push'
+        run: git fetch --no-tags origin main
+      - name: Guard the tag and the changelog
+        if: github.event_name == 'push'
+        run: |
+          on_main=false
+          if git merge-base --is-ancestor "$GITHUB_REF_NAME" origin/main; then on_main=true; fi
+          python3 scripts/release-guard.py --tag "$GITHUB_REF_NAME" --on-main "$on_main"
+      - id: version
+        run: echo "version=$(python3 scripts/release-guard.py --print-version)" >>"$GITHUB_OUTPUT"
+
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      supported: ${{ steps.list.outputs.supported }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - id: list
+        # Only the supported majors ship: the pre-release is not a release, and the OpenSSL floor
+        # (17-bookworm) is a build-time check of the oldest libcrypto, not a second pg17 artifact.
+        run: echo "supported=$(python3 scripts/ci-matrix.py supported)" >>"$GITHUB_OUTPUT"
+
+  package:
+    needs: [guard, images]
+    name: package (${{ matrix.entry.label }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.images.outputs.supported) }}
+        arch: [amd64, arm64]
+    env:
+      IMAGE: ${{ matrix.entry.image }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build
+        run: scripts/build-in-docker.sh "$IMAGE"
+      # package.sh refuses a build older than the sources and writes the tarball and its .sha256.
+      - name: Package
+        run: scripts/package.sh "$IMAGE" "$ARCH" dist
+      # The shipped bytes, loaded on the architecture that built them: layer the tarball onto the
+      # official image and run the Korean LIKE round trip there. This is the only check that runs
+      # the packaged .so at all.
+      - name: Smoke the tarball
+        run: scripts/smoke-tarball.sh "$IMAGE" dist/*.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pg_gcm-${{ matrix.entry.image }}-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  server:
+    needs: [guard, images, package]
+    # Push and sign happen here, after every tarball and its smoke, so a failed package never
+    # leaves an unsigned image in ghcr.io. No other job pushes. The `release` environment is the
+    # one place to require reviewers: a tag push runs this file from the tagged commit, so the
+    # guard cannot stop whoever can push a tag.
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    name: server (${{ matrix.entry.label }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.images.outputs.supported) }}
+    env:
+      IMAGE: ${{ matrix.entry.image }}
+      TAG: ghcr.io/${{ github.repository_owner }}/pg_gcm:${{ needs.guard.outputs.version }}-pg${{ matrix.entry.image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build the extension
+        run: scripts/build-in-docker.sh "$IMAGE"
+      - name: Build the server image
+        run: scripts/server-image.sh "$IMAGE" "$TAG"
+      # The Korean LIKE round trip against the image's own init, before anything is pushed.
+      - name: Smoke the server image
+        run: scripts/smoke-image.sh "$TAG"
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        if: github.event_name == 'push'
+      - name: Push and sign the server image
+        if: github.event_name == 'push'
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$TAG"
+          # Sign the pushed digest, not the tag: a tag can be moved to another image, a digest cannot.
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$TAG")"
+          cosign sign --yes "$digest"
+
+  publish:
+    needs: [guard, package, server]
+    # The same protected environment as the push: configure it with required reviewers so a tag
+    # push alone cannot publish a release.
+    environment: release
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # cosign keyless signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      # The SBOM is written first so its own file is covered by the checksums and the signature.
+      - name: SBOM
+        run: |
+          python3 scripts/sbom.py \
+            --output "dist/pg_gcm-${{ needs.guard.outputs.version }}.sbom.cdx.json" \
+            --version "${{ needs.guard.outputs.version }}" dist/pg_gcm-*.tar.gz
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum pg_gcm-*.tar.gz pg_gcm-*.sbom.cdx.json > SHA256SUMS
+          cat SHA256SUMS
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      # Only a real tag signs and publishes; a dry run stops after building every artifact above.
+      - name: Sign the checksums (keyless)
+        if: github.event_name == 'push'
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem \
+            dist/SHA256SUMS
+      # PGXN: `pgxn-dist.sh` validates META.json and builds the source archive outside dist/, so it
+      # never joins the checksummed assets (scripts/check-pgxn.py, scripts/pgxn-dist.sh). It runs
+      # before the release, so metadata the upload would refuse stops here; the upload itself is
+      # last, and a version already on PGXN is left alone.
+      - name: Build the PGXN source distribution
+        run: |
+          archive="$(scripts/pgxn-dist.sh "$RUNNER_TEMP/pgxn")"
+          echo "PGXN_ARCHIVE=$archive" >>"$GITHUB_ENV"
+      # A tag signs and publishes; a dispatch run stops after building every artifact above. The
+      # GitHub release comes before the irreversible PGXN upload, and both are idempotent, so a
+      # re-run can finish a partial release.
+      - name: Publish the release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" --generate-notes
+      - name: Upload the distribution to PGXN
+        if: github.event_name == 'push'
+        env:
+          PGXN_USER: ${{ secrets.PGXN_USER }}
+          PGXN_PASSWORD: ${{ secrets.PGXN_PASSWORD }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          if curl --silent --fail --output /dev/null \
+              "https://api.pgxn.org/dist/pg_gcm/$VERSION/META.json"; then
+            echo "pg_gcm $VERSION is already on PGXN; nothing to upload"
+            exit 0
+          fi
+          curl --fail-with-body --silent --show-error \
+            --user "$PGXN_USER:$PGXN_PASSWORD" \
+            --header 'Accept: application/json' \
+            --header 'X-Requested-With: XMLHttpRequest' \
+            --form "archive=@$PGXN_ARCHIVE" \
+            https://manager.pgxn.org/upload

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: PostgreSQL
+# Run the load harness (tests/load) for one image: a development server with the build
+# installed, and a Python runner that reaches it over SQL alone. The runner's exit status is
+# the gate: 0 only when every cell ran and the worst gcm/pgcrypto ratio was at or under the
+# ceiling in tests/load/baseline.json.
+# Usage: scripts/load.sh <major> [args for tests/load/run.py]
+#   Needs scripts/build-in-docker.sh <major> to have run. Recreates pg-gcm-dev-<major> — dev-up.sh
+#   tears that container down and starts it fresh every time.
+set -euo pipefail
+# shellcheck source=scripts/lib.sh
+source "$(dirname "$0")/lib.sh"
+
+[ $# -ge 1 ] || die "usage: scripts/load.sh <major> [args for tests/load/run.py]"
+major="$1"
+shift
+
+[ -f "$ROOT/build/$major/pg_gcm.so" ] ||
+  die "build/$major/pg_gcm.so is missing — run scripts/build-in-docker.sh $major"
+# A pass on a binary older than the sources is not a pass.
+[ "$(cat "$ROOT/build/$major/SOURCE_HASH" 2>/dev/null)" = "$(source_hash)" ] ||
+  die "build/$major was not built from the current sources — run scripts/build-in-docker.sh $major"
+
+name="$(dev_container_name "$major")"
+"$ROOT/scripts/dev-up.sh" "$major" >/dev/null
+install_extension "$name" "$major"
+
+image="pg-gcm-load:$major"
+cleanup() {
+  docker image rm --force "$image" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "== load harness (PostgreSQL $major)"
+docker build --quiet --file "$ROOT/tests/load/runner.Dockerfile" --tag "$image" "$ROOT/tests/load" \
+  >/dev/null
+
+# The password is read from the container and reaches docker through the environment, not the
+# command line (a value after --env would land in docker run's argv).
+#
+# run.py prints its JSON of every cell to stdout; PG_GCM_LOAD_JSON names a host path to copy it to,
+# so the workflow can upload the file as an artifact. The pipe keeps the runner's exit status as the
+# gate, because load.sh is set -o pipefail.
+run_runner() {
+  PGPASSWORD="$(docker exec "$name" printenv POSTGRES_PASSWORD)" \
+    docker run --rm \
+    --network "$DEV_NETWORK" \
+    --env PGHOST="$name" --env PGPORT=5432 --env PGUSER=postgres --env PGDATABASE=postgres \
+    --env PGPASSWORD \
+    "$image" "$@"
+}
+if [ -n "${PG_GCM_LOAD_JSON:-}" ]; then
+  # tee fails on a missing directory, which would turn a passing gate into a non-zero exit.
+  json_dir="$(dirname "$PG_GCM_LOAD_JSON")"
+  [ -d "$json_dir" ] || die "the directory of PG_GCM_LOAD_JSON does not exist: $json_dir"
+  run_runner "$@" | tee "$PG_GCM_LOAD_JSON"
+else
+  run_runner "$@"
+fi
+echo "== PostgreSQL $major: the load gate passed"

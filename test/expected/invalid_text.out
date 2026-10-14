@@ -1,0 +1,23 @@
+-- Given: two envelopes this extension did not seal, from spec/test-vectors.json: one whose
+--        plaintext is not UTF-8 and one whose plaintext holds U+0000
+-- When: each is decrypted, with pg_gcm.strict on and then off
+-- Then: each authenticates and is then refused as text, with no byte of it in the message;
+--       strict does not turn that into NULL
+\set VERBOSITY terse
+\set vectors `cat spec/test-vectors.json`
+SELECT v ->> 'envelope_hex' AS not_utf8, v ->> 'key_hex' AS not_utf8_key
+FROM jsonb_array_elements(:'vectors'::jsonb -> 'vectors') AS v
+WHERE v ->> 'id' = 'random-256-not-utf8' \gset
+SELECT v ->> 'envelope_hex' AS with_nul, v ->> 'key_hex' AS with_nul_key
+FROM jsonb_array_elements(:'vectors'::jsonb -> 'vectors') AS v
+WHERE v ->> 'id' = 'random-256-contains-nul' \gset
+SET pg_gcm.strict = on;
+SELECT gcm_decrypt(decode(:'not_utf8', 'hex'), decode(:'not_utf8_key', 'hex'));
+ERROR:  decrypted value is not valid UTF-8
+SELECT gcm_decrypt(decode(:'with_nul', 'hex'), decode(:'with_nul_key', 'hex'));
+ERROR:  decrypted value is not valid UTF-8
+SET pg_gcm.strict = off;
+SELECT gcm_decrypt(decode(:'not_utf8', 'hex'), decode(:'not_utf8_key', 'hex'));
+ERROR:  decrypted value is not valid UTF-8
+SELECT gcm_decrypt(decode(:'with_nul', 'hex'), decode(:'with_nul_key', 'hex'));
+ERROR:  decrypted value is not valid UTF-8

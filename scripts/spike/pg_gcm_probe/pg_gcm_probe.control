@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: PostgreSQL
+comment = 'Phase S measurement probe for pg_gcm - never shipped'
+default_version = '1.0'
+module_pathname = '$libdir/pg_gcm_probe'
+relocatable = true

@@ -1,0 +1,14 @@
+{
+  "supported": {
+    "15": { "image": "postgres:15", "digest": "sha256:c961aa287d8698297cb26cdfadfbe9fd2cbaf77e53cfffe9636e8d8a1e4d842c" },
+    "16": { "image": "postgres:16", "digest": "sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d" },
+    "17": { "image": "postgres:17", "digest": "sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3" },
+    "18": { "image": "postgres:18", "digest": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336" }
+  },
+  "prerelease": {
+    "19": { "image": "postgres:19beta4", "digest": "sha256:946fd10fdac8a0e72ee1fd40c1ef074b5c8bcdddfb94bfd1597524c664243f64" }
+  },
+  "openssl-floor": {
+    "17-bookworm": { "image": "postgres:17-bookworm", "digest": "sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826" }
+  }
+}

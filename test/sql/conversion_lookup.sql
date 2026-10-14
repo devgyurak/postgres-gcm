@@ -1,0 +1,45 @@
+-- Given: an EUC_KR database (thrown away afterwards) whose two built-in conversions with UTF-8
+--        are no longer marked as defaults, and then a schema on search_path that holds default
+--        conversions of its own
+-- When: each function is called at both points, and the server's own lookup is exercised
+--       through SET client_encoding
+-- Then: the functions fail with 42883 both times, naming the two encodings and before
+--       anything is sealed or opened: they look in pg_catalog alone (design §8 O14) — while
+--       the server's own lookup follows search_path and finds the schema's conversions
+\set VERBOSITY terse
+\set k '\'\\x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\'::bytea'
+SELECT current_database() AS home \gset
+SELECT gcm_encrypt('x', :k) AS sealed \gset
+SET client_min_messages = warning;
+DROP DATABASE IF EXISTS regress_pg_gcm_conversion;
+RESET client_min_messages;
+CREATE DATABASE regress_pg_gcm_conversion ENCODING 'EUC_KR' LOCALE_PROVIDER libc LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;
+\c regress_pg_gcm_conversion
+CREATE EXTENSION pg_gcm;
+SELECT gcm_decrypt(:'sealed'::bytea, :k) AS opens_with_the_built_in_conversion;
+
+-- A superuser's edit of this database's own catalog. A stock server has no encoding to test
+-- this with on every major: MULE_INTERNAL, the one without a conversion, is gone in 19.
+UPDATE pg_conversion SET condefault = false
+WHERE connamespace = 'pg_catalog'::regnamespace AND conname IN ('euc_kr_to_utf8', 'utf8_to_euc_kr');
+SELECT gcm_encrypt('x', :k);
+SELECT gcm_encrypt_det('x', :k, 'patients.name');
+SELECT gcm_decrypt(:'sealed'::bytea, :k);
+SET client_encoding = 'UTF8';
+
+CREATE SCHEMA regress_conversions;
+CREATE DEFAULT CONVERSION regress_conversions.to_utf8 FOR 'EUC_KR' TO 'UTF8' FROM euc_kr_to_utf8;
+CREATE DEFAULT CONVERSION regress_conversions.from_utf8 FOR 'UTF8' TO 'EUC_KR' FROM utf8_to_euc_kr;
+SET search_path = regress_conversions, public;
+-- The server finds the schema's conversions along search_path ...
+SET client_encoding = 'UTF8';
+SHOW client_encoding;
+-- ... and the extension does not use them.
+SELECT gcm_encrypt('x', :k);
+SELECT gcm_decrypt(:'sealed'::bytea, :k);
+\set VERBOSITY sqlstate
+SELECT gcm_encrypt('x', :k);
+SELECT gcm_decrypt(:'sealed'::bytea, :k);
+
+\c :home
+DROP DATABASE regress_pg_gcm_conversion;
