@@ -873,8 +873,8 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 - **검사기.** `scripts/check-pgxn.py` 는 그 명세의 규칙 — 필수 필드, 값에 대한 규칙, 사용자 정의
   `x_` 예외를 둔 미지의 키 규칙, prereq phase·relation·버전 범위 — 을 구현하고, 명세가 할 수 없는
   교차 검사를 더한다: 제어 파일에 대한 버전, 작업 트리에 대한 제공 `file`·`docfile`, 배포본 이름과
-  extension 버전을 `pg_gcm` 과 배포 스크립트가 만드는 아카이브에 대고, 15.0.0 을 허용하는 PostgreSQL
-  하한. `--self-test` 는 41 가지 판정을 낸다 — 한 번에 한 가지씩 깨뜨린 37 개 문서, 검사기가
+  extension 버전을 `pg_gcm` 과 배포 스크립트가 만드는 아카이브에 대고, 15.0.0 이상을 요구하는
+  PostgreSQL 하한. `--self-test` 는 41 가지 판정을 낸다 — 한 번에 한 가지씩 깨뜨린 37 개 문서, 검사기가
   받아들여야 하는 세 문서, 유효한 문서 자신 — 그리고 각각이 기대대로이기를 요구한다. 관측: 41 가지
   모두. lint 워크플로가 검사기, 그 `--self-test`, 그리고 아카이브 배치에 대한
   `scripts/pgxn-dist.sh` 를 실행한다.
@@ -887,9 +887,10 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   작업 트리는 거부됐으며, pgxn 클라이언트 (1.3.2) 가 그 아카이브를 PostgreSQL 17 빌드 이미지에서
   빌드·설치했고 거기서 `CREATE EXTENSION pg_gcm` 과 한국어 `LIKE '%길%'` 왕복이 통과했다.
 - **릴리스 단계.** `release.yml` 의 `publish` job 은 아카이브를 `dist/` 바깥에 만들어 체크섬이 붙는
-  산출물에 끼지 않게 한다. GitHub release 를 먼저 만들고 `manager.pgxn.org/upload` 로는 마지막에
-  업로드한다 — 되돌릴 수 있는 단계를 되돌릴 수 없는 단계보다 앞에 — 그리고 둘 다 멱등하므로 재실행이
-  이미 된 일에서 실패하지 않고 부분 릴리스를 마무리한다: `gh release view` 는 이미 있는 release 를
+  산출물에 끼지 않게 한다; 그 빌드는 릴리스보다 앞서므로 업로드가 거부할 메타데이터는 거기서
+  실패한다. GitHub release 를 만든 뒤 `manager.pgxn.org/upload` 로는 마지막에 업로드한다 — 되돌릴 수
+  있는 단계를 되돌릴 수 없는 단계보다 앞에 — 그리고 릴리스와 업로드는 멱등하므로 재실행이 이미 된
+  일에서 실패하지 않고 부분 릴리스를 마무리한다: `gh release view` 는 이미 있는 release 를
   건너뛰고, 이미 게시된 버전 (`api.pgxn.org/dist/pg_gcm/<version>/META.json`) 은 PGXN 이 두 번 받지
   않으므로 그대로 둔다. 업로드는 `curl` 에 HTTP Basic 인증, multipart 필드 `archive`, 그리고
   `X-Requested-With: XMLHttpRequest` — 성공은 `200`, 거부된 배포본은 `409` 다. `PGXN_USER` 와

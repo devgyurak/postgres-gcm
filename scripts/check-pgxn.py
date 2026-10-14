@@ -39,7 +39,7 @@ OPTIONAL = (
 RELEASE_STATUS = {"stable", "testing", "unstable"}
 PHASES = {"configure", "build", "test", "runtime", "develop"}
 RELATIONS = {"requires", "recommends", "suggests", "conflicts"}
-# The lowest supported server (docs/design.md §0); a prereq range must admit at least this.
+# The lowest supported server (docs/design.md §0); the distribution must require at least this.
 POSTGRESQL_FLOOR = (15, 0, 0)
 LICENSES = {
     "agpl_3", "apache_1_1", "apache_2_0", "artistic_1", "artistic_2", "bsd", "freebsd", "gfdl_1_2",

@@ -19,7 +19,7 @@ from source.
 | 4 | `load.yml` | nightly, dispatch | load gate against pgcrypto |
 | 4 | `bench.yml` | merges, nightly | core micro-benchmark ratio gate |
 | 4 | `release.yml` | tag `v*`, dispatch (dry run) | guard (SemVer, tag on `main`, `## <version>` in CHANGELOG) → package every supported major on amd64 and arm64 → smoke each tarball → build and smoke the server image, then push and sign it (tag only) → SBOM, checksums, sign, publish |
-| 5 | `release.yml` (`publish`) | tag `v*`, dispatch (dry run) | validate `META.json` and build the PGXN source archive (`check-pgxn.py`, `pgxn-dist.sh`), then upload it to PGXN Manager (tag only) before the GitHub release |
+| 5 | `release.yml` (`publish`) | tag `v*`, dispatch (dry run) | validate `META.json` and build the PGXN source archive (`check-pgxn.py`, `pgxn-dist.sh`), create the GitHub release, then upload to PGXN Manager (tag only) last |
 
 The workflows call the same scripts a developer runs, so a failure reproduces locally with one
 command. Each takes its matrix from `scripts/ci-matrix.py` (`all`, or `unit`: one image per
@@ -41,13 +41,15 @@ its file is on `main`.
   is signed with cosign only after every tarball passed, and only on a tag — never an unsigned
   image ahead of a failed package.
 - The SBOM is written before `SHA256SUMS`, which covers the SBOM's own file; the checksums are
-  signed keyless, and the GitHub release is created last.
+  signed keyless, then the GitHub release is created, and the PGXN upload is last.
 - PGXN: `scripts/pgxn-dist.sh` validates `META.json` (`scripts/check-pgxn.py`) and writes the
   source archive `pg_gcm-<version>.zip` with `git archive HEAD` into a directory outside `dist/`,
-  so it never joins the checksummed assets. The `publish` job creates the GitHub release first and
-  uploads to PGXN Manager (`curl`, HTTP Basic auth, the multipart field `archive`) last, on a tag
-  only; both steps are idempotent, so a re-run finishes a partial release instead of failing on the
-  version already published. A dispatch run builds and validates the archive and uploads nothing.
+  so it never joins the checksummed assets. The `publish` job builds the archive before the release
+  (so metadata the upload would refuse fails there), creates the GitHub release, and uploads to
+  PGXN Manager (`curl`, HTTP Basic auth, the multipart field `archive`) last, on a tag only; the
+  release and the upload are idempotent, so a re-run finishes a partial release instead of failing
+  on the version already published. A dispatch run builds and validates the archive and uploads
+  nothing.
   `PGXN_USER` and `PGXN_PASSWORD` are secrets of the `release` environment, so its required
   reviewers gate them and not only the repository. Distribution packages (Debian, RPM) are not
   built.

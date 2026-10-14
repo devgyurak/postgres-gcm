@@ -27,7 +27,7 @@ version="$(python3 "$ROOT/scripts/check-pgxn.py" --print-version)" ||
 name="pg_gcm-$version"
 
 # git archive resolves --output against $ROOT, so make the outdir absolute first: a relative path
-# given from another directory would otherwise be written beside the repository, not under it.
+# given from another directory would otherwise be written under $ROOT, not where the caller asked.
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 archive="$out/$name.zip"

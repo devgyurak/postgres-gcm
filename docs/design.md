@@ -939,7 +939,7 @@ was cut, so the PGXN path is exercised but not observed end to end.
   prereq phases, relations and version ranges — and adds the cross-checks the specification cannot
   make: the version against the control file, the provided `file` and `docfile` against the working
   tree, the extension version and the distribution name against `pg_gcm` and the archive the
-  distribution script builds, and a PostgreSQL floor that admits 15.0.0. `--self-test` gives 41
+  distribution script builds, and a PostgreSQL floor that requires at least 15.0.0. `--self-test` gives 41
   verdicts — 37 documents broken one way at a time, three the checker must accept, and the valid
   document itself — and requires each to be as expected; observed, all 41. The lint workflow runs
   the checker, its `--self-test`, and `scripts/pgxn-dist.sh` over the archive layout.
@@ -953,9 +953,11 @@ was cut, so the PGXN path is exercised but not observed end to end.
   (1.3.2) built and installed that archive in the PostgreSQL 17 build image, where
   `CREATE EXTENSION pg_gcm` and the Korean `LIKE '%길%'` round trip then passed.
 - **The release step.** `release.yml`'s `publish` job builds the archive outside `dist/`, so it
-  never joins the checksummed assets. It creates the GitHub release first and uploads to
-  `manager.pgxn.org/upload` last — the reversible step before the irreversible one — and both are
-  idempotent, so a re-run finishes a partial release rather than failing on what is already done:
+  never joins the checksummed assets; the build runs before the release, so metadata the upload
+  would refuse fails there. It creates the GitHub release and then uploads to
+  `manager.pgxn.org/upload` last — the reversible step before the irreversible one — and the
+  release and the upload are idempotent, so a re-run finishes a partial release rather than failing
+  on what is already done:
   `gh release view` skips a release that is there, and a version already published
   (`api.pgxn.org/dist/pg_gcm/<version>/META.json`) is left alone, one PGXN would refuse to take
   twice. The upload is `curl` with HTTP Basic authentication, the multipart field `archive`, and

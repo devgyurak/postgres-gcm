@@ -169,9 +169,17 @@ jobs:
             --output-signature dist/SHA256SUMS.sig \
             --output-certificate dist/SHA256SUMS.pem \
             dist/SHA256SUMS
+      # PGXN: `pgxn-dist.sh` validates META.json and builds the source archive outside dist/, so it
+      # never joins the checksummed assets (scripts/check-pgxn.py, scripts/pgxn-dist.sh). It runs
+      # before the release, so metadata the upload would refuse stops here; the upload itself is
+      # last, and a version already on PGXN is left alone.
+      - name: Build the PGXN source distribution
+        run: |
+          archive="$(scripts/pgxn-dist.sh "$RUNNER_TEMP/pgxn")"
+          echo "PGXN_ARCHIVE=$archive" >>"$GITHUB_ENV"
       # A tag signs and publishes; a dispatch run stops after building every artifact above. The
-      # GitHub release is created before the PGXN upload — the reversible step first, the
-      # irreversible one last — and both are idempotent, so a re-run can finish a partial release.
+      # GitHub release comes before the irreversible PGXN upload, and both are idempotent, so a
+      # re-run can finish a partial release.
       - name: Publish the release
         if: github.event_name == 'push'
         env:
@@ -180,13 +188,6 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" dist/* \
               --title "$GITHUB_REF_NAME" --generate-notes
-      # PGXN: `pgxn-dist.sh` validates META.json and builds the source archive outside dist/, so it
-      # never joins the checksummed assets (scripts/check-pgxn.py, scripts/pgxn-dist.sh). A version
-      # already on PGXN cannot be re-uploaded, so an existing distribution is left as it is.
-      - name: Build the PGXN source distribution
-        run: |
-          archive="$(scripts/pgxn-dist.sh "$RUNNER_TEMP/pgxn")"
-          echo "PGXN_ARCHIVE=$archive" >>"$GITHUB_ENV"
       - name: Upload the distribution to PGXN
         if: github.event_name == 'push'
         env:
