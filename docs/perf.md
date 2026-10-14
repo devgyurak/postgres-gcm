@@ -95,8 +95,9 @@ uploads as an artifact.
 - The `det` gate's own slack. A cost shared by both sides of `det` is invisible to it and shows only
   in the recorded `det`/random ratio: the per-call resolution of the digest by name
   (`docs/design.md` §8, O15) is on both sides, so it — and any saving a prepared context would give
-  — moves the record, not the gate. A per-call fixed cost added to the core's det path alone is
-  caught, but loosely: one measurement put an extra `EVP_MAC_fetch` per call (about 100 ns) at a
-  gate ratio of 1.03–1.11, under the 1.5 ceiling.
+  — moves the record, not the gate. A per-call fixed cost added to the core's det path alone moves
+  the gate ratio, but not past its ceiling: a temporary patch to the core on an arm64 host (not a
+  command in this repository) put an extra `EVP_MAC_fetch` per call (about 100 ns) at a gate ratio
+  of 1.03–1.11, under the 1.5 ceiling.
 - arm64: CI compiles for it and does not run either gate there (§8). Both were quick on arm64
   while the ceiling was set.
