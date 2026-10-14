@@ -5,8 +5,10 @@ from a command in this repository; a claim without one is not a fact (`docs/desi
 
 ## What the gates are
 
-Two, one at the code level and one at scale, and both are **ratios of like for like**, never a
-number of milliseconds, so they mean the same on a laptop and on a shared CI runner.
+Two, one at the code level and one at scale, and both are **ratios**, never a number of
+milliseconds, so they mean the same on a laptop and on a shared CI runner. The micro-benchmarks
+compare like for like — each ratio is the core over a bare EVP operation of the same shape — and
+the load gate compares the same query shape over two ciphers.
 
 | Gate | Harness | Metric | Ceiling |
 |---|---|---|---|

@@ -186,9 +186,9 @@ against `pgcrypto` and core micro-benchmarks watch the seal and the open against
 constraints are `docs/ops-constraints.md`. The PGXN metadata (`META.json`) and the source-distribution
 pipeline (`scripts/check-pgxn.py`, `scripts/pgxn-dist.sh`, the `publish` job of `release.yml`) are in
 place, and nothing has been uploaded. **The completion criterion is not met yet:** both
-performance gates are placeholders that have never run on a GitHub runner — `bench.yml` and
-`load.yml` are on this branch, and a scheduled or dispatched run reads them from the default
-branch — so design §8 Open O17 stays open. **Nothing is
+performance gates are placeholders, exercised only by a throwaway probe branch — `bench.yml` and
+`load.yml` have not run as merged from the default branch — so design §8 Open O17 stays open.
+**Nothing is
 released and it is not for use yet**: no tag has been cut and the format may change until 0.1.0.
 
 | Phase | Deliverable | Done when |

@@ -14,8 +14,8 @@ document, [`docs/ops-constraints.md`](ops-constraints.md), and a release pipelin
 their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. The
 PGXN metadata and the source-distribution pipeline are also in place (§4, Phase 5); they, too, are
 exercised but not observed end to end, and nothing has been uploaded. **Both performance gates are
-still placeholders that have never run on a GitHub runner** (§8 O17), so the completion criterion is
-not met. **Nothing is released and it is not for use yet**: no tag has been cut and the format may
+still placeholders, exercised only by a throwaway probe branch and never yet by the merged
+workflows on a GitHub runner** (§8 O17), so the completion criterion is not met. **Nothing is released and it is not for use yet**: no tag has been cut and the format may
 change until 0.1.0.
 Every claim about PostgreSQL behaviour that the design leans on is either cited in §9, recorded with
 its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources
@@ -893,7 +893,7 @@ take a gate; nothing was tagged and nothing was released.
   is, so the seal ratio measures the core's own envelope and checks rather than a draw only one
   side pays; the ceilings are per size, because the core's fixed per-call cost is a larger share of
   a small message. The deterministic seal over the random one is recorded, never gated: an O17
-  probe found it is not portable (the bullet above). The binary's `--self-test` checks the verdict,
+  probe found it is not portable (the bullet below). The binary's `--self-test` checks the verdict,
   the ratio's direction and the gate over fixed measurements; no server and no PostgreSQL header is
   involved.
 - **The distribution image.** `docker/server.Dockerfile` is the official `postgres:<major>`
