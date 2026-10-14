@@ -304,7 +304,8 @@ script; `scripts/server-image.sh` builds it and `scripts/smoke-image.sh` checks 
 round trip against the image's own init before anything is pushed. The operational constraints
 are `docs/ops-constraints.md`, and the load baseline and both performance gates are
 `docs/perf.md`. §8 "Established in Phase 4" records what the gates and the image were observed to
-do; the gates' ceilings come from the three `main` runs recorded there on 2026-10-14.
+do on 2026-10-13 and, under "Established in Phase 4 (2026-10-14)", what the three `main` runs
+recorded; the gates' ceilings come from those runs.
 
 ### Phase 5 — ecosystem
 
@@ -780,7 +781,7 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   it bounds from above what a prepared context could save; the saving itself was not isolated.
   Against it stands a context that fails on 3.0.0. The deterministic variant is for join keys and
   exact-match lookups, not bulk text, so the floor is not raised for it. The bench gate records the
-  deterministic seal over the random one — 1.22–1.73 at 16 bytes to 3.34–4.06 at 65536, from the
+  deterministic seal over the random one — 1.22–1.68 at 16 bytes to 3.34–4.06 at 65536, from the
   three `main` runs of 2026-10-14 (`docs/perf.md`) — and that recorded ratio is where this would be
   reopened; the load gate does not call `gcm_encrypt_det`.
 - **`pg_gcm.min_key_bytes` and placeholders**, on 15–18 and 19beta4 (regression test
@@ -950,17 +951,18 @@ Platinum 8573C, every one of them 4 vCPU.
 
 - **The load gate.** Runs `38518507148`, `38518993036` and `38519339009` (all dispatched on
   `main` on 2026-10-14) passed, every gated cell of the 9-cell matrix on both images. The worst
-  gated ratio over the six jobs was **0.860** (10k rows × 8 sessions, the `18` image of
+  gated ratio over the six jobs was **0.860** (100k rows × 8 sessions, the `18` image of
   `38519339009`). Times 1.2 that is 1.032, rounded up to 1.1 and capped at the design's
   requirement, so `tests/load/baseline.json` keeps `max_ratio` at **1.0**; the recorded
-  32-session cells ran 0.86–0.91. `docs/perf.md` holds the per-run table with each runner's CPU.
+  32-session cells ran 0.75–0.91 (0.86–0.91 at 10k rows). `docs/perf.md` holds the per-run table with
+  each runner's CPU.
 - **The micro-benchmarks.** Runs `38518367089` (the push that promoted the branch), `38518733427`
   and `38518740737` passed on the same models. The worst observed per size was seal 1.048, 1.090,
   1.024 and 1.011; open 1.052, 1.036, 1.019 and 1.005; det 1.027, 1.027, 1.012 and 1.005, at 16,
   256, 4096 and 65536 bytes. Times 1.2 and rounded up to one decimal, never above the placeholder
   it replaces, that is `tests/bench/baseline.json`'s ceilings: 1.3 everywhere except the 256-byte
   seal, which is 1.4. The deterministic seal over the random one, recorded and never gated, ran
-  1.22–1.73, 1.26–1.74, 2.12–2.57 and 3.34–4.06 across the sizes, and that record is where O15's
+  1.22–1.68, 1.26–1.74, 2.12–2.57 and 3.34–4.06 across the sizes, and that record is where O15's
   condition for reopening the per-call digest resolution is read. `docs/perf.md` holds the worst
   value per size and the ceiling it gives.
 

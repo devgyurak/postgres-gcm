@@ -47,7 +47,7 @@ as in Phase S (no parallel workers, `VACUUM`, a discarded warm-up), a local meas
 gated cells runs in the same neighbourhood. Three runs of the `load` workflow from the default
 branch `main` on 2026-10-14 — `38518507148`, `38518993036` and `38519339009` — passed every gated
 cell of the 9-cell matrix on both images, and the worst gated ratio over the six jobs was **0.860**
-(10k rows × 8 sessions, the `18` image of `38519339009`). Times 1.2 that is 1.032, rounded up to
+(100k rows × 8 sessions, the `18` image of `38519339009`). Times 1.2 that is 1.032, rounded up to
 1.1, which is above the design's requirement that GCM not be slower than the `pgcrypto` scan it
 replaces, so `tests/load/baseline.json` keeps `max_ratio` at **1.0**. A refresh sets the ceiling
 the same way — the worst observed gated ratio across the three times 1.2, rounded up to one decimal
@@ -63,8 +63,8 @@ the same way — the worst observed gated ratio across the three times 1.2, roun
 | `38519339009` | 18 (OpenSSL 3.5.7) | AMD EPYC 9V45 96-Core | 0.860 | 2026-10-14 |
 
 Each row is the worst gated (1- and 8-session) cell of that job, over the rows 10k, 100k and 300k
-and both gated session counts together; the recorded 32-session cells ran 0.86–0.91 and are not
-gated.
+and both gated session counts together; the recorded 32-session cells ran 0.75–0.91 (at 10k rows,
+0.86–0.91) and are not gated.
 
 ## The core micro-benchmarks
 
@@ -104,7 +104,7 @@ gated ratio (worst × 1.2, rounded up to one decimal, never above the placeholde
 
 | Size | worst seal | worst open | worst det | det/random (recorded) | ceiling (seal / open / det) |
 |---|---|---|---|---|---|
-| 16 B | 1.048 | 1.052 | 1.027 | 1.22–1.73 | 1.3 / 1.3 / 1.3 |
+| 16 B | 1.048 | 1.052 | 1.027 | 1.22–1.68 | 1.3 / 1.3 / 1.3 |
 | 256 B | 1.090 | 1.036 | 1.027 | 1.26–1.74 | 1.4 / 1.3 / 1.3 |
 | 4096 B | 1.024 | 1.019 | 1.012 | 2.12–2.57 | 1.3 / 1.3 / 1.3 |
 | 65536 B | 1.011 | 1.005 | 1.005 | 3.34–4.06 | 1.3 / 1.3 / 1.3 |
