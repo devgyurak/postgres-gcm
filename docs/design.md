@@ -966,13 +966,18 @@ Platinum 8573C, every one of them 4 vCPU.
   condition for reopening the per-call digest resolution is read. `docs/perf.md` holds the worst
   value per size and the ceiling it gives.
 
-The merge that carried this record ran `bench` on `main` — the push itself, `38539956411` — and one
-dispatched `load`, `38540289970`, both under these ceilings, and both passed. The worst bench ratio in
-that run was 1.083 at 16 bytes and 1.093 at the 256-byte seal, under the 1.3 and 1.4 ceilings it was
-measured against, and the worst gated load ratio was 0.850 against 1.0. The `det`/random ratio that
-this record stopped gating read 9.37 at 65536 bytes in the same run — the shape of the failure that
-made it a record rather than a gate. A failure in either run would add that run to the record and
-re-derive the ceilings, rather than raising one silently.
+The promotion that carried this record to `main` (#45, `5acf8b3`) ran `bench` — the push itself,
+`38539956411` — and one dispatched `load`, `38540289970`, both under these ceilings, and both passed.
+The worst bench ratio in that run was 1.083 at 16 bytes and 1.093 at the 256-byte seal, under the 1.3
+and 1.4 ceilings it was measured against, and the worst gated load ratio was 0.850 against 1.0. The
+`det`/random ratio that this record stopped gating read 9.37 at 65536 bytes in the same run — the shape
+of the failure that made it a record rather than a gate. It came from the `18` image on an AMD EPYC
+9V45 (AVX-512, VAES), a pairing none of the three recorded runs drew, and it sits outside their
+3.34–4.06 but inside the 1.2–9.6 the probe bounded: SHA-256 and AES-GCM scale differently with the
+hardware, which is why that ratio is a record and not a gate. It does not reopen O15 — the 16-byte
+ratio, where a per-call digest resolution would show, read 1.46, inside the recorded 1.22–1.68. A
+failure in either run would have added that run to the record and re-derived the ceilings, rather than
+raising one silently.
 
 A later refresh derives each ceiling from its own three `main` runs the same way and may move it in
 either direction. A raise is argued in the PR that makes it, which amends this section, and the load

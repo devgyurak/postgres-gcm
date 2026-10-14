@@ -121,7 +121,8 @@ CPU is beside them in the job summary.
 
 The confirmation run the promotion of this record carried — `38539956411`, the push with the
 promoted commit `5acf8b3` — passed too: its worst ratio was 1.093 at the 256-byte seal, and its
-`det`/random read 9.37 at 65536 bytes.
+`det`/random read 9.37 at 65536 bytes on the `18` image (AMD EPYC 9V45, AVX-512 VAES), a pairing none
+of the three recorded runs above drew.
 
 ## What this does not measure
 
