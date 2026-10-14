@@ -56,8 +56,9 @@ Rules: `testing.md`, `stack-python.md`.
   Without the parallel setting, `gcm_decrypt`'s `COST 50` earns it a gather that `decrypt_iv`'s
   `COST 1` does not, and the ratio flatters GCM.
 - The gate is a ratio, never milliseconds, recorded in `docs/perf.md` with the runner's CPU from three
-  CI runs; `max_ratio` is then set to the worst observed gated ratio times 1.2, rounded up to one
-  decimal, never above the 1.0 the design requires. `PG_GCM_LOAD_JSON` names a host path for the
+  CI runs (`main`, 2026-10-14: worst gated 0.860, so `max_ratio` stays at the 1.0 the design requires);
+  a refresh sets `max_ratio` to the worst observed gated ratio times 1.2, rounded up to one
+  decimal, never above 1.0. `PG_GCM_LOAD_JSON` names a host path for the
   runner's JSON of every cell, which the workflow uploads as an artifact.
 
 ## Bench (`tests/bench`)
@@ -79,8 +80,9 @@ Rules: `testing.md`, `stack-python.md`.
   a random nonce, as the core's random seal does, so the `seal` ratio charges the core for its own
   envelope and checks, not for a draw only one side pays. The ceilings are per size (`seal`, `open`,
   `det`), because the core's fixed per-call cost is a larger share of a small message; the gate is a
-  ratio, never nanoseconds, and the ceilings are a placeholder (`docs/design.md` §8 O17) until three
-  runs set them. Set each to the worst observed value across three `bench` runs times 1.2, rounded up
-  to one decimal, never above the placeholder, and record it in `docs/perf.md`. No server and no
+  ratio, never nanoseconds, and the ceilings come from three `bench` runs from `main` (2026-10-14:
+  1.3 at every size and ratio except the 256-byte seal, 1.4 — `docs/perf.md`). Refresh them the same
+  way, each to the worst observed value across three `bench` runs times 1.2, rounded up
+  to one decimal; a raise in a later refresh is argued in the PR that makes it. No server and no
   PostgreSQL header is involved. `PG_GCM_BENCH_JSON` names a host path for the JSON of ratios and raw
   medians, which the workflow uploads as an artifact.
