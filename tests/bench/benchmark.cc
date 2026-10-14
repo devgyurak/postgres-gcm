@@ -109,8 +109,9 @@ void EvpSeal(const EVP_CIPHER *cipher, const uint8_t *pt, size_t pt_len, uint8_t
 //   nonce_key = HMAC-SHA256(key, "pg_gcm/v1/det-nonce")
 //   nonce     = HMAC-SHA256(nonce_key, be64(len(A)) || A || plaintext)[:12]
 // where A is version || aad. This benchmark seals without AAD, so A is the one version byte and
-// its length is 1. It must track src/nonce.c: the baseline's point is the same operation, never a
-// cheaper one. The key is the public 00..1f pattern and never leaves the process.
+// its length is 1. It computes spec 1.8 with the fewest EVP calls; a cost added to the core is not
+// added here, or the gate would shut its eyes to it. The key is the public 00..1f pattern and
+// never leaves the process.
 void DetNonce(EVP_MAC *hmac, const uint8_t *pt, size_t pt_len, uint8_t *nonce) {
   static const char label[] = GCM_DET_NONCE_LABEL;
   char digest[] = "SHA256";
@@ -531,6 +532,11 @@ int SelfTest() {
       // The JSON report carries the same det ratio the gate reads.
       {"the JSON report's det ratio",
        JsonReport(FakeRatios(1.0, 1.0, 2.0), true)["sizes"]["256"]["det"].get<double>(), 2.0},
+      // The medians are under the microsecond key the benchmarks are registered in.
+      {"the JSON report's median CPU time",
+       JsonReport(FakeRatios(2.0, 1.0, 1.0), true)["sizes"]["16"]["median_cpu_us"]["gcm_seal_random"]
+           .get<double>(),
+       2.0},
   };
   const auto wrong_verdicts = std::count_if(
       verdicts.begin(), verdicts.end(), [](const std::tuple<std::string, bool, bool> &one) {
