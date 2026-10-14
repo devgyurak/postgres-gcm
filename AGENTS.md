@@ -175,21 +175,20 @@ different build method on your own.
 
 ## 6. Current phase and roadmap
 
-Current: **Phase 5 — ecosystem: the PGXN packaging is in place; Phase 4's completion criterion is
-still open (2026-10-13).** The extension implements `spec/envelope.md`: the three suites by key
-length, the AAD overloads, `pg_gcm.strict` and `pg_gcm.min_key_bytes`. The unit suite runs all 78
+Current: **Phase 4 is complete; Phase 5's PGXN packaging is in place (2026-10-14).** The extension
+implements `spec/envelope.md`: the three suites by key length, the AAD overloads, `pg_gcm.strict`
+and `pg_gcm.min_key_bytes`. The unit suite runs all 78
 vectors of `spec/test-vectors.json`, the regression suite the 63 envelope vectors, and the
 end-to-end suite its scenarios on a primary and on a streaming replica, on 15–18; the `unit`,
 `build`, `regress` and `e2e` workflows run them. A load gate watches the decrypt-and-`LIKE` scan
 against `pgcrypto` and core micro-benchmarks watch the seal and the open against bare OpenSSL EVP
-(`docs/perf.md`), the distribution image and the release pipeline exist, and the operational
-constraints are `docs/ops-constraints.md`. The PGXN metadata (`META.json`) and the source-distribution
-pipeline (`scripts/check-pgxn.py`, `scripts/pgxn-dist.sh`, the `publish` job of `release.yml`) are in
-place, and nothing has been uploaded. **The completion criterion is not met yet:** both
-performance gates are placeholders — the bench gate has run from `develop` twice, the load gate
-only in a throwaway probe, and neither from the default branch — so design §8 Open O17 stays
-open. **Nothing is
-released and it is not for use yet**: no tag has been cut and the format may change until 0.1.0.
+(`docs/perf.md`) — **both gates have run three times from the default branch `main` and their
+ceilings come from those runs** (§8, O17 answered) — the distribution image and the release
+pipeline exist, and the operational constraints are `docs/ops-constraints.md`. The PGXN metadata
+(`META.json`) and the source-distribution pipeline (`scripts/check-pgxn.py`,
+`scripts/pgxn-dist.sh`, the `publish` job of `release.yml`) are in place, and nothing has been
+uploaded. **Nothing is released and it is not for use yet**: no tag has been cut and the format
+may change until 0.1.0.
 
 | Phase | Deliverable | Done when |
 |---|---|---|

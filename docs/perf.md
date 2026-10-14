@@ -44,16 +44,27 @@ and on demand — never on a pull request, because it wants a quiet machine.
 Phase S measured the same query shape over 300k rows in one backend: the GCM query took
 **0.49–0.63** of the pgcrypto CBC one (`docs/design.md` §8, step 7). With the plan shapes matched
 as in Phase S (no parallel workers, `VACUUM`, a discarded warm-up), a local measurement of the
-gated cells runs in the same neighbourhood, so `tests/load/baseline.json` keeps `max_ratio` at
-**1.0** — the design's requirement that GCM not be slower than the `pgcrypto` scan it replaces.
-The ratios from the CI runner, with the runner's CPU, are to be recorded here from three runs; the
-ceiling is then set to the worst observed gated ratio across the three times 1.2, rounded up to one
-decimal, and never above 1.0 — so a worst ratio of 0.88 gives 0.88 × 1.2 = 1.056, rounded up to
-1.1 and then capped at 1.0, the design's requirement.
+gated cells runs in the same neighbourhood. Three runs of the `load` workflow from the default
+branch `main` on 2026-10-14 — `38518507148`, `38518993036` and `38519339009` — passed every gated
+cell of the 9-cell matrix on both images, and the worst gated ratio over the six jobs was **0.860**
+(10k rows × 8 sessions, the `18` image of `38519339009`). Times 1.2 that is 1.032, rounded up to
+1.1, which is above the design's requirement that GCM not be slower than the `pgcrypto` scan it
+replaces, so `tests/load/baseline.json` keeps `max_ratio` at **1.0**. A refresh sets the ceiling
+the same way — the worst observed gated ratio across the three times 1.2, rounded up to one decimal
+— and never above 1.0: the ceiling is only ever lowered.
 
-| Runner CPU | Rows | Sessions | worst gated gcm/pgcrypto p95 | When |
+| Run | Image | Runner CPU (4 vCPU) | worst gated gcm/pgcrypto p95 | When |
 |---|---|---|---|---|
-| *(to be recorded from the `load` workflow)* | 10k, 100k, 300k | 1, 8 gated; 32 recorded | *(worst gated ratio)* | — |
+| `38518507148` | 17-bookworm (OpenSSL 3.0.22) | AMD EPYC 7763 64-Core | 0.845 | 2026-10-14 |
+| `38518507148` | 18 (OpenSSL 3.5.7) | Intel Xeon Platinum 8573C | 0.839 | 2026-10-14 |
+| `38518993036` | 17-bookworm (OpenSSL 3.0.22) | AMD EPYC 9V74 80-Core | 0.845 | 2026-10-14 |
+| `38518993036` | 18 (OpenSSL 3.5.7) | AMD EPYC 9V45 96-Core | 0.849 | 2026-10-14 |
+| `38519339009` | 17-bookworm (OpenSSL 3.0.22) | AMD EPYC 9V74 80-Core | 0.840 | 2026-10-14 |
+| `38519339009` | 18 (OpenSSL 3.5.7) | AMD EPYC 9V45 96-Core | 0.860 | 2026-10-14 |
+
+Each row is the worst gated (1- and 8-session) cell of that job, over the rows 10k, 100k and 300k
+and both gated session counts together; the recorded 32-session cells ran 0.86–0.91 and are not
+gated.
 
 ## The core micro-benchmarks
 
@@ -78,13 +89,30 @@ its nonce with `RAND_bytes`, exactly as the core's random seal does, so the seal
 core for its own envelope and checks rather than for a draw only one side pays — a fixed-nonce
 baseline made the seal ratio noisy at the smallest sizes. The ceilings are per size
 (`seal`, `open`, `det`), because the core's fixed per-call cost is a larger share of a small
-message; the placeholder values run from `1.5/1.5/1.5` at 16 bytes down to `1.3/1.3/1.3` at 65536.
-The binary writes the ratios and the raw medians to JSON (`PG_GCM_BENCH_JSON`), which the workflow
-uploads as an artifact.
+message, and they are set from the three `main` runs recorded below: **1.3** at every size and
+ratio except the 256-byte seal, which is **1.4**. The binary writes the ratios and the raw medians
+to JSON (`PG_GCM_BENCH_JSON`), which the workflow uploads as an artifact.
 
-| Runner CPU | Size | seal | open | det (gated) | det/random (recorded) | When |
-|---|---|---|---|---|---|---|
-| *(to be recorded from the `bench` workflow)* | 16, 256, 4096, 65536 | *(ratio)* | *(ratio)* | *(ratio)* | *(ratio)* | — |
+### Recorded
+
+Three runs of the `bench` workflow from `main` on 2026-10-14 — `38518367089` (the push that
+promoted the branch), `38518733427` and `38518740737` — passed, both images (`18` with OpenSSL
+3.5.7 and `17-bookworm` with 3.0.22) in each, on four runner models, every one of them 4 vCPU: AMD
+EPYC 7763, AMD EPYC 9V45, AMD EPYC 9V74 and Intel Xeon Platinum 8573C. The worst observed ratio
+per size over the six jobs, the recorded `det`/random spread, and the ceiling the rule gives each
+gated ratio (worst × 1.2, rounded up to one decimal, never above the placeholder it replaced):
+
+| Size | worst seal | worst open | worst det | det/random (recorded) | ceiling (seal / open / det) |
+|---|---|---|---|---|---|
+| 16 B | 1.048 | 1.052 | 1.027 | 1.22–1.73 | 1.3 / 1.3 / 1.3 |
+| 256 B | 1.090 | 1.036 | 1.027 | 1.26–1.74 | 1.4 / 1.3 / 1.3 |
+| 4096 B | 1.024 | 1.019 | 1.012 | 2.12–2.57 | 1.3 / 1.3 / 1.3 |
+| 65536 B | 1.011 | 1.005 | 1.005 | 3.34–4.06 | 1.3 / 1.3 / 1.3 |
+
+The first three columns are the ratios the gate closes on; `det`/random is recorded, never gated,
+and its range is the spread over the six jobs — the same figure the probe above bounded at about
+1.2–9.6. Each run's per-size ratios and raw medians are the workflow's artifact, and the runner's
+CPU is beside them in the job summary.
 
 ## What this does not measure
 
@@ -98,6 +126,6 @@ uploads as an artifact.
   — moves the record, not the gate. A per-call fixed cost added to the core's det path alone moves
   the gate ratio, but not past its ceiling: a temporary patch to the core on an arm64 host (not a
   command in this repository) put an extra `EVP_MAC_fetch` per call (about 100 ns) at a gate ratio
-  of 1.03–1.11, under the 1.5 ceiling.
-- arm64: CI compiles for it and does not run either gate there (§8). Both were quick on arm64
-  while the ceiling was set.
+  of 1.03–1.11, under the 1.3 ceiling.
+- arm64: CI compiles for it and does not run either gate there (§8). Both were quick on arm64 in the
+  local runs the ceilings were first probed with, and the ceilings above come from x86 runners.

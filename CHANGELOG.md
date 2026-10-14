@@ -4,6 +4,15 @@ Notable changes per release. Envelope changes get their own entry with a compati
 
 ## Unreleased
 
+### Phase 4 complete — the two performance gates recorded from `main` (2026-10-14)
+- O17 is answered: three runs of `bench.yml` and three of `load.yml` from the default branch `main`,
+  both images in every one, and each ceiling set from the worst observed value (worst × 1.2, rounded
+  up to one decimal, never above the placeholder it replaces). The bench ceilings are **1.3** at
+  every size and ratio except the 256-byte seal, **1.4** — they were per-size placeholders of
+  1.3–1.5 — and the load ceiling stays at the **1.0** the design requires, against a worst gated
+  ratio of **0.860**. `docs/perf.md` holds the runs, the runner CPU of each and the ceilings;
+  `docs/design.md` §8 records them and its Open table no longer holds O17.
+
 ### Phase 5 — ecosystem (2026-10-13)
 - PGXN: `META.json` (PGXN Meta Spec 1.0.0), `scripts/check-pgxn.py` validates it against the
   specification and cross-checks it against `pg_gcm.control`, the SQL install script, `README.md`,
