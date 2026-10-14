@@ -966,9 +966,15 @@ Platinum 8573C, every one of them 4 vCPU.
   condition for reopening the per-call digest resolution is read. `docs/perf.md` holds the worst
   value per size and the ceiling it gives.
 
-The merge that carries this record runs the `bench` gate once on `main` with these ceilings, and a
-`load` dispatch beside it: a failure in either would add its run to the record and re-derive the
-ceilings, never raise one silently.
+The merge that carries this record is followed by one `bench` run on `main` — the push itself — and
+one dispatched `load` run, both under these ceilings. Their run IDs are recorded here when they
+finish; a failure in either adds that run to the record and re-derives the ceilings rather than
+raising one silently.
+
+A later refresh derives each ceiling from its own three `main` runs the same way and may move it in
+either direction. A raise is argued in the PR that makes it, and the load ceiling never exceeds the
+1.0 the design requires: the ceiling is the gate, so loosening one is a design decision, not a
+baseline edit.
 
 ### Established in Phase 5 (2026-10-13)
 
