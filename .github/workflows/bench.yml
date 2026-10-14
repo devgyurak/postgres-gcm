@@ -50,8 +50,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      # bench.sh builds the benchmarks, runs the gate's own self-test and then the gate.
+      # bench.sh builds the benchmarks, runs the gate's own self-test and then the gate; it writes
+      # the ratios and raw medians to PG_GCM_BENCH_JSON for the artifact below.
       - name: Core micro-benchmarks
+        env:
+          PG_GCM_BENCH_JSON: ${{ github.workspace }}/bench-${{ matrix.entry.label }}.json
         run: scripts/bench.sh "$IMAGE"
       - name: Record the runner's CPU beside the ratios
         if: always()
@@ -60,6 +63,14 @@ jobs:
             echo "### bench (${{ matrix.entry.label }}) on ${{ runner.os }} ${{ runner.arch }}"
             echo '```'
             grep -m1 'model name' /proc/cpuinfo || true
+            echo "accelerators: $(grep -m1 '^flags' /proc/cpuinfo | grep -oE 'sha_ni|vaes|avx512f|avx512vl|aes' | sort -u | tr '\n' ' ')"
             nproc
             echo '```'
-          } >>"$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload the ratios and medians
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-${{ matrix.entry.label }}
+          path: bench-${{ matrix.entry.label }}.json
+          if-no-files-found: warn
