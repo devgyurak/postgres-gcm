@@ -101,6 +101,8 @@ promoted the branch), `38518733427` and `38518740737` — passed, both images (`
 EPYC 7763, AMD EPYC 9V45, AMD EPYC 9V74 and Intel Xeon Platinum 8573C. The worst observed ratio
 per size over the six jobs, the recorded `det`/random spread, and the ceiling the rule gives each
 gated ratio (worst × 1.2, rounded up to one decimal, never above the placeholder it replaced):
+the placeholder is gone now, so a later refresh derives them the same way from its own three runs
+and may move a ceiling in either direction; raising one is argued in the PR that makes it.
 
 | Size | worst seal | worst open | worst det | det/random (recorded) | ceiling (seal / open / det) |
 |---|---|---|---|---|---|

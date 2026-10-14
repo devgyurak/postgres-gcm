@@ -83,6 +83,6 @@ Rules: `testing.md`, `stack-python.md`.
   ratio, never nanoseconds, and the ceilings come from three `bench` runs from `main` (2026-10-14:
   1.3 at every size and ratio except the 256-byte seal, 1.4 — `docs/perf.md`). Refresh them the same
   way, each to the worst observed value across three `bench` runs times 1.2, rounded up
-  to one decimal, never above the placeholder it replaces. No server and no
+  to one decimal; a raise in a later refresh is argued in the PR that makes it. No server and no
   PostgreSQL header is involved. `PG_GCM_BENCH_JSON` names a host path for the JSON of ratios and raw
   medians, which the workflow uploads as an artifact.

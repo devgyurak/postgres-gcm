@@ -966,6 +966,10 @@ Platinum 8573C, every one of them 4 vCPU.
   condition for reopening the per-call digest resolution is read. `docs/perf.md` holds the worst
   value per size and the ceiling it gives.
 
+The merge that carries this record runs the `bench` gate once on `main` with these ceilings, and a
+`load` dispatch beside it: a failure in either would add its run to the record and re-derive the
+ceilings, never raise one silently.
+
 ### Established in Phase 5 (2026-10-13)
 
 "Run" here is this repository's scripts on the development machine; nothing was uploaded and no tag
