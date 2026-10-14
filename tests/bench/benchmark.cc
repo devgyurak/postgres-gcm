@@ -390,6 +390,37 @@ bool GateVerdict(const CpuTimes &cpu_ns, const std::map<int64_t, Ceilings> &ceil
   return passed;
 }
 
+// The ratios and the raw medians of the run, as JSON: what docs/perf.md records and the CI
+// artifact carries. Written to PG_GCM_BENCH_JSON when that names a path, whether the gate passed
+// or not, so a failing run's numbers survive too.
+void WriteJson(const CpuTimes &cpu_ns, bool passed, const std::string &path) {
+  nlohmann::json sizes = nlohmann::json::object();
+  for (const auto &[size, ratio] : RatiosOf(cpu_ns)) {
+    const std::string at = "/" + std::to_string(size);
+    sizes[std::to_string(size)] = {
+        {"seal", ratio.seal},
+        {"open", ratio.open},
+        {"det", ratio.det},
+        {"det_random", ratio.det_random},
+        {"median_ns",
+         {
+             {"gcm_seal_random", Lookup(cpu_ns, "gcm_seal_random" + at)},
+             {"gcm_seal_det", Lookup(cpu_ns, "gcm_seal_det" + at)},
+             {"gcm_open", Lookup(cpu_ns, "gcm_open" + at)},
+             {"evp_seal", Lookup(cpu_ns, "evp_seal" + at)},
+             {"evp_seal_det", Lookup(cpu_ns, "evp_seal_det" + at)},
+             {"evp_open", Lookup(cpu_ns, "evp_open" + at)},
+         }},
+    };
+  }
+  nlohmann::json document;
+  document["gate"] = passed;
+  document["sizes"] = sizes;
+  std::ofstream out(path);
+  Require(out.good(), "cannot write " + path);
+  out << document.dump(2) << "\n";
+}
+
 // A fixed gate input for the self-test: every size carries the same three ratios, so a wrong
 // benchmark name pair (a lookup that should have found the other one) fails instead of passing.
 CpuTimes FakeRatios(double seal, double open, double det) {
@@ -508,7 +539,12 @@ int main(int argc, char **argv) {
   benchmark::RunSpecifiedBenchmarks(&collector);
   benchmark::Shutdown();
 
-  if (!GateVerdict(Medians(collector), LoadCeilings(), &std::cerr)) {
+  const CpuTimes medians = Medians(collector);
+  const bool passed = GateVerdict(medians, LoadCeilings(), &std::cerr);
+  // The JSON is written before the verdict is acted on, so a failing run's numbers survive.
+  const char *json_path = std::getenv("PG_GCM_BENCH_JSON");
+  if (json_path != nullptr && json_path[0] != '\0') WriteJson(medians, passed, json_path);
+  if (!passed) {
     Fail("a ratio was above its ceiling");
   }
   std::cerr << "bench: gate passed\n";

@@ -37,10 +37,21 @@ docker build --quiet --file "$ROOT/tests/load/runner.Dockerfile" --tag "$image" 
 
 # The password is read from the container and reaches docker through the environment, not the
 # command line (a value after --env would land in docker run's argv).
-PGPASSWORD="$(docker exec "$name" printenv POSTGRES_PASSWORD)" \
-  docker run --rm \
-  --network "$DEV_NETWORK" \
-  --env PGHOST="$name" --env PGPORT=5432 --env PGUSER=postgres --env PGDATABASE=postgres \
-  --env PGPASSWORD \
-  "$image" "$@"
+#
+# run.py prints its JSON of every cell to stdout; PG_GCM_LOAD_JSON names a host path to copy it to,
+# so the workflow can upload the file as an artifact. The pipe keeps the runner's exit status as the
+# gate, because load.sh is set -o pipefail.
+run_runner() {
+  PGPASSWORD="$(docker exec "$name" printenv POSTGRES_PASSWORD)" \
+    docker run --rm \
+    --network "$DEV_NETWORK" \
+    --env PGHOST="$name" --env PGPORT=5432 --env PGUSER=postgres --env PGDATABASE=postgres \
+    --env PGPASSWORD \
+    "$image" "$@"
+}
+if [ -n "${PG_GCM_LOAD_JSON:-}" ]; then
+  run_runner "$@" | tee "$PG_GCM_LOAD_JSON"
+else
+  run_runner "$@"
+fi
 echo "== PostgreSQL $major: the load gate passed"

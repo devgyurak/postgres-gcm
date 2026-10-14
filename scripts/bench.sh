@@ -20,9 +20,21 @@ ensure_build_image "$major"
 # --benchmark_enable_random_interleaving runs the repetitions of every benchmark in a random order
 # instead of five in a row, so both sides of a ratio meet the same load rather than one side meeting
 # a quiet moment and the other a busy one.
+#
+# PG_GCM_BENCH_JSON names a host path for the JSON of ratios and raw medians (benchmark.cc writes it
+# when PG_GCM_BENCH_JSON is set): its directory is mounted into the container and the in-container
+# path is passed instead, so the workflow can upload the file as an artifact.
+bench_mount=(--volume "$ROOT:/src:ro")
+bench_env=(--env PG_GCM_BENCH_MIN_TIME="${PG_GCM_BENCH_MIN_TIME:-}")
+if [ -n "${PG_GCM_BENCH_JSON:-}" ]; then
+  out_dir="$(cd "$(dirname "$PG_GCM_BENCH_JSON")" && pwd)"
+  bench_mount+=(--volume "$out_dir:/out")
+  bench_env+=(--env PG_GCM_BENCH_JSON="/out/$(basename "$PG_GCM_BENCH_JSON")")
+fi
+
 docker run --rm \
-  --env PG_GCM_BENCH_MIN_TIME="${PG_GCM_BENCH_MIN_TIME:-}" \
-  --volume "$ROOT:/src:ro" \
+  "${bench_mount[@]}" \
+  "${bench_env[@]}" \
   "$(build_image_tag "$major")" \
   bash -euo pipefail -c '
     build="$(mktemp -d)"
