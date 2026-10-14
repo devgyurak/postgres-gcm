@@ -51,6 +51,12 @@ jobs:
         run: python3 scripts/release-guard.py --self-test
       - name: The SBOM is the shape it must be
         run: python3 scripts/sbom.py --self-test
+      - name: The PGXN metadata satisfies the specification and this repository
+        run: python3 scripts/check-pgxn.py
+      - name: The PGXN metadata check notices a broken document
+        run: python3 scripts/check-pgxn.py --self-test
+      - name: The PGXN source archive is the layout PGXN expects
+        run: scripts/pgxn-dist.sh "$RUNNER_TEMP/pgxn"
       - name: shellcheck
         run: shellcheck -x scripts/*.sh scripts/spike/*.sh .claude/hooks/*.sh tests/e2e/*.sh
       - name: ruff

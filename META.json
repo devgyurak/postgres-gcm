@@ -1,0 +1,68 @@
+{
+  "name": "pg_gcm",
+  "abstract": "AES-GCM authenticated encryption functions, with LIKE on the decrypted value",
+  "description": "Adds AES-128/192/256-GCM to PostgreSQL as SQL functions, the suite selected by the key length, and returns the decrypted value as text so that the server's own LIKE, ILIKE and collations keep working. The plaintext is sealed as UTF-8 in a versioned envelope whose every byte is authenticated; the key is a SQL argument and no key material is ever configuration. Targets self-managed PostgreSQL 15-18 on a server that links OpenSSL 3.0 or later.",
+  "version": "0.1.0",
+  "maintainer": [
+    "devgyurak <dev@devgyurak.com>"
+  ],
+  "license": "postgresql",
+  "provides": {
+    "pg_gcm": {
+      "abstract": "AES-GCM authenticated encryption functions for PostgreSQL",
+      "file": "sql/pg_gcm--0.1.0.sql",
+      "docfile": "README.md",
+      "version": "0.1.0"
+    }
+  },
+  "prereqs": {
+    "runtime": {
+      "requires": {
+        "PostgreSQL": "15.0.0"
+      }
+    }
+  },
+  "resources": {
+    "homepage": "https://github.com/devgyurak/postgres-gcm",
+    "bugtracker": {
+      "web": "https://github.com/devgyurak/postgres-gcm/issues"
+    },
+    "repository": {
+      "url": "https://github.com/devgyurak/postgres-gcm.git",
+      "web": "https://github.com/devgyurak/postgres-gcm",
+      "type": "git"
+    }
+  },
+  "release_status": "testing",
+  "generated_by": "devgyurak",
+  "meta-spec": {
+    "version": "1.0.0",
+    "url": "https://pgxn.org/meta/spec.txt"
+  },
+  "tags": [
+    "encryption",
+    "aes",
+    "gcm",
+    "aead",
+    "authenticated encryption",
+    "security",
+    "like",
+    "search"
+  ],
+  "no_index": {
+    "directory": [
+      ".agents",
+      ".claude",
+      ".codex",
+      ".cursor",
+      ".opencode",
+      ".github",
+      "docker",
+      "scripts"
+    ],
+    "file": [
+      "AGENTS.md",
+      "CLAUDE.md"
+    ]
+  }
+}

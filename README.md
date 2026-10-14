@@ -6,9 +6,10 @@
 > defined in [`spec/envelope.md`](spec/envelope.md) with test vectors beside it, and the extension on
 > `develop` implements it: its unit suite runs every vector, its regression suite every envelope
 > vector, and an end-to-end suite runs the functions on a primary and a streaming replica, on
-> PostgreSQL 15–18. The release packaging is in place but no tag has been cut, and the format may
-> change until 0.1.0. The plan, decisions and open questions are in [`docs/design.md`](docs/design.md);
-> the working rules for people and coding agents are in [`AGENTS.md`](AGENTS.md).
+> PostgreSQL 15–18. The release packaging and the PGXN metadata are in place but no tag has been
+> cut, and the format may change until 0.1.0. The plan, decisions and open questions are in
+> [`docs/design.md`](docs/design.md); the working rules for people and coding agents are in
+> [`AGENTS.md`](AGENTS.md).
 
 PostgreSQL's `pgcrypto` has AES only in CBC, CFB and ECB, and OpenPGP; it has no AES-GCM. This
 extension adds AES-128/192/256-GCM selected by key length, and keeps partial-match search inside the
@@ -68,6 +69,16 @@ sudo make USE_PGXS=1 install
 psql -c 'CREATE EXTENSION pg_gcm'
 ```
 
+Once 0.1.0 is tagged, from [PGXN](https://pgxn.org/dist/pg_gcm/). `pgxn install` builds the same
+source as the first method, so it needs the same things (the server's headers, a C compiler,
+`libssl-dev`). The distribution is labelled `testing` while 0.1.0 is pre-release, so it is not in
+the stable index and `--testing` asks for it:
+
+```sh
+pgxn install --testing pg_gcm
+psql -d <db> -c 'CREATE EXTENSION pg_gcm'
+```
+
 A `postgres:<major>` image with the extension preinstalled and `CREATE EXTENSION pg_gcm` in its init
 script is built from [`docker/server.Dockerfile`](docker/server.Dockerfile) (see the `release`
 workflow).
@@ -101,7 +112,8 @@ cosign verify-blob SHA256SUMS \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-PGXN and distribution packages are Phase 5.
+Distribution packages (Debian, RPM) are not built; the PGXN source distribution above is the
+packaging path (design §4, Phase 5).
 
 ## SQL surface
 
