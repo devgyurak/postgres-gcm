@@ -14,8 +14,9 @@ document, [`docs/ops-constraints.md`](ops-constraints.md), and a release pipelin
 their checksums and an SBOM, and a `postgres:<major>` image with the extension preinstalled. The
 PGXN metadata and the source-distribution pipeline are also in place (§4, Phase 5); they, too, are
 exercised but not observed end to end, and nothing has been uploaded. **Both performance gates are
-still placeholders, exercised only by a throwaway probe branch and never yet by the merged
-workflows on a GitHub runner** (§8 O17), so the completion criterion is not met. **Nothing is released and it is not for use yet**: no tag has been cut and the format may
+still placeholders: the bench gate has run twice from `develop` (§8 records the 2026-10-14 failure
+this work explains), the load gate only in a throwaway probe, and neither from the default branch
+`main`** (§8 O17), so the completion criterion is not met. **Nothing is released and it is not for use yet**: no tag has been cut and the format may
 change until 0.1.0.
 Every claim about PostgreSQL behaviour that the design leans on is either cited in §9, recorded with
 its evidence in §8, or listed in §8 "Open". The plan was checked against the PostgreSQL 15–18 sources
@@ -917,18 +918,21 @@ take a gate; nothing was tagged and nothing was released.
   the SBOM and `SHA256SUMS` (the SBOM's own file included), signs the checksums and creates the
   GitHub release. A `workflow_dispatch` run exercises everything except the pushes, the signature
   and the release. Both helper scripts' `--self-test`s run in the lint workflow.
-- **What is not yet recorded, and what an O17 probe found.** The bench and load gates had never
-  run on a CI runner: the ceilings in `tests/load/baseline.json` and `tests/bench/baseline.json`
-  were the Phase S expectation and the placeholder of §8 Open O17, not a measurement of that
-  runner. A throwaway probe (2026-10-14, `ci/perf-probe`, not counted among O17's three runs) ran
-  both on GitHub runners and changed one gate. The load gate passed every run — worst gated ratio
-  0.83–0.87 against the 1.0 the design requires, in about four minutes. The bench gate passed on
-  some runners and failed on others: `seal` and `open` stayed at about 1.0 everywhere, but the
-  deterministic seal over the random one ran from about 3.3 to 9.6 at 65536 bytes. That ratio
-  compares a SHA-256-bound seal with an AES-bound one, and the runners' AES-GCM throughput differed
-  about fivefold (AMD EPYC 7763, EPYC 9V74, EPYC 9V45, Intel Xeon 8573C) while SHA-256 barely moved,
-  so the ratio is not a property of this code and cannot be gated. §8 Open O17 is redefined to gate
-  the deterministic seal over a bare deterministic seal of the same shape instead. No tag has been
+- **What is not yet recorded, and what an O17 probe found.** The bench gate had run from `develop`
+  (2026-10-13, run `38380818627`, passed; 2026-10-14, run `38496259310`, failed) and the load gate
+  had never run on a CI runner before a throwaway probe: the ceilings in `tests/load/baseline.json`
+  and `tests/bench/baseline.json` were the Phase S expectation and the placeholder of §8 Open O17,
+  not a measurement of a runner. The probe (2026-10-14, `ci/perf-probe`, not counted among O17's
+  three runs) ran both on GitHub runners and changed one gate. The load gate passed every run —
+  worst gated ratio 0.84–0.88 against the 1.0 the design requires, in about four minutes. The bench
+  gate passed on some runners and failed on others: `seal` and `open` stayed at about 1.0
+  everywhere, but the deterministic seal over the random one ran from about 1.2 to 9.6 (about 3.3 to
+  9.6 at 65536 bytes). That ratio compares a SHA-256-bound seal with an AES-bound one, and the two
+  operations scale differently across runner CPU and libcrypto: the fastest 65536-byte AES-GCM cells
+  (AMD EPYC 9V45, Intel Xeon 8573C, both with AVX-512, on OpenSSL 3.5.7) were about five times the
+  slowest (AMD EPYC 7763, EPYC 9V74, including OpenSSL 3.0.22), so the ratio is not a property of
+  this code and cannot be gated. §8 Open O17 is redefined to gate the deterministic seal over a bare
+  deterministic seal of the same shape instead. No tag has been
   cut and no release published, so the pipeline is exercised but not yet observed end to end, and
   the distribution image is smoke-tested only.
 

@@ -48,7 +48,8 @@ gated cells runs in the same neighbourhood, so `tests/load/baseline.json` keeps 
 **1.0** — the design's requirement that GCM not be slower than the `pgcrypto` scan it replaces.
 The ratios from the CI runner, with the runner's CPU, are to be recorded here from three runs; the
 ceiling is then set to the worst observed gated ratio across the three times 1.2, rounded up to one
-decimal, and never above 1.0 — so a worst ratio below about 0.83 leaves it at 1.0.
+decimal, and never above 1.0 — so a worst ratio of 0.88 gives 1.06 and the ceiling stays at 1.0,
+the design's requirement.
 
 | Runner CPU | Rows | Sessions | worst gated gcm/pgcrypto p95 | When |
 |---|---|---|---|---|
@@ -63,9 +64,10 @@ random seal and the open over bare EVP at the same size, and the deterministic s
 deterministic seal — a hand-rolled EVP seal with the same HMAC-SHA256 nonce derivation (spec 1.8)
 — so both sides of `det` pay the same two HMAC-SHA256 passes and the same AES-GCM (`docs/design.md`
 §8, O15). The deterministic seal over the random one is **recorded, never gated**: it compares a
-SHA-256-bound seal with an AES-bound one, and an O17 probe found it ranging from about 3.3 to 9.6
-at 65536 bytes across GitHub runners whose AES-GCM throughput differed about fivefold, so it is not
-a property of this code.
+SHA-256-bound seal with an AES-bound one, and an O17 probe found it ranging from about 1.2 to 9.6
+across sizes (about 3.3 to 9.6 at 65536 bytes), because the two operations scale differently across
+runner CPU and libcrypto — the fastest 65536-byte AES-GCM cells were about five times the slowest —
+so it is not a property of this code.
 `scripts/bench.sh <major>` builds and runs it in the build image; the `bench` workflow runs it
 on a merge and nightly, one image per libcrypto. Each benchmark runs five times
 (`->Repetitions(5)`) and the gate reads the median, so one noisy repetition cannot move a ratio —
@@ -80,9 +82,9 @@ message; the placeholder values run from `1.5/1.5/1.5` at 16 bytes down to `1.3/
 The binary writes the ratios and the raw medians to JSON (`PG_GCM_BENCH_JSON`), which the workflow
 uploads as an artifact.
 
-| Runner CPU | Size | seal | open | det | When |
-|---|---|---|---|---|---|
-| *(to be recorded from the `bench` workflow)* | 16, 256, 4096, 65536 | *(ratio)* | *(ratio)* | *(ratio)* | — |
+| Runner CPU | Size | seal | open | det (gated) | det/random (recorded) | When |
+|---|---|---|---|---|---|---|
+| *(to be recorded from the `bench` workflow)* | 16, 256, 4096, 65536 | *(ratio)* | *(ratio)* | *(ratio)* | *(ratio)* | — |
 
 ## What this does not measure
 
@@ -90,5 +92,8 @@ uploads as an artifact.
   through the function manager, and that cost is not measured before this gate
   (`docs/design.md` §8).
 - The `PG_TRY` block's cost: it is at the noise floor (§8, O12). It does not change a gate.
+- A per-call resolution in the deterministic nonce path: both sides of `det` name the digest to
+  `EVP_MAC_init`, so a regression that resolved it per call instead of prepared once would move the
+  recorded `det`/random ratio, not the gated `det` ratio (`docs/design.md` §8, O15).
 - arm64: CI compiles for it and does not run either gate there (§8). Both were quick on arm64
   while the ceiling was set.
