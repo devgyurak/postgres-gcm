@@ -7,8 +7,56 @@
   "gated_sessions": [1, 8],
   "samples": 100,
   "pattern": "%김%",
-  "recorded_ratio": null,
-  "recorded_runs": [],
-  "runner_cpu": "to be recorded from three CI runs",
-  "note": "A ratio, never milliseconds. `samples` is scans per query per cell, split across the two queries and the sessions. The 32-session cells are recorded, not gated: at 10k rows a whole scan is a few milliseconds, so under 32 concurrent sessions the p95 is scheduling tail rather than crypto and the ratio converges to 1.0 (local runs of the 10k x 32 cell ran 0.77-1.03). Refresh recorded_runs and recorded_ratio from three load.yml runs and set max_ratio to the worst observed gated ratio across them times 1.2, rounded up to one decimal, never above 1.0 — the design's requirement that GCM not be slower than the pgcrypto scan it replaces."
+  "recorded_ratio": 0.86,
+  "recorded_runs": [
+    {
+      "run": "38518507148",
+      "when": "2026-10-14",
+      "image": "17-bookworm (OpenSSL 3.0.22)",
+      "runner_cpu": "AMD EPYC 7763 64-Core (4 vCPU)",
+      "worst_gated": 0.845
+    },
+    {
+      "run": "38518507148",
+      "when": "2026-10-14",
+      "image": "18 (OpenSSL 3.5.7)",
+      "runner_cpu": "Intel(R) Xeon(R) Platinum 8573C (4 vCPU)",
+      "worst_gated": 0.839
+    },
+    {
+      "run": "38518993036",
+      "when": "2026-10-14",
+      "image": "17-bookworm (OpenSSL 3.0.22)",
+      "runner_cpu": "AMD EPYC 9V74 80-Core (4 vCPU)",
+      "worst_gated": 0.845
+    },
+    {
+      "run": "38518993036",
+      "when": "2026-10-14",
+      "image": "18 (OpenSSL 3.5.7)",
+      "runner_cpu": "AMD EPYC 9V45 96-Core (4 vCPU)",
+      "worst_gated": 0.849
+    },
+    {
+      "run": "38519339009",
+      "when": "2026-10-14",
+      "image": "17-bookworm (OpenSSL 3.0.22)",
+      "runner_cpu": "AMD EPYC 9V74 80-Core (4 vCPU)",
+      "worst_gated": 0.84
+    },
+    {
+      "run": "38519339009",
+      "when": "2026-10-14",
+      "image": "18 (OpenSSL 3.5.7)",
+      "runner_cpu": "AMD EPYC 9V45 96-Core (4 vCPU)",
+      "worst_gated": 0.86
+    }
+  ],
+  "runner_cpu": [
+    "AMD EPYC 7763 64-Core (4 vCPU)",
+    "AMD EPYC 9V45 96-Core (4 vCPU)",
+    "AMD EPYC 9V74 80-Core (4 vCPU)",
+    "Intel(R) Xeon(R) Platinum 8573C (4 vCPU)"
+  ],
+  "note": "A ratio, never milliseconds. `samples` is scans per query per cell, split across the two queries and the sessions. The 32-session cells are recorded, not gated: at 10k rows a whole scan is a few milliseconds, so under 32 concurrent sessions the p95 is scheduling tail rather than crypto and the ratio converges to 1.0 (local runs of the 10k x 32 cell ran 0.77-1.03, and the three recorded runs 0.86-0.91). `recorded_runs` and `recorded_ratio` are the three `main` runs of 2026-10-14, both images each, and the worst gated ratio over the six jobs is what `recorded_ratio` holds. max_ratio stays at the 1.0 the design requires, because that worst value times 1.2 is 1.032, rounded up to 1.1 — never above the requirement. Refresh the record the same way from three runs of `load.yml` on `main`."
 }
