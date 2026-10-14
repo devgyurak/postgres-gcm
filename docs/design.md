@@ -966,15 +966,18 @@ Platinum 8573C, every one of them 4 vCPU.
   condition for reopening the per-call digest resolution is read. `docs/perf.md` holds the worst
   value per size and the ceiling it gives.
 
-The merge that carries this record is followed by one `bench` run on `main` — the push itself — and
-one dispatched `load` run, both under these ceilings. Their run IDs are recorded here when they
-finish; a failure in either adds that run to the record and re-derives the ceilings rather than
-raising one silently.
+The merge that carried this record ran `bench` on `main` — the push itself, `38539956411` — and one
+dispatched `load`, `38540289970`, both under these ceilings, and both passed. The worst bench ratio in
+that run was 1.083 at 16 bytes and 1.093 at the 256-byte seal, under the 1.3 and 1.4 ceilings it was
+measured against, and the worst gated load ratio was 0.850 against 1.0. The `det`/random ratio that
+this record stopped gating read 9.37 at 65536 bytes in the same run — the shape of the failure that
+made it a record rather than a gate. A failure in either run would add that run to the record and
+re-derive the ceilings, rather than raising one silently.
 
 A later refresh derives each ceiling from its own three `main` runs the same way and may move it in
-either direction. A raise is argued in the PR that makes it, and the load ceiling never exceeds the
-1.0 the design requires: the ceiling is the gate, so loosening one is a design decision, not a
-baseline edit.
+either direction. A raise is argued in the PR that makes it, which amends this section, and the load
+ceiling never exceeds the 1.0 the design requires: the ceiling is the gate, so loosening one is a
+design decision, not a baseline edit.
 
 ### Established in Phase 5 (2026-10-13)
 

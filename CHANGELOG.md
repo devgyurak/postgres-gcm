@@ -11,7 +11,9 @@ Notable changes per release. Envelope changes get their own entry with a compati
   every size and ratio except the 256-byte seal, **1.4** — they were per-size placeholders of
   1.3–1.5 — and the load ceiling stays at the **1.0** the design requires, against a worst gated
   ratio of **0.860**. `docs/perf.md` holds the runs, the runner CPU of each and the ceilings;
-  `docs/design.md` §8 records them and its Open table no longer holds O17.
+  `docs/design.md` §8 records them and its Open table no longer holds O17. The confirmation runs the
+  promotion carried passed under those ceilings: `38539956411` (`bench`, the push, worst ratio 1.093
+  at the 256-byte seal) and `38540289970` (`load`, dispatched, worst gated ratio 0.850).
 
 ### Phase 5 — ecosystem (2026-10-13)
 - PGXN: `META.json` (PGXN Meta Spec 1.0.0), `scripts/check-pgxn.py` validates it against the

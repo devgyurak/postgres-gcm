@@ -66,6 +66,9 @@ Each row is the worst gated (1- and 8-session) cell of that job, over the rows 1
 and both gated session counts together; the recorded 32-session cells ran 0.75–0.91 (at 10k rows,
 0.86–0.91) and are not gated.
 
+The confirmation run the promotion of this record carried — `38540289970`, dispatched on `main` with
+the promoted commit `5acf8b3` — passed as well, its worst gated ratio 0.850.
+
 ## The core micro-benchmarks
 
 `tests/bench/benchmark.cc` (Google Benchmark) measures the core's `gcm_seal` (random and
@@ -115,6 +118,10 @@ The first three columns are the ratios the gate closes on; `det`/random is recor
 and its range is the spread over the six jobs — the same figure the probe above bounded at about
 1.2–9.6. Each run's per-size ratios and raw medians are the workflow's artifact, and the runner's
 CPU is beside them in the job summary.
+
+The confirmation run the promotion of this record carried — `38539956411`, the push with the
+promoted commit `5acf8b3` — passed too: its worst ratio was 1.093 at the 256-byte seal, and its
+`det`/random read 9.37 at 65536 bytes.
 
 ## What this does not measure
 
