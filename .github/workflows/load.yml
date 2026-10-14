@@ -55,7 +55,7 @@ jobs:
       # exit status is the gate; it writes the runner's JSON to PG_GCM_LOAD_JSON for the artifact.
       - name: Load gate
         env:
-          PG_GCM_LOAD_JSON: ${{ github.workspace }}/load-${{ matrix.entry.label }}.json
+          PG_GCM_LOAD_JSON: ${{ runner.temp }}/load-${{ matrix.entry.label }}.json
         run: scripts/load.sh "$IMAGE"
       - name: Record the runner's CPU beside the ratio
         if: always()
@@ -73,5 +73,5 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: load-${{ matrix.entry.label }}
-          path: load-${{ matrix.entry.label }}.json
+          path: ${{ runner.temp }}/load-${{ matrix.entry.label }}.json
           if-no-files-found: warn

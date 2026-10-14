@@ -51,10 +51,11 @@ jobs:
         with:
           persist-credentials: false
       # bench.sh builds the benchmarks, runs the gate's own self-test and then the gate; it writes
-      # the ratios and raw medians to PG_GCM_BENCH_JSON for the artifact below.
+      # the ratios and raw medians to PG_GCM_BENCH_JSON (under runner.temp, so the read-only
+      # checkout is not remounted writable) for the artifact below.
       - name: Core micro-benchmarks
         env:
-          PG_GCM_BENCH_JSON: ${{ github.workspace }}/bench-${{ matrix.entry.label }}.json
+          PG_GCM_BENCH_JSON: ${{ runner.temp }}/bench-${{ matrix.entry.label }}.json
         run: scripts/bench.sh "$IMAGE"
       - name: Record the runner's CPU beside the ratios
         if: always()
@@ -72,5 +73,5 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bench-${{ matrix.entry.label }}
-          path: bench-${{ matrix.entry.label }}.json
+          path: ${{ runner.temp }}/bench-${{ matrix.entry.label }}.json
           if-no-files-found: warn
