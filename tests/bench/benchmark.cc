@@ -60,14 +60,21 @@ constexpr int kRepetitions = 5;
 const EVP_CIPHER *g_bare = nullptr;
 EVP_MAC *g_bare_hmac = nullptr;
 
-[[noreturn]] void Fail(const std::string &why) {
+[[noreturn]] void Fail(const char *why) {
   std::cerr << "bench: " << why << "\n";
   std::exit(2);
 }
 
 // A precondition the measurement cannot proceed without. Named so a benchmark body has no `if`.
-void Require(bool ok, const std::string &why) {
+// The two overloads keep a string literal out of a std::string: the bare det baseline's checks run
+// inside the timed loop, and building a std::string there would bias the det ratio down at small
+// sizes. A std::string is still accepted for a message assembled at run time.
+void Require(bool ok, const char *why) {
   if (!ok) Fail(why);
+}
+
+void Require(bool ok, const std::string &why) {
+  if (!ok) Fail(why.c_str());
 }
 
 // A raw AES-256-GCM seal through EVP alone — a context, the version byte as associated data, the
@@ -146,20 +153,27 @@ void EvpSealDet(const EVP_CIPHER *cipher, EVP_MAC *hmac, const uint8_t *pt, size
   EvpSealWithNonce(cipher, kVersionDet, nonce, pt, pt_len, ct, tag);
 }
 
-// The hand-rolled derivation above must agree with the core's, or the det ratio would compare two
-// different operations and still print a number. Checked once, before the timed runs, against the
-// core's own gcm_nonce_derive (the core is linked into this binary) over one fixed input — the
-// public key, the AES-256 det version, no AAD. A drift in either side fails the run.
-void RequireDetNonceMatchesCore() {
+// The bare deterministic seal above must be the core's operation, or the det ratio would compare
+// two different things and still print a number. Checked once, before the timed runs, by sealing
+// one fixed plaintext (the public key, the AES-256 det version, no AAD) both ways — the core's
+// gcm_seal and the hand-rolled EvpSealDet plus the envelope header — and comparing every byte: the
+// version byte, the derived nonce, the ciphertext and the tag. A drift in either side fails the run.
+void RequireBareDetMatchesCore() {
   const std::array<uint8_t, 16> pt = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
                                       0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
-  std::array<uint8_t, GCM_NONCE_LEN> bare{};
-  std::array<uint8_t, GCM_NONCE_LEN> core{};
-  DetNonce(g_bare_hmac, pt.data(), pt.size(), bare.data());
-  Require(gcm_nonce_derive(g_bare_hmac, kKey.data(), kKey.size(), kVersionDet, nullptr, 0,
-                           pt.data(), pt.size(), core.data()) == GCM_OK,
-          "gcm_nonce_derive failed");
-  Require(bare == core, "the bare det nonce does not match the core's");
+  constexpr size_t n = pt.size();
+  std::array<uint8_t, n + GCM_ENVELOPE_OVERHEAD> core{};
+  Require(gcm_seal(kKey.data(), kKey.size(), nullptr, 0, pt.data(), n, 1, core.data(),
+                   core.size()) == GCM_OK,
+          "gcm_seal(det) failed");
+
+  std::array<uint8_t, n + GCM_ENVELOPE_OVERHEAD> bare{};
+  uint8_t *nonce = bare.data() + GCM_VERSION_LEN;
+  uint8_t *ct = nonce + GCM_NONCE_LEN;
+  uint8_t *tag = ct + n;
+  bare[0] = kVersionDet;
+  EvpSealDet(g_bare, g_bare_hmac, pt.data(), n, ct, tag, nonce);
+  Require(bare == core, "the bare det envelope does not match the core's");
 }
 
 void EvpOpen(const EVP_CIPHER *cipher, const uint8_t *ct, size_t ct_len, uint8_t *tag,
@@ -365,7 +379,7 @@ std::map<int64_t, Ceilings> LoadCeilings() {
 // the same AES-GCM on both sides — so it means the same on any runner. `det_random` compares that
 // same deterministic seal with the random one, which is a different operation: its value moves
 // with a runner's relative AES-GCM and SHA-256 throughput and is not portable (the O17 probe
-// measured about 1.3-9.6 across sizes and runner CPUs), so it is recorded, never gated.
+// measured about 1.2-9.6 across sizes and runner CPUs), so it is recorded, never gated.
 struct SizeRatios {
   double seal;
   double open;
@@ -418,7 +432,9 @@ nlohmann::json JsonReport(const CpuTimes &cpu_ns, bool passed) {
         {"open", ratio.open},
         {"det", ratio.det},
         {"det_random", ratio.det_random},
-        {"median_ns",
+        // The times are in microseconds: every benchmark is registered ->Unit(kMicrosecond), which
+        // is what Run::GetAdjustedCPUTime returns them in.
+        {"median_cpu_us",
          {
              {"gcm_seal_random", Lookup(cpu_ns, "gcm_seal_random" + at)},
              {"gcm_seal_det", Lookup(cpu_ns, "gcm_seal_det" + at)},
@@ -431,6 +447,7 @@ nlohmann::json JsonReport(const CpuTimes &cpu_ns, bool passed) {
   }
   nlohmann::json document;
   document["gate"] = passed;
+  document["openssl"] = OpenSSL_version(OPENSSL_VERSION);
   document["sizes"] = sizes;
   return document;
 }
@@ -439,23 +456,27 @@ nlohmann::json JsonReport(const CpuTimes &cpu_ns, bool passed) {
 // failing run's numbers survive too.
 void WriteJson(const CpuTimes &cpu_ns, bool passed, const std::string &path) {
   std::ofstream out(path);
-  Require(out.good(), "cannot write " + path);
+  Require(out.good(), "cannot open " + path);
   out << JsonReport(cpu_ns, passed).dump(2) << "\n";
+  out.flush();
+  Require(out.good(), "cannot write " + path);
 }
 
 // A fixed gate input for the self-test: every size carries the same three ratios, so a wrong
 // benchmark name pair (a lookup that should have found the other one) fails instead of passing.
+// The three bare baselines are distinct (1, 2, 3), so swapping one ratio's denominator for another
+// changes the value and the verdict — a map of all-1.0 baselines would not.
 CpuTimes FakeRatios(double seal, double open, double det) {
   CpuTimes cpu_ns;
   for (const int64_t size : kSizes) {
     const std::string at = "/" + std::to_string(size);
     cpu_ns["evp_seal" + at] = 1.0;
     cpu_ns["gcm_seal_random" + at] = seal;
-    cpu_ns["evp_open" + at] = 1.0;
-    cpu_ns["gcm_open" + at] = open;
+    cpu_ns["evp_open" + at] = 2.0;
+    cpu_ns["gcm_open" + at] = open * 2.0;
     // The gated det ratio is the core det over the bare det, so `det` here is that ratio.
-    cpu_ns["evp_seal_det" + at] = 1.0;
-    cpu_ns["gcm_seal_det" + at] = det;
+    cpu_ns["evp_seal_det" + at] = 3.0;
+    cpu_ns["gcm_seal_det" + at] = det * 3.0;
   }
   return cpu_ns;
 }
@@ -503,10 +524,10 @@ int SelfTest() {
       {"the core half the baseline", RatioOf(1.0, 2.0), 0.5},
       {"a zero denominator is infinite", RatioOf(1.0, 0.0),
        std::numeric_limits<double>::infinity()},
-      // The recorded det-over-random is the det seal over the random one, not its reciprocal, so
-      // the artifact's number is not quietly inverted.
-      {"the recorded det-over-random ratio", RatiosOf(FakeRatios(1.0, 1.0, 9.0)).at(16).det_random,
-       9.0},
+      // The recorded det-over-random is the det seal over the random one, not its reciprocal: with
+      // the distinct baselines this is 2*3/1 = 6.0, and a swapped operand pair would read 1/6.
+      {"the recorded det-over-random ratio",
+       RatiosOf(FakeRatios(1.0, 1.0, 2.0)).at(16).det_random, 6.0},
       // The JSON report carries the same det ratio the gate reads.
       {"the JSON report's det ratio",
        JsonReport(FakeRatios(1.0, 1.0, 2.0), true)["sizes"]["256"]["det"].get<double>(), 2.0},
@@ -538,8 +559,8 @@ int main(int argc, char **argv) {
   Require(g_bare != nullptr, "EVP_CIPHER_fetch(AES-256-GCM) failed");
   g_bare_hmac = EVP_MAC_fetch(nullptr, "HMAC", nullptr);
   Require(g_bare_hmac != nullptr, "EVP_MAC_fetch(HMAC) failed");
-  // The bare det baseline must derive the same nonce as the core, or the det ratio is meaningless.
-  RequireDetNonceMatchesCore();
+  // The bare det baseline must seal exactly what the core seals, or the det ratio is meaningless.
+  RequireBareDetMatchesCore();
 
   benchmark::Initialize(&argc, argv);
   for (const int64_t size : kSizes) {
