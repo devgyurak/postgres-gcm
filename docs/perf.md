@@ -48,8 +48,8 @@ gated cells runs in the same neighbourhood, so `tests/load/baseline.json` keeps 
 **1.0** — the design's requirement that GCM not be slower than the `pgcrypto` scan it replaces.
 The ratios from the CI runner, with the runner's CPU, are to be recorded here from three runs; the
 ceiling is then set to the worst observed gated ratio across the three times 1.2, rounded up to one
-decimal, and never above 1.0 — so a worst ratio of 0.88 gives 1.06 and the ceiling stays at 1.0,
-the design's requirement.
+decimal, and never above 1.0 — so a worst ratio of 0.88 gives 0.88 × 1.2 = 1.056, rounded up to
+1.1 and then capped at 1.0, the design's requirement.
 
 | Runner CPU | Rows | Sessions | worst gated gcm/pgcrypto p95 | When |
 |---|---|---|---|---|
@@ -92,8 +92,11 @@ uploads as an artifact.
   through the function manager, and that cost is not measured before this gate
   (`docs/design.md` §8).
 - The `PG_TRY` block's cost: it is at the noise floor (§8, O12). It does not change a gate.
-- A per-call resolution in the deterministic nonce path: both sides of `det` name the digest to
-  `EVP_MAC_init`, so a regression that resolved it per call instead of prepared once would move the
-  recorded `det`/random ratio, not the gated `det` ratio (`docs/design.md` §8, O15).
+- The `det` gate's own slack. A cost shared by both sides of `det` is invisible to it and shows only
+  in the recorded `det`/random ratio: the per-call resolution of the digest by name
+  (`docs/design.md` §8, O15) is on both sides, so it — and any saving a prepared context would give
+  — moves the record, not the gate. A per-call fixed cost added to the core's det path alone is
+  caught, but loosely: one measurement put an extra `EVP_MAC_fetch` per call (about 100 ns) at a
+  gate ratio of 1.03–1.11, under the 1.5 ceiling.
 - arm64: CI compiles for it and does not run either gate there (§8). Both were quick on arm64
   while the ceiling was set.

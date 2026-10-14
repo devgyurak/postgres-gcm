@@ -779,8 +779,9 @@ the result was the same on all six. Per image `M` the commands are `scripts/buil
   first two holds two HMAC-SHA256 computations as well as the resolution of the digest by name, so
   it bounds from above what a prepared context could save; the saving itself was not isolated.
   Against it stands a context that fails on 3.0.0. The deterministic variant is for join keys and
-  exact-match lookups, not bulk text, so the floor is not raised for it. The load gate of Phase 4
-  is where this would be reopened.
+  exact-match lookups, not bulk text, so the floor is not raised for it. The bench gate records the
+  deterministic seal over the random one, and that recorded ratio is where this would be reopened
+  (`docs/perf.md`); the load gate does not call `gcm_encrypt_det`.
 - **`pg_gcm.min_key_bytes` and placeholders**, on 15–18 and 19beta4 (regression test
   `min_key_bytes`). A value a superuser sets before the library is loaded holds when it loads. A
   value that is not 16, 24 or 32 is dropped with a warning and the default applies. A value set by
@@ -922,8 +923,9 @@ take a gate; nothing was tagged and nothing was released.
   (2026-10-13, run `38380818627`, passed; 2026-10-14, run `38496259310`, failed) and the load gate
   had never run on a CI runner before a throwaway probe: the ceilings in `tests/load/baseline.json`
   and `tests/bench/baseline.json` were the Phase S expectation and the placeholder of §8 Open O17,
-  not a measurement of a runner. The probe (2026-10-14, `ci/perf-probe`, not counted among O17's
-  three runs) ran both on GitHub runners and changed one gate. The load gate passed every run —
+  not a measurement of a runner. The probe (2026-10-14, `ci/perf-probe`; bench runs `38497426020`,
+  `38497735934`, `38497746227` and load runs `38497426196`, `38498234824`, `38498245407`; not counted
+  among O17's three runs) ran both on GitHub runners and changed one gate. The load gate passed every run —
   worst gated ratio 0.84–0.88 against the 1.0 the design requires, in about four minutes. The bench
   gate passed on some runners and failed on others: `seal` and `open` stayed at about 1.0
   everywhere, but the deterministic seal over the random one ran from about 1.2 to 9.6 (about 3.3 to
