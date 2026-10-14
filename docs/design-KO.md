@@ -826,13 +826,14 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   느리지 않다는 설계의 요구다.
 - **마이크로 벤치마크.** `tests/bench/benchmark.cc` (Google Benchmark) 는 코어의 `gcm_seal` (무작위와
   결정적) 과 `gcm_open` 을 같은 모양의 직접 짠 EVP AES-256-GCM 과 16, 256, 4096, 65536 바이트에서
-  재고, `tests/bench/baseline.json` 의 세 비율을 게이트로 삼는다 — bare EVP 에 대한 무작위 봉인과
-  열기, 그리고 무작위 봉인에 대한 결정적 봉인인데, 여기서 두 번의 HMAC-SHA256 이 드러난다. 각 벤치마크는
-  무작위 순서로 다섯 번 돌고 게이트는 중앙값을 읽어, 시끄러운 한 번의 반복이 비율을 움직이지 못한다. 기준선의
-  nonce 는 코어의 무작위 봉인과 같이 무작위라, 봉인 비율이 한쪽만 내는 비용이 아니라 코어 자체의 봉투와
-  점검을 재게 되고, 상한은 크기별이다 — 코어의 고정된 호출 비용은 작은 메시지에서 더 큰 몫이다.
-  바이너리의 `--self-test` 가 판정과 비율의 방향, 고정 측정값에 대한 게이트를 확인한다. 서버도
-  PostgreSQL 헤더도 관여하지 않는다.
+  재고, `tests/bench/baseline.json` 의 같은 것끼리의 세 비율을 게이트로 삼는다 — bare EVP 에 대한
+  무작위 봉인과 열기, 그리고 같은 두 번의 HMAC-SHA256 과 같은 AES-GCM 을 치르는 bare 결정적 봉인에
+  대한 결정적 봉인. 각 벤치마크는 무작위 순서로 다섯 번 돌고 게이트는 중앙값을 읽어, 시끄러운 한 번의
+  반복이 비율을 움직이지 못한다. 기준선의 nonce 는 코어의 무작위 봉인과 같이 무작위라, 봉인 비율이
+  한쪽만 내는 비용이 아니라 코어 자체의 봉투와 점검을 재게 되고, 상한은 크기별이다 — 코어의 고정된 호출
+  비용은 작은 메시지에서 더 큰 몫이다. 무작위 봉인에 대한 결정적 봉인은 기록만 하고 게이트하지 않는다:
+  O17 프로브가 그것이 이식 가능하지 않음을 찾았다 (위 bullet). 바이너리의 `--self-test` 가 판정과 비율의
+  방향, 고정 측정값에 대한 게이트를 확인한다. 서버도 PostgreSQL 헤더도 관여하지 않는다.
 - **배포 이미지.** `docker/server.Dockerfile` 은 공식 `postgres:<major>` (base 는 digest 로 고정) 이고,
   빌드한 `pg_gcm.so`, `pg_gcm.control`, SQL 을 그 이미지 자체의 `pg_config` 가 이르는 디렉터리에
   설치하며, `docker/initdb.d/00-pg_gcm.sql` 이 `/docker-entrypoint-initdb.d` 에 있어 처음 init 때
@@ -851,11 +852,18 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
   푸시한다. `publish` job 은 SBOM 과 `SHA256SUMS` (SBOM 파일 자체 포함) 를 쓰고, 체크섬을 서명하고
   GitHub release 를 만든다. `workflow_dispatch` 실행은 푸시·서명·릴리스만 빼고 모든 것을 연습한다. 두
   헬퍼 스크립트의 `--self-test` 는 lint 워크플로에서 실행된다.
-- **아직 기록되지 않은 것.** 게이트가 CI 러너에서 실행된 적이 없으므로
-  `tests/load/baseline.json` 과 `tests/bench/baseline.json` 의 상한은 Phase S 의 기대값이고 §8
-  Open O17 의 placeholder 이지 그 러너의 측정이 아니다. `docs/perf.md` 도 그렇게 말한다. tag 를 자른
-  적이 없고 릴리스도 게시하지 않았으므로 파이프라인은 연습만 되고 끝에서 끝까지 관찰되지는 않았으며,
-  배포 이미지는 smoke 테스트만 됐다.
+- **아직 기록되지 않은 것, 그리고 O17 프로브가 찾은 것.** bench 와 load 게이트는 CI 러너에서 실행된
+  적이 없었다: `tests/load/baseline.json` 과 `tests/bench/baseline.json` 의 상한은 Phase S 의 기대값이고
+  §8 Open O17 의 placeholder 이지 그 러너의 측정이 아니었다. 일회성 프로브 (2026-10-14,
+  `ci/perf-probe`, O17 의 세 번에는 포함되지 않는다) 가 GitHub 러너에서 둘 다 돌려 게이트 하나를 바꿨다.
+  load 게이트는 매 실행 통과했다 — 최악 gated 비율 0.83~0.87 로 설계가 요구하는 1.0 아래였고, 약 4분이
+  걸렸다. bench 게이트는 어떤 러너에서는 통과하고 어떤 러너에서는 실패했다: `seal` 과 `open` 은 어디서나
+  약 1.0 이었지만, 무작위 봉인에 대한 결정적 봉인의 비율은 65536 바이트에서 약 3.3~9.6 이었다. 그 비율은
+  SHA-256 에 묶인 봉인을 AES 에 묶인 봉인과 비교하는데, 러너들의 AES-GCM 처리량은 약 5배 차이 (AMD EPYC
+  7763, EPYC 9V74, EPYC 9V45, Intel Xeon 8573C) 가 났고 SHA-256 은 거의 움직이지 않았다. 따라서 그 비율은
+  이 코드의 속성이 아니며 게이트가 될 수 없다. §8 Open O17 은 같은 모양의 bare 결정적 봉인에 대한 결정적
+  봉인을 게이트하도록 재정의된다. tag 를 자른 적이 없고 릴리스도 게시하지 않았으므로 파이프라인은 연습만
+  되고 끝에서 끝까지 관찰되지는 않았으며, 배포 이미지는 smoke 테스트만 됐다.
 
 ### Phase 5 에서 확인된 것 (2026-10-13)
 
@@ -911,7 +919,7 @@ O8, O12), 그리고 `scripts/spike/ldd.sh all` (8 단계) 이다.
 | # | 질문 | 확인 방법 |
 |---|---|---|
 | O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 확장은 `19beta4` 에서 빌드되고 모든 스위트를 통과하며, 그 CI job 은 pre-release 라고 표시되고 required check 로 삼지 않는다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
-| O17 | CI 러너에서의 부하와 마이크로 벤치마크 비율은 얼마이고 상한은 얼마나 타이트해도 되나? `tests/load/baseline.json` (1.0) 과 `tests/bench/baseline.json` (크기별: 봉인·열기 1.3~1.5, det 3.0~4.5) 의 상한은 그 러너의 측정이 아니라 placeholder 이다 | 세 번씩 돌린 `load.yml` 과 `bench.yml` 의 최악 비율과 러너 CPU 를 `docs/perf.md` 에 기록하고, 세 번 모두에서 유지될 때만 관측된 최악 쪽으로 각 상한을 낮춘다 |
+| O17 | CI 러너에서의 부하와 마이크로 벤치마크 비율은 얼마이고 상한은 얼마나 타이트해도 되나? `tests/load/baseline.json` (1.0) 과 `tests/bench/baseline.json` (크기별: 봉인·열기·det 1.3~1.5) 의 상한은 그 러너의 측정이 아니라 placeholder 이다. O17 프로브 (2026-10-14) 는 옛 det 비율 — 무작위 봉인에 대한 결정적 봉인 — 이 러너의 AES-GCM 대 SHA-256 상대 처리량에 의존하며 65536 바이트에서 약 3.3~9.6 이었음을 찾았다. 그래서 그 비율은 기록만 하고 게이트하지 않는다 | 세 번씩 돌린 `load.yml` 과 `bench.yml` 의 최악 비율과 러너 CPU 를 `docs/perf.md` 에 기록한다; bench 의 det 게이트는 이제 같은 것끼리 비교한다 (bare 결정적 봉인에 대한 결정적 봉인). 각 상한은 세 번 실행의 관측 최악값 곱하기 1.2 를 소수 첫째 자리로 올림한 값으로 정하고, placeholder 보다 높이지 않는다; 그런 다음 O17 을 Established 로 옮긴다 |
 
 ## 9. 참고 자료
 

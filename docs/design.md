@@ -885,15 +885,17 @@ take a gate; nothing was tagged and nothing was released.
   is 1.0, the design's requirement that GCM not be slower.
 - **The micro-benchmarks.** `tests/bench/benchmark.cc` (Google Benchmark) measures the core's
   `gcm_seal` (random and deterministic) and `gcm_open` against a hand-rolled EVP AES-256-GCM of
-  the same shape at 16, 256, 4096 and 65536 bytes, and gates three ratios from
-  `tests/bench/baseline.json` — the random seal and the open over bare EVP, and the
-  deterministic seal over the random one, which is where the two HMAC-SHA256 passes show. Each
-  benchmark runs five times in a random order and the gate reads the median, so one noisy
-  repetition cannot move a ratio. The baseline's nonce is random, as the core's random seal is, so
-  the seal ratio measures the core's own envelope and checks rather than a draw only one side pays;
-  the ceilings are per size, because the core's fixed per-call cost is a larger share of a small
-  message. The binary's `--self-test` checks the verdict, the ratio's direction and the gate over
-  fixed measurements; no server and no PostgreSQL header is involved.
+  the same shape at 16, 256, 4096 and 65536 bytes, and gates three like-for-like ratios from
+  `tests/bench/baseline.json` — the random seal and the open over bare EVP, and the deterministic
+  seal over a bare deterministic seal that pays the same two HMAC-SHA256 passes and the same
+  AES-GCM. Each benchmark runs five times in a random order and the gate reads the median, so one
+  noisy repetition cannot move a ratio. The baseline's nonce is random, as the core's random seal
+  is, so the seal ratio measures the core's own envelope and checks rather than a draw only one
+  side pays; the ceilings are per size, because the core's fixed per-call cost is a larger share of
+  a small message. The deterministic seal over the random one is recorded, never gated: an O17
+  probe found it is not portable (the bullet above). The binary's `--self-test` checks the verdict,
+  the ratio's direction and the gate over fixed measurements; no server and no PostgreSQL header is
+  involved.
 - **The distribution image.** `docker/server.Dockerfile` is the official `postgres:<major>`
   (base pinned by digest) with the built `pg_gcm.so`, `pg_gcm.control` and SQL installed into
   the directories that image's own `pg_config` names, and `docker/initdb.d/00-pg_gcm.sql` in
@@ -915,11 +917,20 @@ take a gate; nothing was tagged and nothing was released.
   the SBOM and `SHA256SUMS` (the SBOM's own file included), signs the checksums and creates the
   GitHub release. A `workflow_dispatch` run exercises everything except the pushes, the signature
   and the release. Both helper scripts' `--self-test`s run in the lint workflow.
-- **What is not yet recorded.** No gate has run on a CI runner, so the ceilings in
-  `tests/load/baseline.json` and `tests/bench/baseline.json` are the Phase S expectation and the
-  placeholder of §8 Open O17, not a measurement of that runner; `docs/perf.md` says so. No tag
-  has been cut and no release published, so the pipeline is exercised but not yet observed end
-  to end, and the distribution image is smoke-tested only.
+- **What is not yet recorded, and what an O17 probe found.** The bench and load gates had never
+  run on a CI runner: the ceilings in `tests/load/baseline.json` and `tests/bench/baseline.json`
+  were the Phase S expectation and the placeholder of §8 Open O17, not a measurement of that
+  runner. A throwaway probe (2026-10-14, `ci/perf-probe`, not counted among O17's three runs) ran
+  both on GitHub runners and changed one gate. The load gate passed every run — worst gated ratio
+  0.83–0.87 against the 1.0 the design requires, in about four minutes. The bench gate passed on
+  some runners and failed on others: `seal` and `open` stayed at about 1.0 everywhere, but the
+  deterministic seal over the random one ran from about 3.3 to 9.6 at 65536 bytes. That ratio
+  compares a SHA-256-bound seal with an AES-bound one, and the runners' AES-GCM throughput differed
+  about fivefold (AMD EPYC 7763, EPYC 9V74, EPYC 9V45, Intel Xeon 8573C) while SHA-256 barely moved,
+  so the ratio is not a property of this code and cannot be gated. §8 Open O17 is redefined to gate
+  the deterministic seal over a bare deterministic seal of the same shape instead. No tag has been
+  cut and no release published, so the pipeline is exercised but not yet observed end to end, and
+  the distribution image is smoke-tested only.
 
 ### Established in Phase 5 (2026-10-13)
 
@@ -980,7 +991,7 @@ Phase 2.
 | # | Question | How to settle it |
 |---|---|---|
 | O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the extension builds and passes every suite on `19beta4`, in a CI job labelled pre-release that is not meant to be a required check | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
-| O17 | What are the load and micro-benchmark ratios on the CI runner, and how tight may the ceilings be? The ceilings in `tests/load/baseline.json` (1.0) and `tests/bench/baseline.json` (per size: seal and open 1.3–1.5, det 3.0–4.5) are a placeholder, not a measurement of that runner | Record the worst ratio and the runner's CPU from three runs of each of `load.yml` and `bench.yml` in `docs/perf.md`, and lower each ceiling toward the observed worst only when it holds across all three |
+| O17 | What are the load and micro-benchmark ratios on the CI runner, and how tight may the ceilings be? The ceilings in `tests/load/baseline.json` (1.0) and `tests/bench/baseline.json` (per size: seal, open and det 1.3–1.5) are a placeholder, not a measurement of that runner. An O17 probe (2026-10-14) found that the old det ratio — the deterministic seal over the random one — depends on the runner's relative AES-GCM and SHA-256 throughput and ranged from about 3.3 to 9.6 at 65536 bytes, so it is recorded, not gated | Record the worst ratio and the runner's CPU from three runs of each of `load.yml` and `bench.yml` in `docs/perf.md`; the bench det gate now compares like for like (the deterministic seal over a bare deterministic seal). Set each ceiling to the worst observed value across the three runs times 1.2, rounded up to one decimal, and never above the placeholder; then move O17 to Established |
 
 ## 9. References
 
