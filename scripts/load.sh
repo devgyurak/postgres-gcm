@@ -50,6 +50,9 @@ run_runner() {
     "$image" "$@"
 }
 if [ -n "${PG_GCM_LOAD_JSON:-}" ]; then
+  # tee fails on a missing directory, which would turn a passing gate into a non-zero exit.
+  json_dir="$(dirname "$PG_GCM_LOAD_JSON")"
+  [ -d "$json_dir" ] || die "the directory of PG_GCM_LOAD_JSON does not exist: $json_dir"
   run_runner "$@" | tee "$PG_GCM_LOAD_JSON"
 else
   run_runner "$@"
