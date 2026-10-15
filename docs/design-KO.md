@@ -958,6 +958,39 @@ load 비율은 1.0 에 대해 0.850 이었다. 이 기록이 게이트에서 뺀
   남겨 둔다). Phase 5 는 O17 이 열린 채로 했다: PGXN 경로는 두 성능 게이트를 지나지 않으므로,
   그 게이트가 기다리는 기록은 이 작업의 전제가 아니었다.
 
+### 확인됨 (2026-10-15) — O1, 지금까지: 19 릴리스 후보가 load 게이트를 뺀 모든 스위트를 통과한다
+
+19 는 아직 지원 집합에 없다. 릴리스는 2026-10-29 로 예정되어 있고, 2026-10-15 기준 Docker Hub 에
+`postgres:19` 이미지도 `19rc1` 태그도 없었다. 릴리스 자체와 그에 대한 load 게이트만 남도록 릴리스 후보를
+점검했다.
+
+- **이미지는 pull 하지 않고 빌드했다.** docker-library `master` 의 공식 `19/trixie/Dockerfile` 을 PGDG 의
+  `trixie-pgdg-testing` (`19~rc1-1.pgdg13+1` 의 유일한 공급원)에 맞춰 `PG_VERSION` 을 그 버전으로 두고
+  저장소를 600 으로 pin 해 빌드한 뒤, 로컬 레지스트리에 `localhost:5555/postgres:19rc1-local` 로 올렸다.
+  digest 는 `sha256:f3a39bd07890f37f5fc7e42326d1a038fb5cdf750e1caf83d4eeee3fc2ef687a` 다. 업스트림
+  Dockerfile 자체의 커밋은 기록하지 않아서 그 이미지는 트리에서 재현되지 않는다. 이 점검의 대상은 그 안의
+  서버이지 레시피가 아니다.
+- **실행.** 서버는 PostgreSQL 19rc1 (`server_version_num` 190000), OpenSSL 3.5.7 이고, `ldd` 는 서버와
+  `pg_gcm.so` 가 같은 `libcrypto.so.3` 를 쓴다는 것을 보인다. 모두 통과한다: PGXS 빌드, 단위 테스트
+  368/368, 회귀 파일 18/18 과 `scripts/verify.sql` S1–S6 (라이브러리를 lazy 로도 preload 로도), e2e
+  시나리오 21/21, 그리고 bench 게이트 — 최악 비율 1.103, 65536 바이트 open, 상한 1.3 이내. 예외는 load
+  게이트 하나다: 돌리지 않아서 19 에는 아직 측정된 복호화+`LIKE` 비율이 없다.
+- **업스트림, `REL_19_BETA4`..`REL_19_RC1` (132 커밋).** `fmgr`, varlena 매크로, `elog`/`ereport`, GUC
+  기제, 인코딩 변환 함수, `palloc`, `pgxs.mk`, `pg_regress` 어디에도 변경이 없다. `PG_VERSION_NUM` 은
+  190000 그대로이고 magic block 도 변하지 않아 코드 수정이 필요 없었다. 움직인 것은 카탈로그 버전 증가
+  — `initdb` 가 필요하지만 모듈 재빌드는 아니다 — 와 `wal_receiver_status_interval = 0` 일 때만 적용되는
+  `walreceiver` 수정이었고, e2e 스위트는 그 설정을 쓰지 않는다. `pgcrypto` 에는 여전히 GCM 이나 AEAD
+  모드가 없다 (§1.1 그대로).
+- **scratch 사본.** 빌드한 이미지를 scratch `docker/versions.json` 에 키 `19rc1` 로 pin 했고, scratch
+  `scripts/lib.sh` 는 그 키에서 메이저를 뽑아야 했다: `data_mount` 가 키를 `-ge` 로 숫자 비교하므로
+  `19rc1` 은 `integer expression expected` 로 실패하고, 승격이 쓸 키인 `19` 는 통과한다. tmpfs 경로만
+  달라졌고 테스트는 바뀌지 않았다.
+
+O1 은 `postgres:19` 가 공개되고 같은 검사를, load 게이트까지, 그것으로 돌릴 때까지 열려 있다. 승격은 그때
+`docker/versions.json`, 19 를 위한 `load` 실행 dispatch, 그리고 §0·위의 Status 문단·README·`AGENTS.md`·
+`META.json`·CHANGELOG·`scripts/sbom.py` 의 `--postgresql` 기본값에 **손으로** 적는 범위다 —
+`release.yml` 이 그 기본값을 쓰므로, 빠뜨리면 산출물과 맞지 않는 SBOM 에 서명하게 된다.
+
 ### 미확인
 
 번호는 다시 쓰지 않는다. O2~O17 은 위에서 답했다. O7, O13, O16 은 Phase 1 에서, O14 와 O15 는 Phase 2
@@ -965,7 +998,7 @@ load 비율은 1.0 에 대해 0.850 이었다. 이 기록이 게이트에서 뺀
 
 | # | 질문 | 확인 방법 |
 |---|---|---|
-| O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 beta 4 이고, RC1 은 2026-10-15, 출시는 2026-10-29 로 공지됐다 (pgsql-hackers, 2026-09-28). 확장은 `19beta4` 에서 빌드되고 모든 스위트를 통과하며, 그 CI job 은 pre-release 라고 표시되고 required check 로 삼지 않는다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 |
+| O1 | 19 는 언제 지원 메이저에 들어가나? 15~18 은 정해졌다. 19 는 RC1 이고 릴리스는 2026-10-29 로 예정되어 있다 (pgsql-hackers, 2026-09-28). 릴리스 후보는 load 게이트를 뺀 모든 스위트를 통과했고 `REL_19_BETA4`..`REL_19_RC1` 에 코드 수정이 필요 없었다 (2026-10-15, 위). 확장은 `19beta4` 에서도 빌드되고 모든 스위트를 통과하며, 그 CI job 은 pre-release 라고 표시되고 required check 로 삼지 않는다 | 릴리스 이미지가 나오면 `docker/versions.json` 에서 `prerelease` 를 `supported` 로 옮긴다 — 위 2026-10-15 항목이 나열한 load 실행과 범위 문장까지 함께 |
 
 ## 9. 참고 자료
 
