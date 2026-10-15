@@ -1034,6 +1034,43 @@ was cut, so the PGXN path is exercised but not observed end to end.
   was still open: the PGXN path does not pass through the two performance gates, so the recording
   they wait for was not a prerequisite for it.
 
+### Established (2026-10-15) — O1, so far: the 19 release candidate passes every suite but the load gate
+
+19 is not in the supported set yet: its release is scheduled for 2026-10-29, and on 2026-10-15
+Docker Hub had neither a `postgres:19` image nor a `19rc1` tag. The release candidate was checked
+so that the release itself, and the load gate on 19, are the only things left.
+
+- **The image was built, not pulled.** The official `19/trixie/Dockerfile` from docker-library's
+  `master` was built against PGDG's `trixie-pgdg-testing` — the only source of `19~rc1-1.pgdg13+1` —
+  with `PG_VERSION` set to that version and the repository pinned at 600, and pushed to a local
+  registry as `localhost:5555/postgres:19rc1-local`. Its digest is
+  `sha256:f3a39bd07890f37f5fc7e42326d1a038fb5cdf750e1caf83d4eeee3fc2ef687a`. The upstream
+  Dockerfile's own commit was not recorded, so that image is not reproducible from the tree; what
+  the check is about is the server inside it, not the recipe.
+- **The run.** The server is PostgreSQL 19rc1 (`server_version_num` 190000) on OpenSSL 3.5.7, and
+  `ldd` shows the server and `pg_gcm.so` resolving the same `libcrypto.so.3`. Everything passes: the
+  PGXS build, 368 of 368 unit tests, 18 of 18 regression files plus `scripts/verify.sql` S1–S6 with
+  the library loaded lazily and again preloaded, 21 of 21 e2e scenarios, and the bench gate — worst
+  ratio 1.103, the 65536-byte open, under its 1.3 ceiling. The one exception is the load gate: it
+  was not run, so 19 has no measured decrypt-and-`LIKE` ratio.
+- **Upstream, `REL_19_BETA4`..`REL_19_RC1` (132 commits).** Nothing changed in `fmgr`, the varlena
+  macros, `elog`/`ereport`, the GUC machinery, the encoding conversion functions, `palloc`,
+  `pgxs.mk` or `pg_regress`; `PG_VERSION_NUM` stays 190000 and the magic block is unchanged, so no
+  code change was needed. What did move was a catalogue version bump — a fresh `initdb`, not a
+  module rebuild — and a `walreceiver` fix that applies only when
+  `wal_receiver_status_interval = 0`, which the e2e suite does not set. `pgcrypto` still offers no
+  GCM or AEAD mode (§1.1 stands).
+- **The scratch copies.** The built image was pinned in a scratch `docker/versions.json` under the
+  key `19rc1`, and a scratch `scripts/lib.sh` had to take the major out of that key: `data_mount`
+  compares a key numerically with `-ge`, so `19rc1` fails it with `integer expression expected`,
+  while the key the promotion will use, `19`, passes. Only the tmpfs path changed, and no test did.
+
+O1 stays open until `postgres:19` is published and the same checks run against it, the load gate
+included. The promotion is then `docker/versions.json`, a dispatched `load` run for 19, and the
+range stated by hand in §0, the Status paragraph above, the README, `AGENTS.md`, `META.json`, the
+CHANGELOG and `scripts/sbom.py`'s `--postgresql` default — `release.yml` takes that default, so
+missing it there would sign an SBOM that does not match the tarballs.
+
 ### Open
 
 Numbers are never reused. O2–O17 are answered above: O7, O13 and O16 in Phase 1, O14 and O15 in
@@ -1041,7 +1078,7 @@ Phase 2, and O17 in Phase 4.
 
 | # | Question | How to settle it |
 |---|---|---|
-| O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at beta 4, with RC1 announced for 2026-10-15 and release for 2026-10-29 (pgsql-hackers, 2026-09-28); the extension builds and passes every suite on `19beta4`, in a CI job labelled pre-release that is not meant to be a required check | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists |
+| O1 | When does 19 join the supported majors? 15–18 are settled. 19 is at RC1, its release scheduled for 2026-10-29 (pgsql-hackers, 2026-09-28); the release candidate passes every suite but the load gate, and `REL_19_BETA4`..`REL_19_RC1` needed no code change (2026-10-15, above); the extension also builds and passes on `19beta4`, in a CI job labelled pre-release that is not meant to be a required check | Move it from `prerelease` to `supported` in `docker/versions.json` when the release image exists, with the load run and the range statements the 2026-10-15 entry lists |
 
 ## 9. References
 
